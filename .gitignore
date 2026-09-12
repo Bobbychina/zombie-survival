@@ -16,4 +16,11 @@ docs/_*_probe.json
 docs/_*_shot.json
 docs/_file_check.json
 docs/_save_check.json
+# 线上部署验收（GitHub Pages）的输出，只留本地
+docs/_pages.txt
+docs/_pages_check.json
+docs/_pages_shots/
+docs/_pages_out.txt
+docs/_repoinfo.json
+docs/_tree*.json
 .playwright-cli/
