@@ -203,7 +203,29 @@ export async function bindGitHubConfirm(): Promise<void> {
   L.closeAllModals();
   L.log('🐙 正在打开 GitHub 授权页…（权限：gist 读写 + 只读个人资料）', 'info');
   const r = await a.bindGitHubOAuth();
+  /* 中继连通但还没放 client_secret 时，GitHub 会回 incorrect_client_credentials：
+     与其让用户再点一次，不如直接自动改用设备码（不需要任何密钥）。 */
+  if (!r.ok && /incorrect_client_credentials/.test(String(r.err))) {
+    L.log('ℹ️ 中继还没配 client_secret，自动改用设备码绑定（不需要密钥）。', 'info');
+    const d = await a.bindGitHubDevice(info => { deviceCodeModal(info); });
+    if (!d.ok) { oauthFailHelp(d.err ?? ''); return; }
+    afterBind(d, 'github');
+    return;
+  }
   afterBind(r, 'github');
+}
+/** 设备码提示框：把 9 位码放到最显眼处，并自动打开 GitHub 的授权页 */
+function deviceCodeModal(info: { user_code: string; verification_uri: string }): void {
+  L.modal({
+    title: '🔢 在 GitHub 输入这 9 位',
+    sticky: true,
+    body: '<p class="muted">已自动打开 GitHub 的授权页；把下面这串输进去并点 <b>Authorize</b>，这边会自动完成绑定（不用回来点任何东西）。</p>' +
+      '<div class="mono" style="font-size:30px;letter-spacing:5px;text-align:center;color:#7fd6a5;margin:16px 0">' + esc(info.user_code) + '</div>' +
+      '<div class="hint">页面没自动打开？手动访问：' + esc(info.verification_uri) + '</div>' +
+      '<div class="hint" id="acc-msg"></div>',
+    footer: '<button class="btn" onclick="window.open(\'' + esc(info.verification_uri) + '\',\'_blank\')">打开 GitHub 授权页</button>' +
+      '<button class="btn" data-close>稍后再说</button>',
+  });
 }
 export async function bindGitHubToken(): Promise<void> {
   const a = A(); if (!a) return;

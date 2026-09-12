@@ -32,6 +32,17 @@ out.steps.codeExchangeNoSecret = await post(relay + '/oauth/access_token', form(
   redirect_uri: 'https://bobbychina.github.io/games/oauth-callback.html',
 }));
 
+/* 走客户端库本身（会用 auth-config.js 里配的 relay）：能拿到 user_code 就说明"设备码绑定"整条链路可用 */
+out.steps.clientDevice = await page.evaluate(async () => {
+  if (!window.DSHAccount) return { err: '页面没有 DSHAccount' };
+  if (!(window.DSH_AUTH_CONFIG && window.DSH_AUTH_CONFIG.github.relay)) return { err: 'auth-config 里没有配 relay' };
+  const info = await new Promise((resolve) => {
+    const t = setTimeout(() => resolve(null), 10000);
+    window.DSHAccount.bindGitHubDevice((i) => { clearTimeout(t); resolve(i); });   // 不 await：拿到码即证明通道可用
+  });
+  return info || { err: '10 秒内没拿到设备码' };
+});
+
 writeFileSync('E:/Files/Games/ZombieSurvival/docs/_m8_device.json', JSON.stringify(out, null, 1), 'utf8');
 await browser.close();
 console.log('device/code  →', out.steps.deviceCode.body);
