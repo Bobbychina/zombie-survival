@@ -83,12 +83,18 @@ function loggedInHtml(u: NonNullable<ReturnType<typeof currentUser>>, a: NonNull
   h += g
     ? '<button class="btn ok" onclick="V4Account.unbind(\'github\')">GitHub @' + esc(g.login) + ' ✕</button>'
     : '<button class="btn" onclick="V4Account.bindGitHub()">🐙 绑定 GitHub 账号</button>';
-  h += m
-    ? '<button class="btn ok" onclick="V4Account.unbind(\'microsoft\')">微软 ' + esc(m.name) + ' ✕</button>'
-    : '<button class="btn" onclick="V4Account.bindMicrosoft()">🪟 绑定微软账号</button>';
+  // 微软这条要先在 Azure 注册应用，而个人微软账号会被要求绑信用卡 —— 没配 clientId 就干脆不显示按钮，
+  // 免得点了一下只看到错误（见 auth-config.js 顶部记录）。
+  if (a.config().microsoft.clientId) {
+    h += m
+      ? '<button class="btn ok" onclick="V4Account.unbind(\'microsoft\')">微软 ' + esc(m.name) + ' ✕</button>'
+      : '<button class="btn" onclick="V4Account.bindMicrosoft()">🪟 绑定微软账号</button>';
+  }
   h += '</div>';
-  if (!g && !m) h += '<div class="hint">没绑云账号也能用：存档按账号存在这台设备的浏览器里（换设备要手动导出）。' +
-    '绑定之后存档会同步到你自己的 GitHub Gist / OneDrive 应用文件夹，两边都能随时删。</div>';
+  if (!g && !m) h += '<div class="hint">没绑云账号也能用：存档按账号存在这台设备的浏览器里，用下面的「导出存档文件」能拷到别的设备。' +
+    '绑 GitHub 之后存档会同步到你自己账号下的私有 Gist，随时能删。</div>';
+  if (!a.config().microsoft.clientId) h += '<div class="hint">微软登录这条路暂时没有：它要求在 Azure 注册应用，而个人微软账号走注册流程时被要求绑信用卡。' +
+    'GitHub 一条就够用（免费、无额度限制）。</div>';
   if (g) h += '<div class="hint">GitHub 云盘 = 一个私有 Gist（描述里写着 bobbychina.github.io/games），删除 gist 就等于删云端存档。</div>';
   if (m) h += '<div class="hint">微软云盘 = OneDrive 的「应用文件夹 /dsh-saves」，不占用你可见的文档目录。</div>';
   h += '<div class="sect-title" style="margin-top:12px">本机存档（槽位 main）</div>';
@@ -96,8 +102,9 @@ function loggedInHtml(u: NonNullable<ReturnType<typeof currentUser>>, a: NonNull
     : '还没有上传过（点下面的「上传存档」把当前进度存进账号）') + '</div>';
   h += '<div class="sect-title" style="margin-top:12px">账号操作</div><div class="row">' +
     '<button class="btn" onclick="V4Account.changePass()">🔑 改密码</button>' +
-    '<button class="btn" onclick="V4Account.exportAll()">⬆️ 导出全部存档</button>' +
-    '<button class="btn" onclick="V4Account.importAll()">⬇️ 导入存档</button>' +
+    '<button class="btn" onclick="V4Account.exportFile()">💾 导出存档文件</button>' +
+    '<button class="btn" onclick="V4Account.importFile()">📂 从文件导入</button>' +
+    '<button class="btn ghost" onclick="V4Account.exportAll()">⬆️ 导出文本</button>' +
     '<button class="btn" onclick="V4Account.logout()">🚪 退出登录</button>' +
     '<button class="btn danger" onclick="V4Account.del()">🗑️ 注销账号</button></div>';
   h += '<div class="hint" id="acc-msg" style="margin-top:8px"></div>';
@@ -292,6 +299,52 @@ export function doImport(): void {
   L.closeAllModals(); L.render();
   toastMsg('导入完成', '恢复了 ' + r.count + ' 个存档槽。', 'ok');
 }
+/* ── 存档文件导入 / 导出（不依赖任何第三方账号：换设备最省事的办法） ── */
+export function exportFile(): void {
+  const a = A(); if (!a) return;
+  const r = a.exportAll();
+  if (!r.ok) { toastMsg('导出失败', r.err ?? '', 'bad'); return; }
+  try {
+    const blob = new Blob([String(r.json)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const el = document.createElement('a');
+    el.href = url;
+    el.download = GAME + '-saves-' + new Date().toISOString().slice(0, 10) + '.json';
+    document.body.appendChild(el);
+    el.click();
+    el.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    L.log('💾 存档文件已下载（' + Math.round(String(r.json).length / 1024) + ' KB）——存网盘或拷 U 盘都行。', 'success');
+  } catch (e) {
+    toastMsg('下载失败', '浏览器拦了下载，可以改用「导出文本」复制粘贴。', 'bad');
+    console.warn('[v4] 导出文件失败', e);
+  }
+}
+export function importFile(): void {
+  L.modal({
+    title: '📂 从文件导入存档', sticky: true,
+    body: '<p class="muted">选之前导出的那个 <span class="mono">' + GAME + '-saves-日期.json</span>，按槽位覆盖本机存档。</p>' +
+      '<input type="file" id="acc-file" accept=".json,application/json" style="margin-top:10px;width:100%">' +
+      '<div class="hint" id="acc-msg" style="margin-top:8px"></div>',
+    footer: '<button class="btn ok" onclick="V4Account.doImportFile()">导入</button><button class="btn" data-close>取消</button>',
+  });
+}
+export function doImportFile(): void {
+  const a = A(); if (!a) return;
+  const input = L.$('#acc-file') as HTMLInputElement | null;
+  const f = input?.files?.[0];
+  if (!f) { msg('先选一个文件', true); return; }
+  const fr = new FileReader();
+  fr.onload = () => {
+    const r = a.importAll(String(fr.result ?? ''));
+    if (!r.ok) { msg(r.err ?? '导入失败', true); return; }
+    L.closeAllModals(); L.render();
+    toastMsg('导入完成', '从文件恢复了 ' + r.count + ' 个存档槽。', 'ok');
+  };
+  fr.onerror = () => msg('读文件失败', true);
+  fr.readAsText(f);
+}
+
 export function changePass(): void {
   L.modal({
     title: '🔑 改密码', sticky: true,

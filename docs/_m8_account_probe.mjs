@@ -206,6 +206,28 @@ out.steps.game = await ev(async () => {
     mainSlot: window.DSHAccount.saveGet('zombie-survival', 'main') ? '在（大厅写的存档游戏里读到了）' : '不在',
   };
 });
+/* 游戏内面板：文件导入/导出按钮要在，微软按钮要消失 */
+out.steps.gamePanel = await ev(() => {
+  window.closeAllModals();
+  window.V4Account.open();
+  const btns = [...document.querySelectorAll('.overlay button, .modal button')].map(b => b.textContent.trim());
+  return {
+    buttons: btns,
+    hasExportFile: btns.some(t => /导出存档文件/.test(t)),
+    hasImportFile: btns.some(t => /从文件导入/.test(t)),
+    hasMicrosoftButton: btns.some(t => /微软/.test(t)),
+    apiShape: { exportFile: typeof window.V4Account.exportFile, importFile: typeof window.V4Account.importFile, doImportFile: typeof window.V4Account.doImportFile },
+  };
+});
+out.steps.gameFileExport = await (async () => {
+  try {
+    const [dl] = await Promise.all([
+      page.waitForEvent('download', { timeout: 8000 }),
+      page.evaluate(() => window.V4Account.exportFile()),
+    ]);
+    return { name: dl.suggestedFilename(), ok: true };
+  } catch (e) { return { ok: false, err: e.message.slice(0, 60) }; }
+})();
 /* 游戏里点开账号面板截图 */
 await ev(() => { window.closeAllModals(); window.V4Account.open(); });
 await page.waitForTimeout(400);
@@ -221,7 +243,42 @@ await ev(() => window.closeAllModals());
   await page.screenshot({ path: out.shots.hub, fullPage: true });
 }
 
-/* ⑧ 收尾：把探针造的本地账号清掉（不留垃圾在测试浏览器 profile 里） */
+/* ⑧ 收尾前：微软按钮在未配 clientId 时必须隐藏；存档文件导出/导入要走通 */
+out.steps.msHidden = await ev(() => {
+  const btns = [...document.querySelectorAll('#mo-bd button')].map(b => b.textContent.trim());
+  const hints = [...document.querySelectorAll('#mo-bd .hint')].map(e => e.textContent.trim());
+  return { buttons: btns, hasMicrosoftButton: btns.some(t => /微软/.test(t)),
+    hasMicrosoftNote: hints.some(t => /微软登录暂不提供|信用卡/.test(t)) };
+});
+const tmpSave = 'E:/Files/Games/ZombieSurvival/docs/_m8_import_test.json';
+writeFileSync(tmpSave, JSON.stringify({
+  v: 1, exportedAt: new Date().toISOString(), account: { name: 'tester' },
+  saves: { 'zombie-survival': { 'from-file': { day: 42, hp: 7, note: 'imported from file' } } },
+}), 'utf8');
+out.steps.fileRoundTrip = await (async () => {
+  let downloadName = '', bytes = 0;
+  try {
+    // 必须"先挂监听再点击"，否则下载事件可能在 click 返回前就发完了（第一版就是这么踩空的）
+    const [dl] = await Promise.all([
+      page.waitForEvent('download', { timeout: 8000 }),
+      page.click('button:has-text("导出存档文件")'),
+    ]);
+    downloadName = dl.suggestedFilename();
+    bytes = await dl.createReadStream().then(s => new Promise((res, rej) => { let n = 0; s.on('data', c => n += c.length); s.on('end', () => res(n)); s.on('error', rej); }));
+  } catch (e) { downloadName = 'ERR:' + e.message.slice(0, 60); }
+  await page.click('button:has-text("从文件导入")');
+  await page.waitForTimeout(300);
+  await page.setInputFiles('#i-file', tmpSave);
+  await page.click('button:has-text("导入")');
+  await page.waitForTimeout(600);
+  const back = await ev(() => ({
+    slot: window.DSHAccount.saveGet('zombie-survival', 'from-file'),
+    slots: window.DSHAccount.slots('zombie-survival').map(s => s.slot),
+  }));
+  return { downloadName, bytes, importedNote: back.slot && back.slot.note, importedDay: back.slot && back.slot.day, slots: back.slots };
+})();
+
+/* ⑨ 收尾：把探针造的本地账号清掉（不留垃圾在测试浏览器 profile 里） */
 out.steps.cleanup = await ev(async () => {
   const r = window.DSHAccount.deleteAccount('tester');
   return { ok: r.ok, remainingAccounts: Object.keys(localStorage).filter(k => /dsh\./.test(k)) };
