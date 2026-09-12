@@ -1,0 +1,43 @@
+{
+ "sunkenAt": [
+  7,
+  22,
+  "sunken"
+ ],
+ "cur": {
+  "x": 7,
+  "y": 22
+ },
+ "curPoi": "sunken",
+ "curBiome": "water",
+ "ap": 9,
+ "waterPanel": null,
+ "diveResult": false,
+ "toasts": [
+  "📖 秘闻 · 医生的日记\n已收录到图鉴。",
+  "这里没有水下目标\n沉没基地在深水区。"
+ ],
+ "cachedWorld": {
+  "seed": "ember-01",
+  "genSeed": "ember-01",
+  "cur": {
+   "x": 7,
+   "y": 20
+  },
+  "poib": null,
+  "biome": "city",
+  "biomeDiffBlocks": 0,
+  "sunkenCount": 2,
+  "freshCount": 2,
+  "cachedWater": 136,
+  "freshWater": 136
+ },
+ "diveFnTypes": {
+  "dive": "function",
+  "fish": "function",
+  "swim": "function",
+  "water": "undefined",
+  "waterDive": "undefined"
+ },
+ "errors": []
+}

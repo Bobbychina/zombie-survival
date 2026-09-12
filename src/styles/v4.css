@@ -1,0 +1,104 @@
+/* v4.0 新增样式：宝可梦式战斗界面（招式槽 / 属性标签 / 状态标签） */
+.v4b{width:min(940px,96vw)}
+.mv-grid{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.mv-slot{position:relative;text-align:left;padding:8px 10px;border:1px solid var(--line2);background:#191d24;
+  color:var(--ink);border-radius:6px;cursor:pointer;transition:.14s;display:flex;flex-direction:column;gap:4px;font-family:var(--font)}
+.mv-slot:hover:not(:disabled){background:#212733;border-color:var(--accent);transform:translateY(-1px)}
+.mv-slot:disabled{opacity:.42;cursor:not-allowed}
+.mv-name{font-size:13px;font-weight:600;color:var(--bone)}
+.mv-meta{display:flex;gap:6px;flex-wrap:wrap;font-size:10px;color:var(--dim);align-items:center}
+.mv-why{font-size:10px;color:#e08a72}
+.type-chip{font-size:10px;padding:0 5px;border-radius:3px;border:1px solid var(--line2);background:#12151a;white-space:nowrap}
+.type-chip.t-flesh{color:#e08a72;border-color:#6b3327}
+.type-chip.t-bone{color:#cfc7b4;border-color:#5c5546}
+.type-chip.t-armor{color:#8fb0d8;border-color:#3a4d63}
+.type-chip.t-toxic{color:#a8d84a;border-color:#4d6320}
+.type-chip.t-swift{color:#7fd6e8;border-color:#2c5460}
+.type-chip.t-hulk{color:#d8a431;border-color:#6b5416}
+.status-chip{font-size:10px;padding:0 5px;border-radius:3px;border:1px solid #6b3327;background:rgba(224,87,58,.14);color:#ff9b86;white-space:nowrap}
+.v4b .enemy{cursor:pointer}
+.v4b .enemy.target{box-shadow:0 0 0 1px rgba(224,87,58,.5),0 0 20px rgba(224,87,58,.18)}
+.v4b .round-log{height:150px}
+
+/* ── v4.0 大世界地图 ── */
+.v4world{padding:10px;margin-bottom:0}
+.v4world .sect-title{margin-bottom:6px}
+/* 宽屏布局：把两侧空白用起来。
+   ≥1700px：地图 / 详情 / 原探索卡片 三列并排，整页不用滚（2047×1157 实测三列全装下）
+   1280~1699px：地图在左，右侧详情 + 卡片上下叠（各自内部滚动）
+   <1280px：退回单列（和以前一样整页滚）
+   地图格子 20~28px：24×24 一次看完，不用在地图里滚。 */
+@media (min-width:1024px){
+  #app{width:min(2400px,calc(100vw - 16px));max-height:none}
+}
+@media (min-width:1280px){
+  #body{grid-template-columns:minmax(0,1fr) clamp(300px,19vw,430px)}
+  #view.v4-split{display:grid;gap:12px;align-items:start}
+  #view.v4-split>.v4-col{overflow-y:auto;padding-right:6px}
+}
+@media (min-width:1280px) and (max-width:1699px){
+  #view.v4-split{
+    grid-template-columns:minmax(0,auto) minmax(320px,1fr);
+    grid-template-rows:minmax(0,auto) minmax(0,1fr);
+    grid-template-areas:"map detail" "map col";
+  }
+  #v4world{grid-area:map}
+  #v4detail{grid-area:detail;max-height:42vh}
+  #view.v4-split>.v4-col{grid-area:col;max-height:100%}
+}
+@media (min-width:1700px){
+  #view.v4-split{
+    grid-template-columns:minmax(0,auto) minmax(340px,.85fr) minmax(360px,1fr);
+    grid-template-areas:"map detail col";overflow:hidden;
+  }
+  #v4world{grid-area:map}
+  #v4detail{grid-area:detail;max-height:100%;overflow-y:auto}
+  #view.v4-split>.v4-col{grid-area:col;max-height:100%}
+}
+@media (min-width:2000px){
+  #view.v4-split{grid-template-columns:minmax(0,auto) minmax(380px,.9fr) minmax(440px,1.1fr)}
+}
+.v4detail{padding:10px 12px}
+.v4world .whead{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;margin-bottom:8px}
+.v4world .wname{font-size:14px;font-weight:600;color:var(--bone)}
+.v4world .wveh{font-size:11px;color:var(--dim);border:1px solid var(--line2);border-radius:4px;padding:3px 7px;white-space:nowrap}
+.v4world .wmapwrap{overflow:auto;border:1px solid var(--line);border-radius:6px;background:#0b0d10;padding:6px}
+.v4world .wgrid{display:grid;gap:2px;min-width:0;grid-template-columns:repeat(24,minmax(20px,28px))!important;justify-content:center}
+@media (max-width:1399px){.v4world .wgrid{min-width:620px}}
+.v4world .wcell.frag{box-shadow:inset 0 0 0 1px rgba(216,192,122,.8);animation:wfrag 2.4s ease-in-out infinite}
+@keyframes wfrag{0%,100%{box-shadow:inset 0 0 0 1px rgba(216,192,122,.8)}50%{box-shadow:inset 0 0 0 2px rgba(216,192,122,.95)}}
+.v4world .wcell.evac{box-shadow:inset 0 0 0 2px rgba(127,214,232,.85)}
+.v4world .wcell.path{outline:1px dashed rgba(207,210,214,.55);outline-offset:-2px}
+.v4world .wcell.target{outline:2px solid var(--warn);outline-offset:1px;z-index:4}
+.v4world .wbar{display:flex;flex-direction:column;gap:4px;margin:6px 0}
+.v4world .wpreview{font-size:12px;color:var(--ink);background:#12151a;border:1px solid var(--line2);
+  border-left:3px solid var(--line2);border-radius:5px;padding:6px 8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.v4world .wpreview.on{border-left-color:var(--accent);background:#141c26}
+.v4world .wpreview.bad{border-left-color:#e0573a;background:#1f1512}
+.v4world .whover{font-size:12px;color:var(--ink);background:#101318;border:1px solid var(--line);border-radius:5px;
+  padding:4px 8px;min-height:26px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.v4world .whover .lb{color:var(--dim);font-size:11px}
+.v4world .wlegend-box{margin-top:8px;border:1px solid var(--line);border-radius:5px;padding:4px 8px}
+.v4world .wlegend-box summary{cursor:pointer;font-size:11px;color:var(--dim)}
+.v4world .wnight,.v4world .wevac{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+.v4world .wenv{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+.v4world .wplot{font-size:11px;color:var(--dim);align-self:center}
+.hud-chips .chip.cold{border-color:#4a6f8a;background:#101a22;color:#9cc7e0}
+.v4world .wlegend .sw.ic{display:inline-flex;align-items:center;justify-content:center;font-size:9px;background:#12151a}
+.v4world .wlegend .sw.cur-sw{background:transparent;outline:2px solid var(--bone)}
+.v4world .wlegend .sw.path-sw{background:transparent;outline:1px dashed rgba(207,210,214,.6)}
+.v4world .wcell{aspect-ratio:1/1;min-width:0;min-height:24px;border-radius:2px;display:flex;align-items:center;justify-content:center;
+  font-size:11px;line-height:1;border:1px solid transparent;user-select:none}
+.v4world .wcell.seen{cursor:pointer}
+.v4world .wcell.seen:hover{border-color:var(--accent);transform:scale(1.12);z-index:2}
+.v4world .wcell.fog{background:#15171c !important;color:#2a2e36}
+.v4world .wcell.fog::after{content:'?';font-size:8px;color:#333941}
+.v4world .wcell.cur{outline:2px solid var(--bone);outline-offset:1px;z-index:3}
+.v4world .wcell.home{box-shadow:inset 0 0 0 1px rgba(207,210,214,.35)}
+.v4world .wlegend{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;font-size:10px;color:var(--dim)}
+.v4world .wlegend .lg{display:flex;align-items:center;gap:3px}
+.v4world .wlegend .sw{width:9px;height:9px;border-radius:2px;display:inline-block;border:1px solid rgba(255,255,255,.12)}
+.v4world .wpoi{margin-top:6px}
+.v4world .trail{font-size:11px;color:var(--dim);line-height:1.7;font-family:var(--mono,monospace)}
+.b-city{background:#3b4152}.b-suburb{background:#33403a}.b-industrial{background:#4a4038}.b-forest{background:#2b3a2c}
+.b-farm{background:#3d3a24}.b-water{background:#1d2c3e}.b-ruins{background:#3a3138}.b-military{background:#40352c}.b-highway{background:#2e3238}

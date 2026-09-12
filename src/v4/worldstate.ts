@@ -1,0 +1,255 @@
+/* v4.0 大世界状态层（纯逻辑，不碰 DOM、不碰 legacy）：
+   - 世界本体（24×24 区块）由 seed 生成，不进存档；进存档的只有玩家进度（到过哪、搜过几次、车况）。
+   - 旅行规划 = 寻路 + 行动力/燃油核算；遭遇判定也在这里，UI 只负责展示与落地副作用。 */
+import { generateWorld, bkey, blockAt, revealAround, WORLD_W, WORLD_H } from './worldgen';
+import { fragSpots } from './quest4';
+import type { Block, WorldState } from '../types';
+export interface VehState { fuel: number; hp: number }
+
+export interface SaveWorld {
+  v: 1;
+  seed: string;
+  cur: { x: number; y: number };
+  visited: Record<string, 1>;
+  /** 到过的 POI（key = "x,y"）：首次到访才给线索/首次奖励 */
+  firstPoi: Record<string, 1>;
+  /** POI 剩余可搜刮次数（搜空后只剩外壳）：key = "x,y" */
+  left: Record<string, number>;
+  /** 营地当日库存（买光了就没了）：key = poiId + 货架序号 */
+  stock: Record<string, number>;
+  /** 已拿走的门禁卡碎片（key = "x,y"） */
+  frag: Record<string, 1>;
+  /** M6：采集点剩余次数与上次采集日（key = "x,y"）——采光了要等几天再生 */
+  forage: Record<string, { left: number; day: number }>;
+  /** M6：拆解点剩余资源（key = "x,y"）——拆光为止，禁止无限材料机 */
+  salvage: Record<string, { left: number }>;
+  /** M7：钓鱼点当天剩余次数（key = "x,y"，每天刷新） */
+  fish: Record<string, { left: number; day: number }>;
+  /** 在营地买过情报：碎片点与实验室永久点亮（迷雾每次都由 visited + 这个派生出来） */
+  intel: boolean;
+  /** 睡眠债（档，0~3）：AP 上限 = 9 - 债，派生值不单独存 */
+  debt: number;
+  /** 最近一次过夜的结算记录（C01/C02/R3：落盘 + 幂等） */
+  lastNight: { day: number; kind: string; tier: string; outcome: string; ap: number } | null;
+  /** 血月不在家、据点被啃的那一天（幂等标记，防重复结算） */
+  lastRaidDay: number;
+  /** 100 天撤离窗口（C07）：坐标与开启日 */
+  evac: { x: number; y: number; day: number } | null;
+  veh: VehState | null;
+  steps: number;                 // 累计走过多少区块
+  fights: number;                // 路上打过多少场
+  trail: string[];               // 最近若干条旅行/搜刮记录（地图面板显示用）
+}
+
+let cache: { seed: string; w: WorldState } | null = null;
+/** C11：迷雾重放很贵（576 格 ×9 邻居），而 ensure 会被每次 render 调到；
+    这里记住"上次重放时的状态指纹"，只有读档/情报/无线电/新到过区块才重放一次。 */
+let lastSynced: { S: any; intel: boolean; radio: boolean; visited: number } | null = null;
+/** 迷雾重放次数（C11 的性能指标：反复 render 不该把它越推越高） */
+let replays = 0;
+export const replayCount = () => replays;
+
+/** 世界对象按 seed 缓存：同一存档反复 render 不重复生成 */
+export function worldOf(seed: string): WorldState {
+  if (!cache || cache.seed !== seed) cache = { seed, w: generateWorld(seed) };
+  return cache.w;
+}
+
+export function markVisited(w: WorldState, sw: SaveWorld, x: number, y: number): string[] {
+  const b = blockAt(w, x, y);
+  if (!b) return [];
+  sw.visited[bkey(x, y)] = 1;
+  b.visited = true;
+  return revealAround(w, x, y, 1);
+}
+
+export function defaultSaveWorld(seed: string): SaveWorld {
+  const w = worldOf(seed);
+  const sw: SaveWorld = {
+    v: 1, seed, cur: { x: w.home.x, y: w.home.y },
+    visited: {}, firstPoi: {}, left: {}, stock: {}, frag: {}, forage: {}, salvage: {}, fish: {}, intel: false,
+    debt: 0, lastNight: null, lastRaidDay: 0, evac: null,
+    veh: null, steps: 0, fights: 0, trail: [],
+  };
+  markVisited(w, sw, w.home.x, w.home.y);
+  return sw;
+}
+
+/** 存档里的 world 字段可能缺字段/被改坏：这里补齐并把迷雾按 visited 重放回来 */
+export function ensureSaveWorld(S: any): SaveWorld {
+  let sw: SaveWorld | null = S && S.world ? S.world as SaveWorld : null;
+  if (!sw || typeof sw !== 'object' || typeof sw.seed !== 'string' || !sw.seed) {
+    sw = defaultSaveWorld(String((S && S.seed) || 'ember-01'));
+    if (S) S.world = sw;
+    return sw;
+  }
+  const w = worldOf(sw.seed);
+  sw.v = 1;
+  sw.cur = validPos(sw.cur) ? { x: sw.cur.x, y: sw.cur.y } : { x: w.home.x, y: w.home.y };
+  // M7：水块现在是合法落脚点（可以游过去、可以潜水），所以**不再**把站在水里的玩家挪回陆地——
+  // 以前那条"坏档防卡死"的兜底会把刚游下水的玩家瞬移回岸边（潜水功能因此完全失效，探针抓到过）。
+  // 只有坐标非法或落在地图外才回安全屋（上面那行已经处理）。
+  sw.visited = sw.visited && typeof sw.visited === 'object' ? sw.visited : {};
+  sw.firstPoi = sw.firstPoi && typeof sw.firstPoi === 'object' ? sw.firstPoi : {};
+  sw.left = sw.left && typeof sw.left === 'object' ? sw.left : {};
+  sw.stock = sw.stock && typeof sw.stock === 'object' ? sw.stock : {};
+  sw.frag = sw.frag && typeof sw.frag === 'object' ? sw.frag : {};
+  sw.forage = sw.forage && typeof sw.forage === 'object' ? sw.forage : {};
+  sw.salvage = sw.salvage && typeof sw.salvage === 'object' ? sw.salvage : {};
+  sw.fish = sw.fish && typeof sw.fish === 'object' ? sw.fish : {};
+  sw.intel = !!sw.intel;
+  sw.debt = Math.max(0, Math.min(3, typeof sw.debt === 'number' && isFinite(sw.debt) ? sw.debt : 0));
+  sw.lastNight = sw.lastNight && typeof sw.lastNight === 'object' ? sw.lastNight : null;
+  sw.lastRaidDay = num(sw.lastRaidDay);
+  sw.evac = sw.evac && typeof sw.evac === 'object' && isPos(sw.evac.x) && isPos(sw.evac.y) ? sw.evac : null;
+  sw.trail = Array.isArray(sw.trail) ? sw.trail.slice(-24) : [];
+  sw.steps = num(sw.steps); sw.fights = num(sw.fights);
+  sw.veh = sw.veh && typeof sw.veh === 'object' ? { fuel: num(sw.veh.fuel), hp: num(sw.veh.hp) || 60 } : null;
+  // C11：只有指纹变了才重放迷雾（否则每次 render 都要重放 576 格）
+  const radio = !!(S && S.base && S.base.radio);
+  const visitedN = Object.keys(sw.visited).length;
+  if (lastSynced && lastSynced.S === S && lastSynced.intel === sw.intel && lastSynced.radio === radio && lastSynced.visited === visitedN) {
+    return sw;
+  }
+  lastSynced = { S, intel: sw.intel, radio, visited: visitedN };
+  replays++;
+  // 迷雾恢复：visited 是唯一的真相源，其余 revealed/visited 全部重放
+  for (const k in w.blocks) { w.blocks[k].revealed = false; w.blocks[k].visited = false; }
+  for (const k in sw.visited) {
+    const p = k.split(',').map(Number);
+    if (validPos({ x: p[0], y: p[1] })) markVisited(w, sw, p[0], p[1]);
+  }
+  // 无线电架好 = 拿到实验室坐标：那一格永远点亮（否则玩家在迷雾里根本点不到终点）
+  if (radio) {
+    const lb = blockAt(w, w.lab.x, w.lab.y);
+    if (lb) lb.revealed = true;
+  }
+  // 买过情报 = 碎片点与实验室所在地永久可见。这里必须"每次重算"而不是只在买东西时点亮一次，
+  // 因为迷雾是每次 ensure 都从 visited 重放出来的，一次性的点亮会被下一次重放抹掉。
+  if (sw.intel) {
+    for (const f of fragSpots(w)) {
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const b = blockAt(w, f.x + dx, f.y + dy);
+        if (b) b.revealed = true;
+      }
+    }
+    const lb = blockAt(w, w.lab.x, w.lab.y);
+    if (lb) lb.revealed = true;
+  }
+  return sw;
+}
+
+const num = (v: any) => (typeof v === 'number' && isFinite(v) ? v : 0);
+const validPos = (p: any) => !!p && typeof p === 'object' && isPos(p.x) && isPos(p.y);
+const isPos = (v: any) => typeof v === 'number' && Number.isInteger(v) && v >= 0 && v < Math.max(WORLD_W, WORLD_H);
+
+/* ── 旅行 ── */
+
+export interface Trip {
+  path: Block[];
+  steps: number;
+  ap: number;
+  fuel: number;
+  mode: 'foot' | 'car';
+  encounters: number;      // 预计遭遇次数（实际由 UI 掷骰决定，这里只给上限参考）
+}
+
+export interface TripRequest {
+  ap: number;
+  veh: VehState | null;
+  fractured: boolean;      // 骨折：走路更慢
+  night: boolean;
+}
+
+/** POI → legacy 区域 id：搜刮 POI 时同步 legacy 的悬赏/支线计数，主线才不会因为换了大世界而卡住 */
+const POI_ZONE: Record<string, string> = {
+  market: 'market', mall: 'market',
+  pharmacy: 'hospital', hospital: 'hospital', clinic: 'hospital',
+  police: 'police', military: 'military', prison: 'police', bunker: 'military',
+  school: 'oldtown', church: 'oldtown', apartment: 'oldtown', construction: 'oldtown',
+  warehouse: 'oldtown', farm: 'oldtown', camp: 'oldtown',
+  gas: 'gas', garage: 'gas', waterworks: 'subway', tunnel: 'subway', radio: 'subway',
+  outpost: 'oldtown', lab: 'lab',
+};
+export const zoneOfPoi = (poiId: string | null): string | null => (poiId ? POI_ZONE[poiId] ?? null : null);
+
+const passable = (b: Block) => b.biome !== 'water';
+/** M7：步行可以游过水（代价高、有风险），开车不行 */
+const passableFor = (b: Block, allowWater: boolean) => b.biome !== 'water' || allowWater;
+export const waterSteps = (path: Block[]) => path.filter(b => b.biome === 'water').length;
+
+/** Dijkstra：走路按步数、开车按高速更省的方式找路线；allowWater=true 时水块可以游过去（每格多花 2 AP） */
+export function findPath(w: WorldState, from: { x: number; y: number }, to: { x: number; y: number }, mode: 'foot' | 'car', allowWater = false): Block[] | null {
+  const start = blockAt(w, from.x, from.y), goal = blockAt(w, to.x, to.y);
+  if (!start || !goal || !passableFor(start, allowWater) || !passableFor(goal, allowWater)) return null;
+  const key = (b: Block) => bkey(b.x, b.y);
+  const cost: Record<string, number> = { [key(start)]: 0 };
+  const prev: Record<string, string> = {};
+  const nodeOf: Record<string, Block> = { [key(start)]: start };
+  const open: string[] = [key(start)];
+  const done: Record<string, 1> = {};
+  while (open.length) {
+    let bi = 0;
+    for (let i = 1; i < open.length; i++) if (cost[open[i]] < cost[open[bi]]) bi = i;
+    const cur = open.splice(bi, 1)[0];
+    if (done[cur]) continue;
+    done[cur] = 1;
+    const b = nodeOf[cur];
+    if (b.x === goal.x && b.y === goal.y) break;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      if (!dx && !dy) continue;
+      const nb = blockAt(w, b.x + dx, b.y + dy);
+      if (!nb || !passableFor(nb, allowWater)) continue;
+      const nk = key(nb);
+      if (done[nk]) continue;
+      let step = 1;
+      if (mode === 'car') step = nb.biome === 'highway' ? 0.55 : (dx && dy ? 1.35 : 1);
+      // 水路很贵（每格相当于 3 格陆路），所以能绕就绕；只有确实更近时才会下水
+      if (nb.biome === 'water') step = 3;
+      const nc = cost[cur] + step;
+      if (cost[nk] === undefined || nc < cost[nk] - 1e-9) {
+        cost[nk] = nc; prev[nk] = cur; nodeOf[nk] = nb;
+        open.push(nk);
+      }
+    }
+  }
+  const gk = key(goal);
+  if (cost[gk] === undefined) return null;
+  const out: Block[] = [];
+  for (let k: string | undefined = gk; k; k = prev[k]) out.unshift(nodeOf[k]);
+  return out;
+}
+
+/** 一次旅行的报价：够不够行动力/油，不够就明确说原因（UI 直接显示这句话） */
+export function planTrip(w: WorldState, from: { x: number; y: number }, to: { x: number; y: number }, req: TripRequest):
+  { trip: Trip } | { err: string } {
+  // 车坏了（hp<=0）就当没有车：否则玩家会开着一辆 0% 车况的车到处跑
+  const veh = req.veh && req.veh.fuel > 0 && req.veh.hp > 0 ? req.veh : null;
+  // M7：步行允许游过水（每格水路按 2 AP 算），开车只能走陆路
+  const path = findPath(w, from, to, veh ? 'car' : 'foot', !veh);
+  if (!path) return { err: veh ? '开车过不去（水域挡着）——换步行可以游过去。' : '没有可以走通的路。' };
+  const steps = path.length - 1;
+  if (steps <= 0) return { err: '你已经在这个区块了。' };
+  const wet = waterSteps(path);
+  const footAP = steps + wet + (req.fractured ? Math.ceil(steps / 3) : 0);   // 水路每格多 1 AP（游泳）
+  if (veh) {
+    const ap = Math.max(1, Math.ceil(steps / 4));
+    const fuel = Math.max(1, Math.ceil(steps / 6));
+    if (veh.fuel >= fuel && req.ap >= ap) {
+      return { trip: { path, steps, ap, fuel, mode: 'car', encounters: Math.max(1, Math.round(steps / 6)) } };
+    }
+    if (req.ap < ap && req.ap < footAP) return { err: `行动力不够：开车要 ${ap} 点，你只有 ${req.ap} 点。` };
+    if (veh.fuel < fuel && req.ap < footAP) return { err: `油不够（要 ${fuel} 桶）也走不动（要 ${footAP} 行动力）。` };
+  }
+  if (req.ap < footAP) return { err: `行动力不够：走路要 ${footAP} 点（含 ${wet} 公里水路），你只有 ${req.ap} 点。` };
+  return { trip: { path, steps, ap: footAP, fuel: 0, mode: 'foot', encounters: Math.max(1, Math.round(steps / 3)) } };
+}
+
+/** 路上会不会撞上东西：步数越多、天越黑、区块越危险，越容易。返回到第几步出事（null = 一路平安） */
+export function rollTravelEncounter(rng: () => number, opts: { steps: number; night: boolean; danger: number; car: boolean; luck?: number }): number | null {
+  let p = 0.10 + opts.danger * 0.03 + (opts.night ? 0.09 : 0);
+  if (opts.car) p *= 0.55;
+  p *= 1 - Math.min(0.5, opts.luck ?? 0);
+  for (let i = 1; i <= opts.steps; i++) if (rng() < p) return i;
+  return null;
+}

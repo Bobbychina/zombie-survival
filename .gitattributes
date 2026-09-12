@@ -1,0 +1,3 @@
+# Windows 批处理必须是 CRLF（cmd.exe 对 LF 的 .bat 支持不稳），shell 脚本保持 LF
+*.bat text eol=crlf
+*.sh  text eol=lf

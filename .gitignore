@@ -1,0 +1,19 @@
+# 依赖与构建产物
+node_modules/
+dist/
+.runtime/
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 验证脚本的临时产物
+docs/*.log
+docs/*.txt
+docs/_*_probe.json
+docs/_*_shot.json
+docs/_file_check.json
+docs/_save_check.json
+.playwright-cli/

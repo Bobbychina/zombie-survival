@@ -1,0 +1,56 @@
+{
+ "itemCount": 63,
+ "defs": {
+  "grain": "麦子",
+  "seed_grain": "麦种",
+  "seed_veg": "蔬菜种子",
+  "berry": "野果",
+  "mushroom": "蘑菇",
+  "dried": "果干",
+  "pickle": "腌菜",
+  "veg": "新鲜蔬菜",
+  "fish": "鱼",
+  "rod": "鱼竿",
+  "bait": "鱼饵",
+  "wetsuit": "潜水服",
+  "o2": "氧气瓶",
+  "purify": "MISSING",
+  "rot": "腐坏食物"
+ },
+ "itemName": {
+  "grain": "麦子",
+  "seed_grain": "麦种",
+  "seed_veg": "蔬菜种子",
+  "berry": "野果",
+  "mushroom": "蘑菇",
+  "dried": "果干",
+  "pickle": "腌菜",
+  "veg": "新鲜蔬菜",
+  "fish": "鱼",
+  "rod": "鱼竿",
+  "bait": "鱼饵",
+  "wetsuit": "潜水服",
+  "o2": "氧气瓶",
+  "purify": "purify",
+  "rot": "腐坏食物"
+ },
+ "invUndefinedCount": 5,
+ "craftUndefinedCount": 0,
+ "invSample": [
+  "麦子 ×1",
+  "生麦子难啃，磨成粉才好用。",
+  "undefined",
+  "undefined",
+  "undefined",
+  "麦种 ×1",
+  "undefined",
+  "蔬菜种子 ×1",
+  "undefined"
+ ],
+ "craftSample": [
+  "果干 ×2",
+  "腌菜 ×2",
+  "腌起来的菜不会烂，冬天救命。"
+ ],
+ "errors": []
+}

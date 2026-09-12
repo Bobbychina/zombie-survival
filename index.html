@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>丧尸末日生存 v4.0 · 余烬（大世界）</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>⛔</text></svg>">
+</head>
+<body>
+<div id="app">
+  <div id="hazard"></div>
+  <header id="topbar">
+    <div class="brand"><span class="mark">⛔</span>丧尸末日生存<span class="ver">v3.0 余烬</span></div>
+    <div id="clock"><span>第 <b id="clock-day">1</b> 天</span><span class="phase" id="clock-phase">白天</span></div>
+    <div id="ap-pips" title="行动力：每日 6 点，睡觉进入下一天"></div>
+    <div class="tools">
+      <button class="icobtn" id="btn-sfx" title="音效开关">🔊</button>
+      <button class="icobtn" id="btn-help" title="帮助 / 快捷键">?</button>
+      <button class="icobtn" id="btn-menu" title="菜单：存档 / 新游戏">☰</button>
+    </div>
+  </header>
+  <div id="hud"></div>
+  <nav id="tabs"></nav>
+  <div id="body">
+    <main id="view"></main>
+    <aside id="side">
+      <div id="side-head"><span>现场日志</span><button class="btn xs ghost" id="btn-clear-log">清空</button></div>
+      <div id="log"></div>
+    </aside>
+  </div>
+</div>
+<div id="daytint"></div>
+<div id="overlay-root"></div>
+<div id="fx"></div>
+<div id="toasts"></div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

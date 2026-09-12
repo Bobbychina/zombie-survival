@@ -1,0 +1,24 @@
+{
+ "columns": {
+  "mapHas": true,
+  "mapCols": "754px 380px 450.078px",
+  "detailHas": [
+   false,
+   true
+  ],
+  "colHasLegacyCards": [
+   true,
+   true
+  ],
+  "colText": "今日行动 · 第 1 天 清晨 🌙 睡觉（进入第 2 天） ☕ 就地休整 (1 行动力) 🏪 呼叫商人 行动力 9/9 · 搜索 1 点 · 深度搜索 2 点 搜刮会消耗饱食与水分，战斗会消耗弹药与体力。架设无线电（据点 → 建设）后才",
+  "splitClass": true
+ },
+ "mutations": 0,
+ "tabSwitch": {
+  "invSplit": false,
+  "invColumns": "none",
+  "backSplit": true,
+  "mapBack": true
+ },
+ "errors": []
+}

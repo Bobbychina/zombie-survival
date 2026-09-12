@@ -1,0 +1,154 @@
+{
+ "generatedAt": "2026-09-12T11:00:25.993Z",
+ "runs": 40,
+ "gates": {
+  "firstFacilityP50": 3,
+  "firstFacilityP90": 3,
+  "firstGearP50": 5,
+  "firstGearP90": 5,
+  "gardenHarvestP50": 8,
+  "gardenHarvestP90": 9
+ },
+ "curves": {
+  "day1": {
+   "day": 1,
+   "season": "spring",
+   "weather": "rain",
+   "mat": 16.2,
+   "food": 4.4,
+   "water": 2,
+   "temp": 47,
+   "tempLow": false,
+   "facility": false,
+   "gear": false,
+   "gardenHarvest": false,
+   "matIncome": 4.2,
+   "matSpend": 0,
+   "foodIncome": 1.4,
+   "renewFoodIncome": 0.1,
+   "foodSpend": 1.1
+  },
+  "day10": {
+   "day": 10,
+   "season": "spring",
+   "weather": "cloudy",
+   "mat": 46.6,
+   "food": 8,
+   "water": 6.2,
+   "temp": 56,
+   "tempLow": false,
+   "facility": true,
+   "gear": true,
+   "gardenHarvest": true,
+   "matIncome": 4.2,
+   "matSpend": 1,
+   "foodIncome": 1.4,
+   "renewFoodIncome": 0.1,
+   "foodSpend": 1.1
+  },
+  "day30": {
+   "day": 30,
+   "season": "spring",
+   "weather": "cloudy",
+   "mat": 98.8,
+   "food": 13.5,
+   "water": 33.6,
+   "temp": 53,
+   "tempLow": false,
+   "facility": true,
+   "gear": true,
+   "gardenHarvest": true,
+   "matIncome": 4.2,
+   "matSpend": 4,
+   "foodIncome": 1.4,
+   "renewFoodIncome": 0.1,
+   "foodSpend": 1.1
+  },
+  "day60": {
+   "day": 60,
+   "season": "summer",
+   "weather": "heat",
+   "mat": 84.6,
+   "food": 11.8,
+   "water": 74.6,
+   "temp": 100,
+   "tempLow": false,
+   "facility": true,
+   "gear": true,
+   "gardenHarvest": true,
+   "matIncome": 4.2,
+   "matSpend": 5,
+   "foodIncome": 1.4,
+   "renewFoodIncome": 0.1,
+   "foodSpend": 1.1
+  },
+  "day90": {
+   "day": 90,
+   "season": "autumn",
+   "weather": "rain",
+   "mat": 68.4,
+   "food": 17.4,
+   "water": 124,
+   "temp": 68,
+   "tempLow": false,
+   "facility": true,
+   "gear": true,
+   "gardenHarvest": true,
+   "matIncome": 4.2,
+   "matSpend": 5,
+   "foodIncome": 1.5,
+   "renewFoodIncome": 0.2,
+   "foodSpend": 1.1
+  },
+  "day100": {
+   "day": 100,
+   "season": "winter",
+   "weather": "snow",
+   "mat": 67,
+   "food": 15.9,
+   "water": 141.7,
+   "temp": 44,
+   "tempLow": false,
+   "facility": true,
+   "gear": true,
+   "gardenHarvest": true,
+   "matIncome": 4.2,
+   "matSpend": 5,
+   "foodIncome": 1.3,
+   "renewFoodIncome": 0,
+   "foodSpend": 1.1
+  }
+ },
+ "tables": {
+  "seasonCrop": {
+   "spring": 1,
+   "summer": 0.8,
+   "autumn": 1.3,
+   "winter": 0
+  },
+  "seasonRot": {
+   "spring": 1,
+   "summer": 1.5,
+   "autumn": 0.85,
+   "winter": 0.6
+  },
+  "coldForageMul": 0.05,
+  "searchFoodPerAP": 0.33,
+  "searchMatPerAP": 1.04,
+  "forageSpringPerAP": 0.094,
+  "forageWinterPerAP": 0.011100000000000002,
+  "cropFoodPerDay": {
+   "veg": {
+    "spring": 0.4,
+    "summer": 0.2857142857142857,
+    "autumn": 0.5
+   },
+   "grain": {
+    "spring": 0.5555555555555556,
+    "summer": 0.4166666666666667,
+    "autumn": 0.7142857142857143
+   }
+  },
+  "tempLow": 30
+ }
+}

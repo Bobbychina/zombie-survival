@@ -1,0 +1,1423 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>丧尸末日生存 - v1.0</title>
+<style>
+  :root {
+    --bg: #0a0a0f;
+    --panel: #14141e;
+    --border: #2a2a3e;
+    --text: #c8c8d4;
+    --text-dim: #6a6a7e;
+    --accent: #d44a2a;
+    --accent-glow: #d44a2a44;
+    --green: #3ab07a;
+    --green-bg: #3ab07a22;
+    --blue: #3a8ab0;
+    --blue-bg: #3a8ab022;
+    --gold: #d4a83a;
+    --gold-bg: #d4a83a22;
+    --red: #d43a3a;
+    --red-bg: #d43a3a22;
+    --font: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background-image:
+      radial-gradient(ellipse at 20% 50%, rgba(212,74,42,0.06) 0%, transparent 60%),
+      radial-gradient(ellipse at 80% 50%, rgba(58,138,176,0.04) 0%, transparent 60%);
+  }
+  #app {
+    width: 100%;
+    max-width: 820px;
+    height: 100vh;
+    max-height: 900px;
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    margin: 16px;
+    box-shadow: 0 0 60px rgba(0,0,0,0.6);
+    overflow: hidden;
+    position: relative;
+  }
+
+  /* ─── Header / Stats Bar ─── */
+  #header {
+    padding: 16px 20px 12px;
+    border-bottom: 1px solid var(--border);
+    background: linear-gradient(180deg, rgba(212,74,42,0.06) 0%, transparent 100%);
+    flex-shrink: 0;
+  }
+  #header-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  #title {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: 2px;
+    text-shadow: 0 0 20px var(--accent-glow);
+  }
+  #day-display {
+    font-size: 13px;
+    color: var(--text-dim);
+    background: rgba(255,255,255,0.04);
+    padding: 4px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+  }
+  #day-display span { color: var(--gold); font-weight: 700; font-size: 15px; }
+  #stats {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+  }
+  .stat {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .stat-label {
+    font-size: 11px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .stat-bar {
+    height: 6px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 4px;
+    overflow: hidden;
+    position: relative;
+  }
+  .stat-bar-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.4s ease;
+  }
+  .stat-bar-fill.health { background: linear-gradient(90deg, #d43a3a, #d44a2a); }
+  .stat-bar-fill.ammo { background: linear-gradient(90deg, #3a8ab0, #5ab0d4); }
+  .stat-bar-fill.food { background: linear-gradient(90deg, #3ab07a, #5ad49a); }
+  .stat-bar-fill.water { background: linear-gradient(90deg, #3a7ab0, #5a9ad4); }
+  .stat-value { font-size: 12px; font-weight: 600; }
+  .stat-value.health { color: var(--red); }
+  .stat-value.ammo { color: var(--blue); }
+  .stat-value.food { color: var(--green); }
+  .stat-value.water { color: #5a9ad4; }
+
+  #sub-stats {
+    display: flex;
+    gap: 16px;
+    margin-top: 8px;
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+  #sub-stats span { display: flex; align-items: center; gap: 4px; }
+  #sub-stats .val { color: var(--text); font-weight: 600; }
+  #sub-stats .val.gold { color: var(--gold); }
+  #sub-stats .val.accent { color: var(--accent); }
+
+  /* ─── Game Log ─── */
+  #log-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    scroll-behavior: smooth;
+  }
+  #log-container::-webkit-scrollbar { width: 6px; }
+  #log-container::-webkit-scrollbar-track { background: transparent; }
+  #log-container::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  .log-entry {
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 14px;
+    line-height: 1.5;
+    animation: fadeIn 0.25s ease;
+  }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  .log-entry.narrative { color: var(--text); }
+  .log-entry.combat { color: var(--red); background: var(--red-bg); }
+  .log-entry.success { color: var(--green); background: var(--green-bg); }
+  .log-entry.info { color: var(--blue); background: var(--blue-bg); }
+  .log-entry.loot { color: var(--gold); background: var(--gold-bg); }
+  .log-entry.dim { color: var(--text-dim); font-size: 13px; }
+  .log-entry.system { color: var(--text-dim); font-size: 12px; font-style: italic; text-align: center; border-top: 1px solid var(--border); padding-top: 10px; margin-top: 6px; }
+  .log-entry.danger { color: #ff6a6a; background: rgba(255,50,50,0.1); font-weight: 600; }
+
+  /* ─── Actions ─── */
+  #actions {
+    padding: 12px 20px 16px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    background: rgba(0,0,0,0.2);
+  }
+  .btn {
+    padding: 8px 14px;
+    border: 1px solid var(--border);
+    background: rgba(255,255,255,0.04);
+    color: var(--text);
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: var(--font);
+    transition: all 0.15s;
+    white-space: nowrap;
+    user-select: none;
+  }
+  .btn:hover:not(:disabled) {
+    background: rgba(255,255,255,0.08);
+    border-color: var(--text-dim);
+  }
+  .btn:active:not(:disabled) { transform: scale(0.96); }
+  .btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+  .btn.primary:hover:not(:disabled) { background: #e85a3a; }
+  .btn.green { background: var(--green); border-color: var(--green); color: #fff; }
+  .btn.green:hover:not(:disabled) { background: #4ac88a; }
+  .btn.gold { background: var(--gold); border-color: var(--gold); color: #1a1a1a; font-weight: 600; }
+  .btn.gold:hover:not(:disabled) { background: #e4b84a; }
+  .btn.danger { border-color: var(--red); color: var(--red); }
+  .btn.danger:hover:not(:disabled) { background: var(--red-bg); }
+  .btn.small { padding: 4px 10px; font-size: 12px; }
+
+  /* ─── Modal ─── */
+  .modal-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    backdrop-filter: blur(4px);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 100;
+    animation: fadeIn 0.15s ease;
+  }
+  .modal {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    min-width: 320px;
+    max-width: 90%;
+    max-height: 80%;
+    overflow-y: auto;
+    box-shadow: 0 0 40px rgba(0,0,0,0.5);
+  }
+  .modal h2 {
+    font-size: 18px;
+    color: var(--accent);
+    margin-bottom: 16px;
+    text-align: center;
+  }
+  .modal p, .modal li {
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text);
+  }
+  .modal .btn-row {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+    margin-top: 16px;
+    flex-wrap: wrap;
+  }
+
+  /* Battle Modal */
+  #battle-zombie-info {
+    text-align: center;
+    padding: 12px;
+    margin-bottom: 12px;
+    border: 1px solid var(--red);
+    border-radius: 8px;
+    background: var(--red-bg);
+  }
+  #battle-zombie-info .name { font-size: 20px; font-weight: 700; color: var(--red); }
+  #battle-zombie-info .stats { font-size: 13px; color: var(--text-dim); margin-top: 4px; }
+  #battle-hp-bar { height: 8px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden; margin: 8px 0; }
+  #battle-hp-fill { height: 100%; background: linear-gradient(90deg, var(--red), #ff6a6a); border-radius: 4px; transition: width 0.3s; }
+
+  /* Inventory */
+  .inv-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 4px;
+  }
+  .inv-item .name { font-size: 14px; }
+  .inv-item .actions { display: flex; gap: 4px; }
+
+  /* Encyclopedia */
+  .encyc-tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 10px;
+  }
+  .encyc-tab {
+    flex:1;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px 6px 0 0;
+    background: rgba(255,255,255,0.02);
+    cursor: pointer;
+    font-size: 12px;
+    text-align: center;
+    transition: 0.1s;
+    color: var(--text-dim);
+  }
+  .encyc-tab:hover { background: rgba(255,255,255,0.06); }
+  .encyc-tab.active { background: rgba(255,255,255,0.08); border-color: var(--accent); color: var(--text); border-bottom-color: var(--panel); }
+  .encyc-tab .count { font-size: 10px; color: var(--text-dim); margin-left: 4px; }
+  .encyc-list {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    margin-bottom: 10px;
+  }
+  .encyc-item {
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    text-align: center;
+    transition: 0.1s;
+  }
+  .encyc-item:hover { background: rgba(255,255,255,0.06); border-color: var(--accent); }
+  .encyc-item.active { border-color: var(--accent); background: var(--accent-glow); }
+  .encyc-item.locked { color: var(--text-dim); opacity: 0.5; cursor: not-allowed; }
+  .encyc-item.locked:hover { border-color: var(--border); background: transparent; }
+  .encyc-item.cat-zombie { border-left: 3px solid var(--red); }
+  .encyc-item.cat-item { border-left: 3px solid var(--blue); }
+  .encyc-item.cat-lore { border-left: 3px solid var(--gold); }
+  #encyc-detail {
+    padding: 12px;
+    border-top: 1px solid var(--border);
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--text);
+    min-height: 80px;
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+  }
+  #encyc-detail .locked-msg { color: var(--text-dim); font-style: italic; text-align: center; padding: 20px; }
+
+  /* Merchant */
+  .shop-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-bottom: 4px;
+  }
+  .shop-item .info { font-size: 13px; }
+  .shop-item .info .cost { color: var(--gold); }
+
+  /* Responsive */
+  @media (max-width: 600px) {
+    #app { max-height: 100vh; margin: 0; border-radius: 0; }
+    #stats { grid-template-columns: repeat(2, 1fr); }
+    .btn { font-size: 12px; padding: 6px 10px; }
+    .modal { min-width: unset; width: 95%; padding: 16px; }
+    .encyc-list { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <!-- Header -->
+  <div id="header">
+    <div id="header-top">
+      <div id="title">⛔ 丧尸末日生存</div>
+      <div id="day-display">📅 第 <span id="day-num">1</span> 天</div>
+    </div>
+    <div id="stats">
+      <div class="stat">
+        <div class="stat-label"><span>❤️ 生命</span><span class="stat-value health" id="hp-text">100</span></div>
+        <div class="stat-bar"><div class="stat-bar-fill health" id="hp-bar" style="width:100%"></div></div>
+      </div>
+      <div class="stat">
+        <div class="stat-label"><span>🔫 弹药</span><span class="stat-value ammo" id="ammo-text">50</span></div>
+        <div class="stat-bar"><div class="stat-bar-fill ammo" id="ammo-bar" style="width:50%"></div></div>
+      </div>
+      <div class="stat">
+        <div class="stat-label"><span>🍖 食物</span><span class="stat-value food" id="food-text">50</span></div>
+        <div class="stat-bar"><div class="stat-bar-fill food" id="food-bar" style="width:50%"></div></div>
+      </div>
+      <div class="stat">
+        <div class="stat-label"><span>💧 水分</span><span class="stat-value water" id="water-text">50</span></div>
+        <div class="stat-bar"><div class="stat-bar-fill water" id="water-bar" style="width:50%"></div></div>
+      </div>
+    </div>
+    <div id="sub-stats">
+      <span>📦 资源: <span class="val gold" id="res-text">50</span></span>
+      <span>🛡️ 护甲: <span class="val accent" id="armor-text">1</span></span>
+      <span>🎒 负重: <span class="val" id="weight-text">0/100</span></span>
+      <span>🏆 主线进度: <span class="val gold" id="quest-text">0%</span></span>
+    </div>
+  </div>
+
+  <!-- Log -->
+  <div id="log-container"></div>
+
+  <!-- Actions -->
+  <div id="actions">
+    <button class="btn primary" id="btn-explore" onclick="explore()">🔍 探索</button>
+    <button class="btn green" id="btn-treat" onclick="treat()">💊 治疗 (10资源)</button>
+    <button class="btn green" id="btn-rest" onclick="rest()">😴 休息 (5资源+食物+水)</button>
+    <button class="btn" id="btn-armor" onclick="upgradeArmor()">🛡️ 强化护甲 (50资源)</button>
+    <button class="btn gold" id="btn-merchant" onclick="callMerchant()">🏪 呼叫商人</button>
+    <button class="btn" id="btn-inv" onclick="showInventory()">🎒 背包</button>
+    <button class="btn" id="btn-encyc" onclick="showEncyclopedia()">📖 百科</button>
+    <button class="btn" id="btn-quest" onclick="showQuest()">📋 主线任务</button>
+    <button class="btn small" onclick="saveGame()">💾 存档</button>
+    <button class="btn small" onclick="loadGame()">📂 读档</button>
+    <button class="btn small danger" id="btn-cheat" onclick="activateCheat()">⚡ 作弊</button>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════
+//  GAME STATE
+// ═══════════════════════════════════════════════
+const SAVE_KEY = 'zombie_survival_save';
+
+let G = {
+  health: 100,
+  maxHealth: 100,
+  resources: 50,
+  ammo: 50,
+  food: 50,
+  water: 50,
+  armor: 1,
+  weightCap: 100,
+  weight: 0,
+  days: 1,
+  actions: 0,
+  inventory: [],
+  equipped: { gasMask: false, hazmatSuit: false },
+  foundGun: false,
+  corpseTriggered: false,
+  specialTriggered: false,
+  questStage: 0,     // 0-5: main quest progression
+  questClues: 0,
+  cheatActivated: false,
+  gameOver: false,
+  discoveredLore: [], // 解锁的世界观条目
+  loreCount: 0,       // 发现的总 lore 数量
+};
+
+// ─── Zombie Templates ───
+const ZOMBIE_TYPES = [
+  { name:'普通丧尸', health:10, damage:5, speed:1, weight:2, ammoCost:3, desc:'行动缓慢，但数量众多。' },
+  { name:'重型丧尸', health:20, damage:15, speed:1, weight:54, ammoCost:10, desc:'体型庞大，生命力顽强。' },
+  { name:'奔跑者', health:15, damage:10, speed:2, weight:3, ammoCost:5, desc:'速度极快，攻击迅猛。' },
+  { name:'巨型丧尸', health:30, damage:20, speed:1, weight:5, ammoCost:15, desc:'极为危险，攻高血厚。' },
+  { name:'毒气丧尸', health:25, damage:10, speed:1.5, weight:4, ammoCost:7, desc:'释放有毒气体。防毒面具可减伤。' },
+  { name:'尖叫者', health:5, damage:3, speed:3, weight:1, ammoCost:2, desc:'速度快，尖叫吸引其他丧尸。' },
+  { name:'装甲丧尸', health:40, damage:25, speed:0.5, weight:8, ammoCost:20, desc:'身穿重型装甲，普通攻击效果差。' },
+];
+
+// ─── Encyclopedia Data ───
+// 分类: 'zombie' | 'item' | 'lore'
+const ENCYC = [
+  // —— 丧尸图鉴 ——
+  { id:'z_common',   cat:'zombie', name:'普通丧尸', desc:'血量：10 | 伤害：5\n这些丧尸行动缓慢，但数量众多，是末日初期最常见的威胁。\n\n由普通人类感染"芥末"病毒后转化而成，保留最基本的觅食本能。它们没有痛觉，只会被彻底的头部创伤或脊髓损伤阻止。' },
+  { id:'z_heavy',    cat:'zombie', name:'重型丧尸', desc:'血量：20 | 伤害：15\n体型庞大，生命力顽强，需要更多的弹药才能击倒。\n\n这些丧尸在感染前可能是体力劳动者或运动员，强壮的肌肉组织在变异后变得更加致密，如同天然的装甲。' },
+  { id:'z_runner',   cat:'zombie', name:'奔跑者', desc:'血量：15 | 伤害：10\n速度快，攻击迅猛，对付它们时需要保持距离。\n\n这些变异体保留了更多的运动协调能力，可以高速奔跑。它们的代谢率极高，驱使它们不停地追逐猎物。' },
+  { id:'z_giant',    cat:'zombie', name:'巨型丧尸', desc:'血量：30 | 伤害：20\n极为危险，攻击力和生命值都非常高。\n\n罕见的变异体，身高可达2.5米以上。病毒导致其骨骼和肌肉组织异常增生，形成庞大的身躯。遇到时最好确保你有充足的弹药。' },
+  { id:'z_poison',   cat:'zombie', name:'毒气丧尸', desc:'血量：25 | 伤害：10\n能够释放有毒气体。防毒面具可减少50%伤害。\n\n病毒在其体内发生异常发酵反应，产生有毒气体。这些气体会通过皮肤毛孔和口腔释放，对周围生物造成持续伤害。' },
+  { id:'z_screamer', cat:'zombie', name:'尖叫者', desc:'血量：5 | 伤害：3\n体型小巧，速度快，尖叫声能吸引其他丧尸。\n\n通常是青少年或体型较小的人类变异而成。它们的声带发生了奇特的变异，能够发出极高频率的尖叫，吸引方圆数百米内的其他丧尸。应优先解决。' },
+  { id:'z_armored',  cat:'zombie', name:'装甲丧尸', desc:'血量：40 | 伤害：25\n身穿重型装甲，对普通攻击有很高的抵抗力。\n\n这些丧尸在感染前是军人或安保人员，身上的装备在变异后与血肉融为一体。常规枪弹很难穿透它们的防护。攻击其暴露部位是唯一的选择。' },
+
+  // —— 物品大全 ——
+  { id:'i_medkit',   cat:'item', name:'急救包', desc:'使用后立即恢复50点生命值。\n\n末日中最宝贵的物资之一。包含消毒酒精、绷带、止痛药和缝合针。每一包都可能在你最危急的时刻救你一命。' },
+  { id:'i_ammo',     cat:'item', name:'弹药箱', desc:'提供20发额外弹药。\n\n标准的9mm手枪弹药箱。虽然不多，但在丧尸横行的世界里，每一发子弹都意味着多一分生存的希望。' },
+  { id:'i_armor',    cat:'item', name:'特殊护甲', desc:'装备后增加3点护甲值。\n\n用废弃车辆的装甲板和防弹纤维制成的重型护甲。虽然笨重，但能有效抵挡丧尸的撕咬和抓挠。' },
+  { id:'i_hazmat',   cat:'item', name:'防化服', desc:'减免75%的僵尸伤害。\n\n实验室级别的重型防护服。原本用于处理危险化学品，现在成了对抗丧尸病毒的保命装备。穿上它，普通的丧尸撕咬几乎无法穿透。' },
+  { id:'i_gasmask',  cat:'item', name:'防毒面具', desc:'减少50%的毒气丧尸伤害。\n\n配备活性炭过滤罐的军用防毒面具。对付毒气丧尸的关键装备。如果你打算进入破坏伞公司的实验室，这是必备品。' },
+  { id:'i_merchant', cat:'item', name:'商人', desc:'神秘的幸存者，游走于各个幸存者据点之间。\n\n没人知道他从哪里来，也没人知道他为什么总有好货。他愿意用资源交换稀有物资……而且他似乎知道很多不该知道的事情。' },
+
+  // —— 世界观·秘闻（需在游戏中发现解锁）——
+  { id:'l_company',  cat:'lore', name:'破坏伞公司', locked:true,
+    story:'「破坏伞公司」—— 末日之前全球最大的生物科技企业。\n\n表面上是医药巨头，暗地里却在从事违法的病毒武器研究。他们的总部设在市中心地下，拥有全球最先进的生物实验室。\n\n末日后，幸存者们传言：破坏伞公司的最高机密实验室里，保存着"芥末"病毒的唯一解药。但也有人说，那是他们用来制造更可怕生物的场所……' },
+  { id:'l_virus',    cat:'lore', name:'"芥末"病毒', locked:true,
+    story:'全称"Genetically Accelerated Mutagenic Organism Transmission"，简称 G.A.M.O.T.，代号"芥末"。\n\n这是一种人工设计的RNA病毒，能大幅加速生物的细胞分裂和突变速率。原本设计用于军事领域——创造超级士兵。\n\n但病毒有一个致命的副作用：它会在感染后期破坏大脑前额叶，使宿主失去理性思考能力，只剩下原始的攻击本能。这就是"丧尸"的由来。' },
+  { id:'l_lab',      cat:'lore', name:'秘密实验室', locked:true,
+    story:'破坏伞公司最高机密实验室，代号"方舟"。\n\n位于市中心地下200米处，共有7层防护门。每一层都需要不同的生物识别信息才能通过。传闻实验室的核心区域——第7层——保存着"芥末"病毒的唯一解药。\n\n但最近有传言说，实验室的自动防御系统仍然在运行……而且有2只特殊的巨型丧尸被锁在第6层，它们似乎保留着某种程度的智能，能够控制其他丧尸。' },
+  { id:'l_outbreak', cat:'lore', name:'末日的开端', locked:true,
+    story:'X-Day，末日第一天。\n\n一切都始于破坏伞公司"方舟"实验室的一次"轻微泄漏"。公司高层试图掩盖真相，将事故定性为"局部污染"。\n\n但当第一个被感染者在市中心商业区失去控制时，一切都太晚了。病毒在72小时内扩散到了整个城市。军队的反应太慢、太弱。一周后，通讯彻底中断。\n\n这就是我们所知道的"旧世界"的终结。' },
+  { id:'l_evo',      cat:'lore', name:'丧尸进化论', locked:true,
+    story:'「芥末」病毒有一个令人恐惧的特性：它每隔一段时间就会发生群体性进化。\n\n大约每5天左右，所有感染者都会同步发生一次变异——速度更快、力量更强、生命力更顽强。科学家们推测这是病毒群体智能的一种表现。\n\n更可怕的是，这种进化似乎也会影响到幸存者。许多人报告说自己的身体素质也在同步增强……仿佛病毒也在试图"平衡"这场博弈。' },
+  { id:'l_tech',     cat:'lore', name:'旧世界的科技', locked:true,
+    story:'末日之前，人类的技术已经达到了惊人的高度。\n\n智能手机、人工智能、基因编辑、量子计算……但这些科技在末日面前脆弱得可笑。电网瘫痪后，一切都回到了蒸汽时代之前。\n\n不过，仍然有一些"旧世界的遗产"在废墟中等待被发现——太阳能板、无线电设备、医疗扫描仪……甚至还有一些破坏伞公司遗留的先进武器原型。' },
+  { id:'l_survivors', cat:'lore', name:'幸存者网络', locked:true,
+    story:'末日并不意味着文明的终结。\n\n世界各地仍然散落着大大小小的幸存者营地。他们通过无线电、信使和偶尔运作的互联网节点保持联系。\n\n这些营地有各自的规则和文化。有些是军事化的严格管制区，有些则保持着末日前的民主制度。他们之间偶尔会发生冲突，但大多数时候，幸存者们明白——真正的敌人不是彼此。' },
+  { id:'l_military', cat:'lore', name:'军方最后通讯', locked:true,
+    story:'末日第14天，军方发出了最后一段广播信号：\n\n"这里是『铁锤』基地。我们正在失去对城市北部的控制。感染者数量预计超过百万。我们即将启动『净空协议』……愿上帝保佑我们所有人。"\n\n广播结束后，城市北部传来巨大的爆炸声。军方用空袭摧毁了整个城区。但即便这样，也没能阻止病毒的扩散。\n\n从那以后，再也没有收到过来自军方的任何消息……' },
+  { id:'l_patient0', cat:'lore', name:'零号病人之谜', locked:true,
+    story:'关于第一个感染者——零号病人——的信息少之又少。\n\n破坏伞公司的内部档案显示，零号病人是一名35岁的男性流浪汉，被公司以"临床试验"的名义招募。他注射的并不是"芥末"病毒本身，而是一种早期的、不稳定的版本。\n\n有传言说，零号病人并没有死。他可能仍然在某处游荡……或者，他已经进化成了某种完全不同……更可怕的东西。' },
+  { id:'l_the_one',  cat:'lore', name:'医生的日记', locked:true,
+    story:'（这是一份在你苏醒的医院中找到的褪色日记本）\n\n"第47天。我是这家医院最后的医生了。\n\n今天有一个受伤的男人被送到了门口。他的手臂被丧尸咬伤，但我们还是把他带了进来。我给他做了截肢手术，用了最后的麻醉剂。\n\n他在昏迷中不停地重复着同一个词：『方舟』。他说那里有答案。\n\n他醒来后告诉我，他是从破坏伞公司逃出来的研究员。他说公司在地下实验室里做的那些事……不是人该做的。\n\n他说解药真的存在。\n\n然后他死了。\n\n我不知道我还能坚持多久。但我要把这个消息传下去。如果有人读到这段话——去方舟实验室，找到解药。"\n\n\n—— 这本日记的主人现在不知所踪。但你整理了这段记述，将其牢记在心。' },
+];
+
+const MERCHANT_ITEMS = [
+  { name:'急救包', cost:30, effect:'恢复50生命值' },
+  { name:'弹药箱', cost:40, effect:'获得20弹药' },
+  { name:'防毒面具', cost:80, effect:'减少50%毒气伤害' },
+  { name:'防化服', cost:100, effect:'减免75%僵尸伤害' },
+  { name:'特殊护甲', cost:100, effect:'护甲+3' },
+];
+
+// ═══════════════════════════════════════════════
+//  CORE FUNCTIONS
+// ═══════════════════════════════════════════════
+function log(msg, type='narrative') {
+  const el = document.getElementById('log-container');
+  const entry = document.createElement('div');
+  entry.className = `log-entry ${type}`;
+  entry.textContent = msg;
+  el.appendChild(entry);
+  el.scrollTop = el.scrollHeight;
+}
+
+function clearLog() {
+  document.getElementById('log-container').innerHTML = '';
+}
+
+function updateUI() {
+  const hpPct = Math.max(0, G.health / G.maxHealth * 100);
+  document.getElementById('hp-bar').style.width = hpPct + '%';
+  document.getElementById('hp-text').textContent = `${G.health}/${G.maxHealth}`;
+  document.getElementById('ammo-bar').style.width = Math.min(100, G.ammo / 100 * 100) + '%';
+  document.getElementById('ammo-text').textContent = G.ammo;
+  document.getElementById('food-bar').style.width = Math.min(100, G.food / 100 * 100) + '%';
+  document.getElementById('food-text').textContent = G.food;
+  document.getElementById('water-bar').style.width = Math.min(100, G.water / 100 * 100) + '%';
+  document.getElementById('water-text').textContent = G.water;
+  document.getElementById('res-text').textContent = G.resources;
+  document.getElementById('armor-text').textContent = G.armor;
+  document.getElementById('weight-text').textContent = `${G.weight}/${G.weightCap}`;
+  document.getElementById('day-num').textContent = G.days;
+  document.getElementById('quest-text').textContent = Math.round(G.questStage / 5 * 100) + '%';
+  document.getElementById('btn-cheat').style.display = G.cheatActivated ? 'none' : 'inline-block';
+}
+
+function checkGameOver() {
+  if (G.health <= 0) {
+    G.health = 0;
+    updateUI();
+    gameOver('你在末日中倒下了……游戏结束。');
+    return true;
+  }
+  return false;
+}
+
+function gameOver(msg) {
+  G.gameOver = true;
+  log('💀 ' + msg, 'danger');
+  log('━━━━━━━━━━━━━━━━━━━━━━', 'system');
+  log('点击「读档」可以重新开始，或刷新页面开新局。', 'dim');
+  document.querySelectorAll('#actions .btn').forEach(b => b.disabled = true);
+  document.querySelector('.btn.small[onclick="loadGame()"]').disabled = false;
+}
+
+// ─── Damage Calculation ───
+function calcDamageTaken(zombieDamage, zombieName) {
+  let dmg = zombieDamage;
+  // Carry penalty
+  const carryPct = G.weight / G.weightCap;
+  if (carryPct > 0.5) dmg *= 1 + (carryPct - 0.5) * 2;
+  // Equipment
+  if (zombieName === '毒气丧尸' && G.equipped.gasMask) dmg *= 0.5;
+  if (G.equipped.hazmatSuit) dmg *= 0.25;
+  // Armor reduction
+  dmg = Math.max(1, Math.round(dmg - G.armor * 2));
+  return Math.max(1, dmg);
+}
+
+function calcDamageDealt() {
+  let dmg = 10;
+  // Bonus from days survived
+  dmg += Math.floor(G.days / 5) * 2;
+  return dmg;
+}
+
+// ─── Day & Evolution ───
+function advanceDay() {
+  G.actions++;
+  if (G.actions % 5 === 0) {
+    G.days++;
+    G.maxHealth += 10;
+    G.health = Math.min(G.health + 10, G.maxHealth);
+    log(`☀️ 第 ${G.days} 天来临了。所有生物都在进化……`, 'system');
+    log(`❤️ 最大生命值 +10，当前 ${G.maxHealth}`, 'success');
+    // Random evolution event
+    if (G.health < G.maxHealth - 20) G.health += 10; // small heal
+    // Quest auto-progression
+    if (G.days % 7 === 0 && G.questStage < 5) {
+      G.questStage = Math.min(5, G.questStage + 1);
+      log('📋 你获得了关于实验室的新线索……', 'info');
+      if (G.questStage >= 2 && discoverLore('l_lab')) log('📖 百科解锁：秘密实验室', 'info');
+    }
+    // Lore unlock on day 5
+    if (G.days === 5 && discoverLore('l_evo')) log('📖 百科解锁：丧尸进化论', 'info');
+  }
+}
+
+// ─── Create Zombie ───
+function createZombie() {
+  const template = ZOMBIE_TYPES[Math.floor(Math.random() * ZOMBIE_TYPES.length)];
+  const multiplier = Math.floor(G.days / 5) + 1;
+  return {
+    ...template,
+    health: template.health * multiplier,
+    maxHealth: template.health * multiplier,
+    damage: Math.round(template.damage * (1 + 0.1 * Math.floor(G.days / 5))),
+  };
+}
+
+// ═══════════════════════════════════════════════
+//  EXPLORATION
+// ═══════════════════════════════════════════════
+function explore() {
+  if (G.gameOver) return;
+  log('━━━━━━━━━━━━━━━━━━━━━━', 'system');
+  log('🔍 你出发探索废墟……', 'narrative');
+  advanceDay();
+  updateUI();
+
+  const zombieChance = Math.min(30 + Math.floor(G.days / 10), 70);
+  const roll = Math.random() * 100;
+
+  if (!G.foundGun) {
+    // First find gun
+    G.ammo += 20;
+    G.weight += 5;
+    G.foundGun = true;
+    log('🔫 你在警察局的废墟里找到了一把枪和20发弹药！', 'loot');
+    updateUI();
+    return;
+  }
+
+  if (roll < zombieChance) {
+    encounterZombie();
+  } else if (roll < 3) {
+    // 3% chance horde (was roll === 100 in original, ~1%)
+    hordeAttack();
+  } else if (roll < 8) {
+    // 5% merchant or special
+    if (!G.specialTriggered) {
+      G.specialTriggered = true;
+      specialEvent();
+    } else {
+      meetAllies();
+    }
+  } else if (roll < 15) {
+    meetAllies();
+  } else {
+    // Nothing special
+    const nothing = [
+      '你搜索了一片区域，什么也没找到。',
+      '只有风吹过废墟的声音。',
+      '你看到远处有丧尸的影子，但绕开了。',
+      '你找到了一些没用的旧报纸。',
+      '周围很安静……太安静了。',
+    ];
+    log(randomPick(nothing), 'dim');
+  }
+  updateUI();
+}
+
+function randomPick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
+
+// ═══════════════════════════════════════════════
+//  COMBAT
+// ═══════════════════════════════════════════════
+let battleState = null;
+
+function encounterZombie() {
+  const zombie = createZombie();
+  battleState = { zombie };
+  log(`💀 你遭遇了 ${zombie.name}！`, 'combat');
+  showBattleModal();
+}
+
+function showBattleModal() {
+  if (!battleState) return;
+  const z = battleState.zombie;
+  const hpPct = Math.max(0, z.health / z.maxHealth * 100);
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'battle-overlay';
+  overlay.innerHTML = `
+    <div class="modal">
+      <h2>⚔️ 战斗</h2>
+
+      <div style="display:flex;gap:10px;flex-wrap:wrap;">
+        <!-- 僵尸面板 -->
+        <div id="battle-zombie-info" style="flex:1;min-width:140px;">
+          <div class="name">${z.name}</div>
+          <div class="stats">⚔️ 伤害 ${z.damage} | 🎯 弹药消耗 ${z.ammoCost}/次</div>
+          <div id="battle-hp-bar"><div id="battle-hp-fill" style="width:${hpPct}%"></div></div>
+          <div class="stats">❤️ 僵尸生命: <span id="battle-hp-text">${z.health}</span>/${z.maxHealth}</div>
+          <div style="font-size:11px;color:var(--text-dim);margin-top:4px;">${z.desc}</div>
+        </div>
+
+        <!-- 玩家面板（内嵌，不依赖背景） -->
+        <div style="flex:1;min-width:160px;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px;">
+          <div style="font-size:12px;font-weight:700;color:var(--accent);margin-bottom:6px;">🧑 你的状态</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:13px;">
+            <span>❤️ 生命</span><span style="text-align:right;font-weight:600;color:var(--red);" id="battle-my-hp">${G.health}</span>
+            <span>🔫 弹药</span><span style="text-align:right;font-weight:600;color:var(--blue);" id="battle-my-ammo">${G.ammo}</span>
+            <span>🛡️ 护甲</span><span style="text-align:right;font-weight:600;color:var(--accent);">${G.armor}</span>
+            <span>📦 资源</span><span style="text-align:right;font-weight:600;color:var(--gold);">${G.resources}</span>
+          </div>
+          <div style="margin-top:6px;display:flex;gap:4px;flex-wrap:wrap;font-size:11px;color:var(--text-dim);">
+            ${G.equipped.hazmatSuit?'<span>✅ 防化服</span>':''}
+            ${G.equipped.gasMask?'<span>✅ 防毒面具</span>':''}
+            ${!G.equipped.hazmatSuit && !G.equipped.gasMask ? '<span>无特殊装备</span>' : ''}
+          </div>
+        </div>
+      </div>
+
+      <div class="btn-row">
+        <button class="btn primary" id="battle-attack-btn">🔫 射击</button>
+        <button class="btn danger" id="battle-flee-btn">🏃 逃跑 (-10资源)</button>
+      </div>
+      <div id="battle-log" style="margin-top:10px;font-size:13px;color:var(--text-dim);text-align:center;min-height:20px;"></div>
+    </div>
+  `;
+  document.getElementById('app').appendChild(overlay);
+
+  document.getElementById('battle-attack-btn').onclick = battleAttack;
+  document.getElementById('battle-flee-btn').onclick = battleFlee;
+}
+
+function updateBattleUI() {
+  if (!battleState) return;
+  const z = battleState.zombie;
+  const hpPct = Math.max(0, z.health / z.maxHealth * 100);
+  const fill = document.getElementById('battle-hp-fill');
+  const text = document.getElementById('battle-hp-text');
+  if (fill) fill.style.width = hpPct + '%';
+  if (text) text.textContent = z.health;
+  // 更新内嵌玩家面板
+  const myHp = document.getElementById('battle-my-hp');
+  const myAmmo = document.getElementById('battle-my-ammo');
+  if (myHp) myHp.textContent = G.health;
+  if (myAmmo) myAmmo.textContent = G.ammo;
+}
+
+function battleLog(msg) {
+  const el = document.getElementById('battle-log');
+  if (el) el.innerHTML = msg;
+}
+
+function battleAttack() {
+  if (!battleState) return;
+  const z = battleState.zombie;
+  if (G.ammo < z.ammoCost) {
+    battleLog('❌ 弹药不足！无法攻击！');
+    return;
+  }
+  G.ammo -= z.ammoCost;
+  const dmg = calcDamageDealt();
+  z.health -= dmg;
+  battleLog(`💥 你造成了 ${dmg} 点伤害！`);
+  updateBattleUI();
+
+  if (z.health <= 0) {
+    // Victory
+    endBattle(true);
+    return;
+  }
+
+  // Zombie counterattack
+  const taken = calcDamageTaken(z.damage, z.name);
+  G.health -= taken;
+  battleLog(`💥 你造成了 ${dmg} 点伤害！\n💢 ${z.name} 反击，对你造成 ${taken} 点伤害！`);
+  updateUI();
+  updateBattleUI();
+
+  if (G.health <= 0) {
+    closeModal('battle-overlay');
+    checkGameOver();
+  }
+}
+
+function battleFlee() {
+  if (G.resources < 10) {
+    battleLog('❌ 资源不足，无法逃跑！');
+    return;
+  }
+  G.resources -= 10;
+  log('🏃 你成功逃跑了！损失了10资源。', 'dim');
+  closeModal('battle-overlay');
+  battleState = null;
+  updateUI();
+}
+
+function endBattle(win) {
+  const z = battleState.zombie;
+  closeModal('battle-overlay');
+  if (win) {
+    G.weight += z.weight;
+    const lootRes = Math.floor(Math.random() * 15) + 5;
+    G.resources += lootRes;
+    log(`✅ 你击败了 ${z.name}！`, 'success');
+    log(`📦 获得 ${lootRes} 资源，负重 +${z.weight}`, 'loot');
+    // Small chance to find quest clue
+    if (G.questStage < 5 && Math.random() < 0.15) {
+      G.questStage = Math.min(5, G.questStage + 1);
+      log('📋 在丧尸身上发现了一张实验室门禁卡碎片……主线进度推进！', 'info');
+    }
+    // Lore: zombie evolution from battle
+    if (Math.random() < 0.2 && discoverLore('l_evo')) log('📖 百科解锁：丧尸进化论', 'info');
+    // Lore: zero patient from rare drops
+    if (Math.random() < 0.1 && discoverLore('l_patient0')) log('📖 百科解锁：零号病人之谜', 'info');
+    // Lore: military from armored zombies
+    if (z.name === '装甲丧尸' && Math.random() < 0.3 && discoverLore('l_military')) log('📖 百科解锁：军方最后通讯', 'info');
+  }
+  battleState = null;
+  updateUI();
+}
+
+// ═══════════════════════════════════════════════
+//  EVENTS
+// ═══════════════════════════════════════════════
+function hordeAttack() {
+  log('💀💀💀 尸潮来袭！', 'danger');
+  const dmg = Math.round(20 * (1 + G.weight / G.weightCap));
+  G.health -= dmg;
+  G.ammo = Math.max(0, G.ammo - 10);
+  G.resources = Math.max(0, G.resources - 20);
+  if (G.health <= 0) { checkGameOver(); return; }
+  log(`💢 你在尸潮中受了重伤！损失 ${dmg} 生命、10弹药、20资源。`, 'combat');
+  updateUI();
+}
+
+function meetAllies() {
+  const gain = Math.floor(Math.random() * 10) + 5;
+  G.resources += gain;
+  G.ammo += 5;
+  G.weight += 2;
+  log('🤝 你遇到了一群友好的幸存者，他们给了你一些物资！', 'success');
+  log(`📦 获得 ${gain} 资源、5 弹药`, 'loot');
+  // Quest clue from survivors
+  if (G.questStage < 5 && Math.random() < 0.3) {
+    G.questStage = Math.min(5, G.questStage + 1);
+    log('📋 幸存者告诉了你关于实验室通风管道的情报！', 'info');
+  }
+  // Lore: 幸存者网络
+  if (discoverLore('l_survivors')) log('📖 百科解锁：幸存者网络', 'info');
+  updateUI();
+}
+
+function specialEvent() {
+  const events = [
+    () => {
+      const found = Math.floor(Math.random() * 20) + 10;
+      G.resources += found;
+      G.weight += found;
+      log('📦 你发现了一个废弃的物资仓库！', 'loot');
+      log(`获得 ${found} 资源`, 'loot');
+      // 20% chance to discover lore in loot
+      const loreRng = Math.random();
+      if (loreRng < 0.3 && discoverLore('l_tech')) log('📖 百科解锁：旧世界的科技', 'info');
+      else if (loreRng < 0.5 && discoverLore('l_outbreak')) log('📖 百科解锁：末日的开端', 'info');
+    },
+    () => {
+      const dmg = Math.floor(Math.random() * 20) + 10;
+      G.health -= dmg;
+      log('⚠️ 你触发了一个陷阱！', 'danger');
+      log(`受到 ${dmg} 点伤害`, 'combat');
+      if (G.health <= 0) { checkGameOver(); return; }
+    },
+    () => {
+      log('🏪 你遇到了一个神秘商人……', 'info');
+      callMerchant();
+    },
+    () => {
+      // Lore discovery
+      if (G.questStage < 5) {
+        G.questStage = Math.min(5, G.questStage + 1);
+        log('📜 你发现了一份破坏伞公司的实验报告！', 'info');
+        log('上面提到了"芥末"病毒的解毒剂配方……', 'info');
+      }
+      // Multiple lore unlock chances
+      if (discoverLore('l_company')) log('📖 百科解锁：破坏伞公司', 'info');
+      if (Math.random() < 0.5 && discoverLore('l_virus')) log('📖 百科解锁："芥末"病毒', 'info');
+    },
+  ];
+  randomPick(events)();
+  updateUI();
+}
+
+// ═══════════════════════════════════════════════
+//  ACTIONS
+// ═══════════════════════════════════════════════
+function treat() {
+  if (G.gameOver) return;
+  if (G.resources < 10) { log('❌ 资源不足，无法治疗！', 'dim'); return; }
+  G.resources -= 10;
+  const heal = 20;
+  G.health = Math.min(G.health + heal, G.maxHealth);
+  log(`💊 使用了10资源，恢复了 ${heal} 点生命值。`, 'success');
+  updateUI();
+}
+
+function rest() {
+  if (G.gameOver) return;
+  if (G.resources < 5 || G.food < 1 || G.water < 1) {
+    log('❌ 资源、食物或水分不足，无法休息！', 'dim');
+    return;
+  }
+  G.resources -= 5;
+  G.food -= 1;
+  G.water -= 1;
+  G.health = Math.min(G.health + 10, G.maxHealth);
+  log('😴 你休息了一会儿，恢复了10点体力。', 'success');
+  updateUI();
+}
+
+function upgradeArmor() {
+  if (G.gameOver) return;
+  if (G.resources < 50) { log('❌ 资源不足！需要50资源。', 'dim'); return; }
+  G.resources -= 50;
+  G.armor++;
+  log('🛡️ 你强化了护甲！当前护甲等级：' + G.armor, 'success');
+  updateUI();
+}
+
+// ─── Merchant ───
+function callMerchant() {
+  if (G.gameOver) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'merchant-overlay';
+  let itemsHtml = '';
+  MERCHANT_ITEMS.forEach((item, i) => {
+    const canBuy = G.resources >= item.cost;
+    itemsHtml += `
+      <div class="shop-item">
+        <div class="info">
+          <strong>${item.name}</strong> — ${item.effect}
+          <div class="cost">💰 ${item.cost} 资源</div>
+        </div>
+        <button class="btn small ${canBuy?'green':'btn'}" ${canBuy?'':''} onclick="buyMerchantItem(${i})" ${canBuy?'':'disabled'}>
+          ${canBuy?'购买':'资源不足'}
+        </button>
+      </div>
+    `;
+  });
+  overlay.innerHTML = `
+    <div class="modal">
+      <h2>🏪 神秘商人</h2>
+      <p style="text-align:center;color:var(--text-dim);margin-bottom:12px;">"需要点什么？我这儿好货不少。"</p>
+      <div>${itemsHtml}</div>
+      <div class="btn-row">
+        <button class="btn" onclick="closeModal('merchant-overlay')">离开</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('app').appendChild(overlay);
+}
+
+function buyMerchantItem(index) {
+  const item = MERCHANT_ITEMS[index];
+  if (G.resources < item.cost) { log('❌ 资源不够！', 'dim'); return; }
+  G.resources -= item.cost;
+  if (item.name === '急救包') {
+    G.inventory.push('急救包');
+    log('🛒 购买了急救包', 'loot');
+  } else if (item.name === '弹药箱') {
+    G.ammo += 20;
+    log('🛒 购买了弹药箱 (+20弹药)', 'loot');
+  } else if (item.name === '防毒面具') {
+    G.equipped.gasMask = true;
+    G.inventory.push('防毒面具');
+    log('🛒 购买了防毒面具（已自动装备）', 'loot');
+  } else if (item.name === '防化服') {
+    G.equipped.hazmatSuit = true;
+    G.inventory.push('防化服');
+    log('🛒 购买了防化服（已自动装备）', 'loot');
+  } else if (item.name === '特殊护甲') {
+    G.armor += 3;
+    log('🛒 购买了特殊护甲 (护甲+3)', 'loot');
+  }
+  // Quest clue from merchant
+  if (G.questStage < 5 && Math.random() < 0.4) {
+    G.questStage = Math.min(5, G.questStage + 1);
+    log('📋 商人低声告诉你："实验室的密码是……" 主线进度推进！', 'info');
+  }
+  // Lore from merchant stories
+  if (Math.random() < 0.3 && discoverLore('l_survivors')) log('📖 百科解锁：幸存者网络', 'info');
+  updateUI();
+  closeModal('merchant-overlay');
+}
+
+// ═══════════════════════════════════════════════
+//  INVENTORY
+// ═══════════════════════════════════════════════
+function showInventory() {
+  if (G.gameOver) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'inv-overlay';
+  let invHtml = '';
+  if (G.inventory.length === 0) {
+    invHtml = '<p style="text-align:center;color:var(--text-dim);padding:20px;">🎒 背包是空的。</p>';
+  } else {
+    invHtml = G.inventory.map((item, i) => `
+      <div class="inv-item">
+        <span class="name">${item}</span>
+        <div class="actions">
+          <button class="btn small green" onclick="useItem(${i})">使用</button>
+          <button class="btn small danger" onclick="dropItem(${i})">丢弃</button>
+        </div>
+      </div>
+    `).join('');
+  }
+  overlay.innerHTML = `
+    <div class="modal">
+      <h2>🎒 背包</h2>
+      <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px;">负重: ${G.weight}/${G.weightCap}</p>
+      ${invHtml}
+      <div class="btn-row">
+        <button class="btn" onclick="closeModal('inv-overlay')">关闭</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('app').appendChild(overlay);
+}
+
+function useItem(index) {
+  const item = G.inventory[index];
+  if (!item) return;
+  if (item === '急救包') {
+    G.inventory.splice(index, 1);
+    G.health = Math.min(G.health + 50, G.maxHealth);
+    log('💊 使用了急救包，恢复50生命值。', 'success');
+    updateUI();
+    closeModal('inv-overlay');
+  } else if (item === '防毒面具') {
+    G.equipped.gasMask = !G.equipped.gasMask;
+    log(`😷 防毒面具 ${G.equipped.gasMask ? '已装备' : '已卸下'}`, 'info');
+    closeModal('inv-overlay');
+  } else if (item === '防化服') {
+    G.equipped.hazmatSuit = !G.equipped.hazmatSuit;
+    log(`🧥 防化服 ${G.equipped.hazmatSuit ? '已装备' : '已卸下'}`, 'info');
+    closeModal('inv-overlay');
+  } else {
+    log('❌ 这个物品不能直接使用。', 'dim');
+  }
+}
+
+function dropItem(index) {
+  const item = G.inventory[index];
+  if (!item) return;
+  G.inventory.splice(index, 1);
+  log(`🗑️ 丢弃了 ${item}`, 'dim');
+  closeModal('inv-overlay');
+}
+
+// ═══════════════════════════════════════════════
+//  ENCYCLOPEDIA (分类 + 可发现世界观)
+// ═══════════════════════════════════════════════
+function isLoreDiscovered(id) {
+  const entry = ENCYC.find(e => e.id === id);
+  if (!entry || !entry.locked) return true;
+  return G.discoveredLore.includes(id);
+}
+function discoverLore(id) {
+  if (G.discoveredLore.includes(id)) return false;
+  G.discoveredLore.push(id);
+  G.loreCount++;
+  return true;
+}
+
+function showEncyclopedia() {
+  if (G.gameOver) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'encyc-overlay';
+
+  let currentCat = 'zombie'; // zombie | item | lore
+  function renderTab(cat, label, icon) {
+    const items = ENCYC.filter(e => e.cat === cat);
+    const unlocked = items.filter(e => !e.locked || G.discoveredLore.includes(e.id)).length;
+    return `<div class="encyc-tab ${cat === currentCat ? 'active':''}" onclick="switchEncycCat('${cat}')">${icon} ${label} <span class="count">${unlocked}/${items.length}</span></div>`;
+  }
+
+  overlay.innerHTML = `
+    <div class="modal">
+      <h2>📖 末日百科</h2>
+      <div class="encyc-tabs">
+        ${renderTab('zombie', '丧尸', '🧟')}
+        ${renderTab('item', '物品', '📦')}
+        ${renderTab('lore', '秘闻', '📜')}
+      </div>
+      <div id="encyc-list-container" style="min-height:60px;"></div>
+      <div id="encyc-detail">👆 选择一个条目查看详情</div>
+      <div class="btn-row">
+        <button class="btn" onclick="closeModal('encyc-overlay')">关闭</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('app').appendChild(overlay);
+  switchEncycCat('zombie');
+}
+
+function switchEncycCat(cat) {
+  document.querySelectorAll('.encyc-tab').forEach((t,i) => {
+    t.classList.toggle('active', (i===0&&cat==='zombie')||(i===1&&cat==='item')||(i===2&&cat==='lore'));
+  });
+  const items = ENCYC.filter(e => e.cat === cat);
+  const container = document.getElementById('encyc-list-container');
+  container.innerHTML = items.map(e => {
+    const unlocked = isLoreDiscovered(e.id);
+    const lockedCls = e.locked && !unlocked ? 'locked' : '';
+    const catCls = 'cat-' + e.cat;
+    const name = e.locked && !unlocked ? '❓ ???' : e.name;
+    const onclick = e.locked && !unlocked ? '' : `showEncycDetail('${e.id}')`;
+    return `<div class="encyc-item ${lockedCls} ${catCls}" onclick="${onclick}" data-id="${e.id}">${name}</div>`;
+  }).join('');
+  // show first unlocked entry
+  const first = items.find(e => isLoreDiscovered(e.id));
+  if (first) showEncycDetail(first.id);
+  else document.getElementById('encyc-detail').innerHTML = '<div class="locked-msg">🔒 该分类下没有可查看的条目</div>';
+}
+
+function showEncycDetail(id) {
+  document.querySelectorAll('.encyc-item').forEach(e => e.classList.remove('active'));
+  const el = document.querySelector(`.encyc-item[data-id="${id}"]`);
+  if (el) el.classList.add('active');
+  const entry = ENCYC.find(e => e.id === id);
+  const detail = document.getElementById('encyc-detail');
+  if (!entry || !detail) return;
+  if (entry.locked && !G.discoveredLore.includes(entry.id)) {
+    detail.innerHTML = '<div class="locked-msg">🔒 你还没有发现这条信息。<br>继续探索末日世界来解锁更多秘闻。</div>';
+    return;
+  }
+  const content = entry.story || entry.desc;
+  // For lore entries, also show discovery hint
+  const discovered = G.discoveredLore.includes(entry.id);
+  const discTag = discovered ? '\n\n━━━━━━━━━━━━━\n📖 已收录于你的百科' : '';
+  detail.innerHTML = (content + discTag).replace(/\n/g, '<br>');
+}
+
+// ═══════════════════════════════════════════════
+//  MAIN QUEST
+// ═══════════════════════════════════════════════
+function showQuest() {
+  if (G.gameOver) return;
+  const stages = [
+    { name:'🔍 收集情报', desc:'寻找关于破坏伞公司实验室位置的线索。', detail:'通过探索、战斗和与商人交易来获取情报。' },
+    { name:'🗺️ 定位实验室', desc:'你已经知道实验室的大致方位了。', detail:'需要更多线索来确认精确位置。' },
+    { name:'🔬 获取权限', desc:'实验室需要门禁权限。收集门禁卡碎片。', detail:'某些丧尸身上可能携带门禁卡碎片。' },
+    { name:'🧪 准备进入', desc:'实验室内有毒气泄漏，需要防毒面具和防化服。', detail:'确保你有足够的装备和资源。' },
+    { name:'⚔️ 深入敌穴', desc:'你已经到了实验室门口，里面的巨型丧尸在等着你。', detail:'这是最后的准备了……' },
+    { name:'🏆 最终决战', desc:'进入实验室，击败守卫，夺取解药！', detail:'点击下方按钮开始最终决战。' },
+  ];
+  const stage = Math.min(G.questStage, 5);
+  const s = stages[stage];
+
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'quest-overlay';
+  overlay.innerHTML = `
+    <div class="modal" style="min-width:360px;">
+      <h2>📋 主线任务：寻找解药</h2>
+      <div style="padding:12px;border:1px solid var(--border);border-radius:8px;margin-bottom:12px;">
+        <div style="font-size:16px;font-weight:700;color:var(--gold);">${s.name}</div>
+        <div style="font-size:14px;margin-top:6px;">${s.desc}</div>
+        <div style="font-size:13px;color:var(--text-dim);margin-top:6px;">${s.detail}</div>
+        <div style="display:flex;gap:4px;margin-top:10px;justify-content:center;">
+          ${[0,1,2,3,4,5].map(i => `<div style="width:28px;height:28px;border-radius:50%;background:${i<=G.questStage?'var(--gold)':'var(--border)'};display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:${i<=G.questStage?'#000':'var(--text-dim)'};">${i+1}</div>`).join('')}
+        </div>
+        <div style="text-align:center;font-size:12px;color:var(--text-dim);margin-top:6px;">进度: ${Math.round(G.questStage/5*100)}%</div>
+      </div>
+      ${G.questStage >= 5 ? `
+        <div style="text-align:center;">
+          <p style="color:var(--red);font-weight:700;margin-bottom:10px;">⚡ 你已经准备好进入实验室了！</p>
+          <button class="btn primary" onclick="finalBattle()">⚔️ 进入实验室（最终决战）</button>
+        </div>
+      ` : `
+        <p style="text-align:center;color:var(--text-dim);font-size:13px;">💡 继续探索世界，收集情报来推进主线。</p>
+      `}
+      <div class="btn-row">
+        <button class="btn" onclick="closeModal('quest-overlay')">关闭</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('app').appendChild(overlay);
+}
+
+// ═══════════════════════════════════════════════
+//  FINAL BATTLE
+// ═══════════════════════════════════════════════
+let finalBattleState = null;
+
+function finalBattle() {
+  closeModal('quest-overlay');
+  log('━━━━━━━━━━━━━━━━━━━━━━', 'system');
+  log('🔥 你闯入了破坏伞公司的秘密实验室！', 'danger');
+  log('空气中弥漫着腐臭和化学药品的味道……', 'narrative');
+
+  // Final boss: 2 giant zombies
+  const boss1 = {
+    name:'巨型丧尸·实验体A', health:80, maxHealth:80, damage:30, speed:1, weight:10, ammoCost:20,
+    desc:'身躯庞大的变异丧尸，全身覆盖着坚硬的角质层。'
+  };
+  const boss2 = {
+    name:'巨型丧尸·实验体B', health:60, maxHealth:60, damage:25, speed:1.5, weight:8, ammoCost:15,
+    desc:'速度更快的变异体，似乎能操控周围的丧尸。',
+  };
+  finalBattleState = { boss1, boss2, currentBoss: 'boss1', phase: 1 };
+  showFinalBattleUI();
+}
+
+function showFinalBattleUI() {
+  if (!finalBattleState) return;
+  const b = finalBattleState.currentBoss === 'boss1' ? finalBattleState.boss1 : finalBattleState.boss2;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'final-battle-overlay';
+  overlay.innerHTML = `
+    <div class="modal" style="min-width:380px;">
+      <h2>⚔️ 最终决战</h2>
+      <div id="final-boss-info" style="text-align:center;padding:12px;border:1px solid var(--red);border-radius:8px;background:var(--red-bg);margin-bottom:10px;">
+        <div style="font-size:20px;font-weight:700;color:var(--red);">${b.name}</div>
+        <div style="font-size:13px;color:var(--text-dim);margin-top:4px;">伤害: ${b.damage} | 弹药消耗: ${b.ammoCost}/次</div>
+        <div style="height:8px;background:rgba(255,255,255,0.1);border-radius:4px;overflow:hidden;margin:8px 0;">
+          <div id="final-boss-hp" style="height:100%;background:linear-gradient(90deg,var(--red),#ff6a6a);border-radius:4px;transition:width 0.3s;width:100%"></div>
+        </div>
+        <div style="font-size:13px;color:var(--text-dim);">生命: <span id="final-boss-hp-text">${b.health}</span>/${b.maxHealth}</div>
+      </div>
+      <p style="font-size:13px;text-align:center;">
+        你的生命: ${G.health} | 弹药: ${G.ammo}
+        ${G.equipped.hazmatSuit ? ' | ✅ 防化服已装备' : ' | ❌ 防化服未装备'}
+        ${G.equipped.gasMask ? ' | ✅ 防毒面具已装备' : ' | ❌ 防毒面具未装备'}
+      </p>
+      <div id="final-battle-log" style="font-size:13px;color:var(--text-dim);text-align:center;margin:8px 0;min-height:20px;"></div>
+      <div class="btn-row">
+        <button class="btn primary" id="final-attack-btn">🔫 射击</button>
+        <button class="btn gold" id="final-heal-btn" onclick="finalHeal()">💊 使用急救包</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('app').appendChild(overlay);
+  document.getElementById('final-attack-btn').onclick = finalAttack;
+}
+
+function finalAttack() {
+  if (!finalBattleState) return;
+  const b = finalBattleState.currentBoss === 'boss1' ? finalBattleState.boss1 : finalBattleState.boss2;
+  if (G.ammo < b.ammoCost) {
+    document.getElementById('final-battle-log').textContent = '❌ 弹药不足！';
+    return;
+  }
+  G.ammo -= b.ammoCost;
+  const dmg = calcDamageDealt() + 5; // bonus damage in final battle
+  b.health -= dmg;
+  document.getElementById('final-battle-log').textContent = `💥 你造成了 ${dmg} 点伤害！`;
+
+  const hpPct = Math.max(0, b.health / b.maxHealth * 100);
+  document.getElementById('final-boss-hp').style.width = hpPct + '%';
+  document.getElementById('final-boss-hp-text').textContent = Math.max(0, b.health);
+  updateUI();
+
+  if (b.health <= 0) {
+    if (finalBattleState.currentBoss === 'boss1') {
+      // Switch to boss 2
+      finalBattleState.currentBoss = 'boss2';
+      document.getElementById('final-battle-log').textContent = '💀 实验体A倒下了！但实验体B冲了过来！';
+      // Update UI for boss 2 after a delay
+      setTimeout(() => updateFinalBossUI(), 500);
+    } else {
+      // Victory!
+      finalVictory();
+    }
+    return;
+  }
+
+  // Boss counterattack
+  const taken = calcDamageTaken(b.damage, b.name);
+  G.health -= taken;
+  document.getElementById('final-battle-log').textContent += `\n💢 ${b.name} 反击！受到 ${taken} 点伤害！`;
+  updateUI();
+
+  if (G.health <= 0) {
+    closeModal('final-battle-overlay');
+    checkGameOver();
+  }
+}
+
+function updateFinalBossUI() {
+  const b = finalBattleState.boss2;
+  const info = document.getElementById('final-boss-info');
+  if (!info) return;
+  info.innerHTML = `
+    <div style="font-size:20px;font-weight:700;color:var(--red);">${b.name}</div>
+    <div style="font-size:13px;color:var(--text-dim);margin-top:4px;">伤害: ${b.damage} | 弹药消耗: ${b.ammoCost}/次</div>
+    <div style="height:8px;background:rgba(255,255,255,0.1);border-radius:4px;overflow:hidden;margin:8px 0;">
+      <div id="final-boss-hp" style="height:100%;background:linear-gradient(90deg,var(--red),#ff6a6a);border-radius:4px;transition:width 0.3s;width:100%"></div>
+    </div>
+    <div style="font-size:13px;color:var(--text-dim);">生命: <span id="final-boss-hp-text">${b.health}</span>/${b.maxHealth}</div>
+  `;
+}
+
+function finalHeal() {
+  const idx = G.inventory.indexOf('急救包');
+  if (idx === -1) {
+    document.getElementById('final-battle-log').textContent = '❌ 没有急救包！';
+    return;
+  }
+  G.inventory.splice(idx, 1);
+  G.health = Math.min(G.health + 50, G.maxHealth);
+  document.getElementById('final-battle-log').textContent = '💊 使用了急救包，恢复50生命值！';
+  updateUI();
+}
+
+function finalVictory() {
+  closeModal('final-battle-overlay');
+  finalBattleState = null;
+  G.questStage = 6; // Completed
+  // 最终胜利解锁所有剩余 lore
+  const allLoreIds = ['l_company','l_virus','l_lab','l_outbreak','l_evo','l_tech','l_survivors','l_military','l_patient0','l_the_one'];
+  let newLoreCount = 0;
+  allLoreIds.forEach(id => { if (discoverLore(id)) newLoreCount++; });
+  log('━━━━━━━━━━━━━━━━━━━━━━', 'system');
+  log('🏆🏆🏆 胜利！🏆🏆🏆', 'success');
+  log('你击败了巨型丧尸，在实验室深处找到了"芥末"病毒的解药！', 'success');
+  log('', 'narrative');
+  log('微弱的晨光透过破裂的天花板洒在你脸上。', 'narrative');
+  log('你握着那管淡蓝色的解药，走出了实验室的大门。', 'narrative');
+  log('远处传来直升机的声音——是救援队来了。', 'narrative');
+  log('', 'narrative');
+  log('末日结束了。', 'success');
+  log('🎉 恭喜你通关了《丧尸末日生存》！', 'gold');
+  log(`生存天数：${G.days} | 最终生命：${G.health} | 击败丧尸无数`, 'info');
+  if (newLoreCount > 0) log(`📖 百科解锁 ${newLoreCount} 条新秘闻！`, 'info');
+  updateUI();
+  document.getElementById('quest-text').textContent = '✅ 已完成';
+}
+
+// ═══════════════════════════════════════════════
+//  CHEAT
+// ═══════════════════════════════════════════════
+function activateCheat() {
+  const code = prompt('请输入作弊码：');
+  if (code === 'bobbychina32747') {
+    G.health = 1000000;
+    G.maxHealth = 1000000;
+    G.resources = 10000000;
+    G.ammo = 10000000;
+    G.food = 10000;
+    G.water = 10000;
+    G.cheatActivated = true;
+    log('⚡ 作弊模式已激活！', 'gold');
+    updateUI();
+    document.getElementById('btn-cheat').style.display = 'none';
+  } else {
+    alert('❌ 作弊码错误！你不是 Bobby！');
+  }
+}
+
+// ═══════════════════════════════════════════════
+//  SAVE / LOAD
+// ═══════════════════════════════════════════════
+function saveGame() {
+  if (G.gameOver && G.questStage < 6) return;
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(G));
+    log('💾 游戏已保存。', 'info');
+  } catch(e) {
+    alert('保存失败：' + e.message);
+  }
+}
+
+function loadGame() {
+  try {
+    const data = localStorage.getItem(SAVE_KEY);
+    if (!data) { alert('没有找到存档。'); return; }
+    G = JSON.parse(data);
+    // Reset runtime-only state
+    battleState = null;
+    finalBattleState = null;
+    G.gameOver = false;
+    // Re-enable buttons
+    document.querySelectorAll('#actions .btn').forEach(b => b.disabled = false);
+    document.getElementById('btn-cheat').style.display = G.cheatActivated ? 'none' : 'inline-block';
+    clearLog();
+    log('📂 游戏已读取。', 'info');
+    log(`第 ${G.days} 天 | 生命 ${G.health}/${G.maxHealth} | 主线 ${Math.round(G.questStage/5*100)}%`, 'dim');
+    updateUI();
+  } catch(e) {
+    alert('读档失败：' + e.message);
+  }
+}
+
+// ═══════════════════════════════════════════════
+//  UTILITY
+// ═══════════════════════════════════════════════
+function closeModal(id) {
+  const el = document.getElementById(id);
+  if (el) el.remove();
+}
+
+// ═══════════════════════════════════════════════
+//  INIT
+// ═══════════════════════════════════════════════
+function init() {
+  clearLog();
+  // 开场自动解锁：医生的日记（你在医院发现的）
+  discoverLore('l_the_one');
+  log('⛔ 丧尸末日生存 v1.0', 'system');
+  log('💡 点击「探索」开始你的末日之旅！', 'dim');
+  log('━'.repeat(30), 'system');
+  log('你在一间废弃的医院中醒来。四周传来丧尸的嘶吼声。', 'narrative');
+  log('你记得你是一名医生，但其他记忆都已模糊……', 'narrative');
+  log('据说「破坏伞公司」的秘密实验室里藏着一份解药。', 'info');
+  log('—— 找到它，拯救这个世界。', 'info');
+  updateUI();
+
+  // Auto-load if save exists
+  if (localStorage.getItem(SAVE_KEY)) {
+    log('💡 检测到存档，点击「读档」继续游戏。', 'dim');
+  }
+}
+
+init();
+</script>
+</body>
+</html>

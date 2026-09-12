@@ -1,0 +1,271 @@
+/* 宝可梦式回合制引擎（纯逻辑，可单测）：
+   - 每回合按"速度 + 先制度"排出行动顺序，玩家和丧尸轮流出手
+   - 4 个招式槽（武器 2~3 个 + 战术 + 物品），招式有消耗（体力/弹药/道具 = PP）
+   - 属性克制给倍率，状态异常按回合结算
+   - 引擎不碰 DOM，也不直接读全局 S：由 bridge 注入玩家数值、由 UI 层同步回存档 */
+import { ITEM_MOVES, STATUS_NAME, TACTIC_MOVES, typeMult, effectivenessText, weaponMoves } from './moves';
+import type { ActorRef, Battle, BattleEvent, Foe, Move, PlayerCombatState, StatusKind } from '../types';
+
+export interface PlayerProfile {
+  hp: number; hpMax: number; sta: number; staMax: number; ammo: number;
+  weaponId: string; weaponName: string; weaponDmg: number; isGun: boolean;
+  apen?: boolean; spread?: boolean;
+  critBonus: number;        // 来自技能/改装
+  dmgMult: number;          // 来自状态与技能
+  dodge: number;            // 0..0.5
+  armor: number;            // 平摊减伤
+  speed: number;            // 先手基础值
+  inventory: Record<string, number>;
+  guardPenalty?: number;    // 重伤之类的额外承伤
+}
+
+let uid = 0;
+const rnd = () => Math.random();
+
+export function movesFor(p: PlayerProfile): Move[] {
+  const w = weaponMoves(p.weaponId, p.weaponDmg, p.isGun, { apen: p.apen, spread: p.spread });
+  const out: Move[] = [w[0], w[1]];
+  // 战术槽：有体力就带突进，否则带架势
+  const tactic = p.sta >= 8 ? TACTIC_MOVES.find(m => m.id === 'lunge')! : TACTIC_MOVES.find(m => m.id === 'guard')!;
+  out.push(tactic);
+  // 物品槽：优先能救命/能清场的
+  const itemMove = ITEM_MOVES.find(m => (p.inventory[m.cost.item!] ?? 0) > 0);
+  out.push(itemMove ?? TACTIC_MOVES.find(m => m.id === 'focus')!);
+  return out;
+}
+
+export function canUse(p: PlayerProfile, m: Move): { ok: boolean; why?: string } {
+  if (m.cost.sta && p.sta < m.cost.sta) return { ok: false, why: '体力不足' };
+  if (m.cost.ammo && p.ammo < m.cost.ammo) return { ok: false, why: '弹药不足' };
+  if (m.cost.item && (p.inventory[m.cost.item] ?? 0) <= 0) return { ok: false, why: '没有这件物品' };
+  return { ok: true };
+}
+
+export function playerSpeed(p: PlayerProfile): number {
+  return 8 + p.speed;
+}
+
+export function createBattle(foes: Foe[], player: PlayerProfile, opts: Battle['opts'] = {}): Battle {
+  const b: Battle = {
+    foes,
+    player: { hp: player.hp, sta: player.sta, ammo: player.ammo, guard: 0, critUp: 0, weak: false, statuses: [] },
+    queue: [], idx: 0, round: 0, events: [], log: [], over: null, opts, target: 0,
+    playerSpeed: playerSpeed(player),
+    stats: { dealt: 0, taken: 0, clean: true },
+  };
+  startRound(b, b.playerSpeed);
+  logLine(b, opts.title ? `${opts.title}：${foes.map(f => f.name).join('、')} 挡住了你。` : '遭遇：' + foes.map(f => f.name).join('、'), 'sys');
+  return b;
+}
+
+/* ── 回合与队列 ── */
+export function startRound(b: Battle, pSpeed: number) {
+  b.round++;
+  const order: { ref: ActorRef; spd: number }[] = [{ ref: { side: 'player' }, spd: pSpeed }];
+  b.foes.forEach((f, i) => { if (f.hp > 0) order.push({ ref: { side: 'foe', index: i }, spd: f.spd * 10 }); });
+  order.sort((a, z) => z.spd - a.spd);
+  b.queue = order.map(o => o.ref);
+  b.idx = 0;
+  b.player.guard = 0;
+}
+
+export function currentActor(b: Battle): ActorRef | null {
+  return b.queue[b.idx] ?? null;
+}
+
+export function aliveFoes(b: Battle): number[] {
+  return b.foes.map((f, i) => (f.hp > 0 ? i : -1)).filter(i => i >= 0);
+}
+
+function logLine(b: Battle, text: string, cls = 'sys') {
+  b.log.push({ text, cls });
+  if (b.log.length > 120) b.log.shift();
+}
+
+function finish(b: Battle, result: 'win' | 'lose' | 'flee') {
+  if (b.over) return;
+  b.over = result;
+  b.opts.hooks?.onEnd?.(result);
+}
+
+function push(b: Battle, e: BattleEvent) {
+  b.events.push(e);
+  logLine(b, e.text, e.kind === 'damage' ? 'hit' : e.kind === 'faint' ? 'good' : e.kind === 'end' ? 'sys' : 'sys');
+}
+
+/* 玩家这次行动结束 → 推进队列并一路跑到"下一次该玩家出手"或战斗结束。
+   没有这一步玩家会无限连动（单测抓到的真实缺陷）。 */
+function endPlayerAction(b: Battle, p: PlayerProfile) {
+  if (b.over) return;
+  b.idx++;
+  advance(b, p, b.playerSpeed);
+}
+
+/** 玩家做了一件"占用回合"的事（比如换武器）→ 直接把回合让出去 */
+export function passTurn(b: Battle, p: PlayerProfile) {
+  endPlayerAction(b, p);
+}
+
+/* ── 玩家行动 ── */
+export function playerAct(b: Battle, p: PlayerProfile, moveId: string, targetIdx: number): void {
+  if (b.over) return;
+  const a = currentActor(b);
+  if (!a || a.side !== 'player') return;
+  const moves = movesFor(p);
+  const m = moves.find(x => x.id === moveId) ?? moves[0];
+  const chk = canUse(p, m);
+  if (!chk.ok) { push(b, { kind: 'info', text: '不能使用 ' + m.name + '：' + chk.why }); return; }
+  // 扣消耗（写回 profile，UI 层再同步进存档）
+  if (m.cost.sta) { p.sta -= m.cost.sta; b.player.sta = p.sta; }
+  if (m.cost.ammo) { p.ammo -= m.cost.ammo; b.player.ammo = p.ammo; }
+  if (m.cost.item) { p.inventory[m.cost.item] = (p.inventory[m.cost.item] ?? 0) - 1; }
+  if (moveId === 'smoke') { push(b, { kind: 'end', text: '💨 烟雾弹炸开，你脱离了接触。' }); finish(b, 'flee'); return; }
+
+  if (m.self) {
+    if (m.self.guard) { b.player.guard = m.self.guard; }
+    if (m.self.critUp) { b.player.critUp += m.self.critUp; }
+    if (m.self.sta) { p.sta = Math.min(p.staMax, p.sta + m.self.sta); b.player.sta = p.sta; }
+    if (m.self.acc === -1) { finish(b, 'flee'); push(b, { kind: 'end', text: '💨 你借着烟雾脱离了战斗。' }); return; }
+    push(b, { kind: 'effect', text: `你使用了 ${m.name}。` + (m.desc || '') });
+    endPlayerAction(b, p);
+    return;
+  }
+  if (moveId === 'bandage' || moveId === 'medkit') {
+    const heal = moveId === 'bandage' ? 15 : 50;
+    p.hp = Math.min(p.hpMax, p.hp + heal);
+    b.player.hp = p.hp;
+    b.player.statuses = b.player.statuses.filter(s => s.kind !== 'bleed');
+    push(b, { kind: 'effect', text: `你用了 ${m.name}：生命 +${heal}，流血止住了。` });
+    endPlayerAction(b, p);
+    return;
+  }
+  if (moveId === 'antitoxin') {
+    b.player.statuses = b.player.statuses.filter(s => s.kind !== 'poison');
+    push(b, { kind: 'effect', text: '解毒剂压下了毒素。' });
+    endPlayerAction(b, p);
+    return;
+  }
+
+  // 目标解析：单目标要防"目标已死/全死"（曾经这里会拿到 undefined 直接崩）
+  const alive = aliveFoes(b);
+  const picked = m.target === 'all' ? alive : [alive.includes(targetIdx) ? targetIdx : alive[0]];
+  const targets = picked.filter(i => typeof i === 'number' && i >= 0 && b.foes[i] && b.foes[i].hp > 0);
+  if (!targets.length) { push(b, { kind: 'info', text: '已经没有可以打的目标了。' }); return; }
+  let anyCrit = false;
+  for (const ti of targets) {
+    const foe = b.foes[ti];
+    if (rnd() > m.acc) { push(b, { kind: 'miss', text: `${foe.name} 闪开了 ${m.name}。` }); continue; }
+    const mult = typeMult(m.type, foe.types);
+    let dmg = m.power * (0.6 + 0.4 * (p.dmgMult || 1));
+    dmg *= mult;
+    const crit = b.player.critUp > 0 || rnd() < (m.crit + p.critBonus);
+    if (crit) { dmg *= 1.8; anyCrit = true; }
+    if (b.player.weak) dmg *= 0.75;
+    dmg *= 0.92 + rnd() * 0.16;
+    dmg = Math.max(1, Math.round(dmg - foe.def * 0.8));
+    foe.hp -= dmg;
+    b.stats.dealt += dmg;
+    const eff = effectivenessText(mult);
+    push(b, { kind: 'damage', text: `${m.name} 命中 ${foe.name}：-${dmg}${crit ? '（暴击）' : ''}${eff ? ' · ' + eff : ''}`, target: { side: 'foe', index: ti }, amount: dmg, crit, effectiveness: mult });
+    if (m.status && rnd() < (m.statusChance ?? 0.3)) applyStatus(foe.statuses, m.status, 3, m.type === 'fire' ? 8 : 5, foe.name);
+    if (foe.hp <= 0) faint(b, ti);
+  }
+  if (anyCrit) b.player.critUp = 0;
+  endPlayerAction(b, p);
+}
+
+export function applyStatus(list: { kind: StatusKind; turns: number; power: number }[], kind: StatusKind, turns: number, power: number, who: string) {
+  const cur = list.find(s => s.kind === kind);
+  if (cur) { cur.turns = Math.max(cur.turns, turns); cur.power = Math.max(cur.power, power); }
+  else list.push({ kind, turns, power });
+}
+
+function faint(b: Battle, i: number) {
+  const f = b.foes[i];
+  f.hp = 0;
+  push(b, { kind: 'faint', text: `☠️ ${f.name} 倒下了。`, target: { side: 'foe', index: i } });
+  b.opts.hooks?.onFoeFaint?.(f);
+}
+
+/* ── 丧尸行动（AI：血少优先拼命，装甲型爱硬扛） ── */
+export function foeTurn(b: Battle, p: PlayerProfile, i: number): void {
+  const f = b.foes[i];
+  if (f.hp <= 0) return;
+  const stun = f.statuses.find(s => s.kind === 'stun');
+  if (stun) { stun.turns--; if (stun.turns <= 0) f.statuses = f.statuses.filter(s => s !== stun); push(b, { kind: 'info', text: `${f.name} 还在眩晕中，动作僵住了。` }); return; }
+  const dodge = Math.min(0.55, p.dodge);
+  const hits = f.spd >= 2 ? 2 : 1;
+  for (let n = 0; n < hits; n++) {
+    if (rnd() < dodge) { push(b, { kind: 'miss', text: `你侧身躲开了 ${f.name} 的攻击。` }); continue; }
+    let dmg = f.atk * (0.85 + rnd() * 0.3);
+    dmg *= 1 - Math.min(0.45, p.armor * 0.05);
+    if (b.player.guard) dmg *= 1 - b.player.guard;
+    if (f.statuses.some(s => s.kind === 'weak')) dmg *= 0.75;
+    dmg = Math.max(1, Math.round(dmg));
+    p.hp -= dmg;
+    b.player.hp = p.hp;
+    b.stats.taken += dmg;
+    b.stats.clean = false;
+    push(b, { kind: 'damage', text: `${f.name} 命中你：-${dmg}`, target: { side: 'player' }, amount: dmg });
+    if (rnd() < 0.12) applyStatus(b.player.statuses, 'bleed', 3, 5, '你');
+    if (p.hp <= 0) { b.opts.hooks?.onPlayerFaint?.(); finish(b, 'lose'); push(b, { kind: 'end', text: '你倒下了……' }); return; }
+  }
+  const burst = f.types.includes('toxic') && rnd() < 0.25;
+  if (burst) { applyStatus(b.player.statuses, 'poison', 3, 5, '你'); push(b, { kind: 'status', text: `${f.name} 喷出一口毒雾，你中毒了。` }); }
+}
+
+/* ── 回合结算：状态 DOT、顺序推进 ── */
+export function tickStatuses(b: Battle, p: PlayerProfile): void {
+  for (const s of b.player.statuses.slice()) {
+    const dmg = s.power;
+    p.hp -= dmg; b.player.hp = p.hp; b.stats.taken += dmg; b.stats.clean = false;
+    push(b, { kind: 'damage', text: `${STATUS_NAME[s.kind].icon} ${STATUS_NAME[s.kind].name}：你失去 ${dmg} 生命`, target: { side: 'player' }, amount: dmg });
+    s.turns--;
+    if (s.turns <= 0) b.player.statuses = b.player.statuses.filter(x => x !== s);
+    if (p.hp <= 0) { b.opts.hooks?.onPlayerFaint?.(); finish(b, 'lose'); return; }
+  }
+  b.foes.forEach((f, i) => {
+    if (f.hp <= 0) return;
+    for (const s of f.statuses.slice()) {
+      const dmg = s.power;
+      f.hp -= dmg;
+      push(b, { kind: 'damage', text: `${STATUS_NAME[s.kind].icon} ${f.name} 因${STATUS_NAME[s.kind].name}失去 ${dmg} 生命`, target: { side: 'foe', index: i }, amount: dmg });
+      s.turns--;
+      if (s.turns <= 0) f.statuses = f.statuses.filter(x => x !== s);
+      if (f.hp <= 0) { faint(b, i); break; }
+    }
+  });
+}
+
+/** 推进到下一个需要玩家决策的时点；返回是否在等玩家 */
+export function advance(b: Battle, p: PlayerProfile, pSpeed: number): boolean {
+  if (b.over) return false;
+  let guard = 0;
+  while (!b.over && guard++ < 64) {
+    if (b.idx >= b.queue.length) {
+      tickStatuses(b, p);
+      if (b.over) break;
+      if (!aliveFoes(b).length) { finish(b, 'win'); push(b, { kind: 'end', text: '🏁 全部清空，你活下来了。' }); break; }
+      startRound(b, pSpeed);
+      continue;
+    }
+    const a = b.queue[b.idx];
+    if (a.side === 'player') return true;          // 等玩家操作
+    foeTurn(b, p, a.index);
+    b.idx++;
+    if (!aliveFoes(b).length && !b.over) { finish(b, 'win'); push(b, { kind: 'end', text: '🏁 全部清空，你活下来了。' }); }
+  }
+  return false;
+}
+
+export function fleeChance(b: Battle, p: PlayerProfile): number {
+  // 不许逃的场合（尸潮守夜/最终决战）就是 0：以前是在里面 -1 再被 8% 下限抬回来，等于永远有 8% 能溜
+  if (b.opts.noFlee) return 0;
+  const fast = b.foes.some(f => f.hp > 0 && f.spd >= 2);
+  return Math.max(0.08, Math.min(0.92, 0.45 + p.speed * 0.02 - (fast ? 0.18 : 0)));
+}
+export function tryFlee(b: Battle, p: PlayerProfile): boolean {
+  if (rnd() < fleeChance(b, p)) { finish(b, 'flee'); push(b, { kind: 'end', text: '🏃 你甩开了它们。' }); return true; }
+  push(b, { kind: 'info', text: '❌ 逃跑失败，它们扑了上来！' });
+  return false;
+}
