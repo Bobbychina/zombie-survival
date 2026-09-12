@@ -26,7 +26,7 @@ export const V4: Record<string, unknown> = {};
 (window as any).V4 = V4;
 
 async function main() {
-  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi, integrity] = await Promise.all([
+  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi, integrity, betaNotice] = await Promise.all([
     import('./v4/worldgen'),
     import('./v4/pois'),
     import('./v4/combat'),
@@ -43,7 +43,10 @@ async function main() {
     import('./v4/water'),
     import('./v4/account-ui'),
     import('./v4/integrity'),
+    import('./v4/beta-notice'),
   ]);
+  // BETA 声明条：整站/整游戏最上面那一条（本站所有子页面都要有）
+  betaNotice.installBetaNotice();
   Object.assign(V4, {
     worldgen: { generateWorld: worldgen.generateWorld, WORLD_W: worldgen.WORLD_W, WORLD_H: worldgen.WORLD_H },
     POIS: pois.POIS,
