@@ -274,3 +274,39 @@ npx vitest run            # 3 files / 35 tests passed
 - **P3**：取水只按"每天 3 次"限流，没有"水质"分层（河水/雨水/污水厂的水本该有区别）。
 - **P3**：净化片目前只能靠搜刮与化工原料自制，还没有"烧水要燃料、燃料也吃木料"的账（煮沸的 1 木是唯一代价）。
 - 候选：雨水收集器整包（M6 二波遗留 F05）、接水自动化（据点水管 → 每天自动进污水）、家具城的"拆样板间"长动作（3 AP 换一大捆木料）。
+
+---
+
+## 九、M8：伐木 / 游戏厅 / 账号与云存档 / 存档完整性
+
+用户这轮的要求（一次性给全）：① 主页加 `/games/` 游戏厅 ② 个人账号数据保存（注册/登录，**可选绑定 GitHub 或微软账号**）③ 游戏加伐木（"不然木头找不到"）④ 存档是否被修改的校验。**未开评审会**（都是点名需求 + 一处平台能力受限后的方案选择）。
+
+### 做了什么
+| 项 | 设计 | 关键文件 |
+|---|---|---|
+| **伐木** | 林地/废墟/农田/郊区可就地伐木（1 AP，每区块每日上限：林地 6/废墟 3/农田 3/郊区 2）；产量 = 随机进位(base × 季节 × 天气 × 工具)，徒手 1.0 / 撬棍 1.25 / 消防斧 1.6；冬季 ×0.4（不归零）；附带布 22%、废铁 8~25%；新增 🏕️林场 / 🪚木材加工厂 两个 POI 并把 wood 塞进家具城/五金/建材市场/物流园/仓储超市 | `wood-core.ts`、`gather.ts`、`pois.ts`、`worldgen.ts`、`world-ui.ts` |
+| **游戏厅 `/games/`** | 卡片墙 + 账号条 + 账号弹窗；游戏放在 `/games/zombie-survival/`（与大厅**同源**，账号与存档天然互通）；主页加入口 | 主页仓库 `games/index.html` 等 |
+| **账号** | 纯前端本地账号（WebCrypto PBKDF2-SHA256 210k + 16B 盐 + 常数时间比较）、30 天会话、按账号隔离的存档槽、云同步（按 updatedAt 双向）、导出/导入（文本 + **文件**）、改密/注销 | `src/account/account.js`（原生 JS，单一来源）、`src/v4/account-ui.ts` |
+| **GitHub 绑定** | 三条路：OAuth(PKCE) 一键 / 设备码 / 令牌粘贴；云盘 = 用户自己的私有 Gist（`gist read:user` 两个权限） | 同上 + 主页 `games/auth-config.js` |
+| **中继** | GitHub 的换 token 端点不给浏览器 CORS 头 → 用户自建 Cloudflare Worker 转发（只放行 2 个路径 + Origin 白名单 + 可选保管 client_secret）；客户端"中继优先、直连兜底、form 优先于 json" | `tools/oauth-relay-worker.js` |
+| **微软** | **下线**：个人微软账号在 Entra/Azure 注册应用被要求绑信用卡。代码与 OneDrive 逻辑保留，填 client_id 即可启用；未配则不显示入口 | `src/account/account.js`、`auth-config.js` |
+| **存档完整性** | 指纹（双通道 FNV-1a，链式）+ 启动前对**原始** JSON 取证（sanitize 之前查越界）+ `localStorage.setItem` 挂钩"只给游戏自写的档盖章"；被改档 → 日志/弹窗/面板标记 + 成就停用；拉云端先验指纹再问玩家 | `integrity-core.ts`、`integrity.ts` |
+
+### 实测证据
+- **单测 113/113**（新增 `tests/wood.test.ts` 10 条、`tests/integrity.test.ts` 7 条；`tests/items.test.ts` 加严为"每个建筑自己那条必须有 matBonus"）。
+- **伐木探针**（本地 + 线上，0 pageerror）：按钮 `🪵 伐木 (1 行动力 · 剩 6 · 约 3 木)`；砍一次 AP 9→8、木料 +3；连砍 6 次后第 7 次被拒且 AP 不动；工具对照徒手 18 / 撬棍 23(+28%) / 消防斧 29(+61%) 单调；读档后次数不刷新；3 seed 刷出林场 73 / 木材加工厂 11。
+- **账号探针**（云 API 全打桩，本地 + 线上）：注册→刷新仍登录→错密码被拒；GitHub 令牌绑定成功；存档写入/上传/列云/删云全通且往返 JSON 一致；导出文件 263 B、选文件导入恢复 `day=42`；**跨页同源**：大厅写的 `main` 槽在游戏里读到；**自动同步**：开启后存档落盘 → 9.5 秒内云端多出一个文件。
+- **完整性探针**（本地 + 线上，0 pageerror）：新档不误报；干净重载 `ok`；手改 `mat=5000` 不重算指纹 → `mismatch` + `tampered=true` + 日志警告（数值仍载入，游戏照常能玩）；`hp=99999 > hpMax=100` → `implausible`；被改标记写档后仍在；外来被改档 `applySave` 在 confirm=false 时**不覆盖本机**。
+- **中继实测**（从真实站点源）：`GET /` → 405；`POST /login/device/code` → GitHub 真实 `user_code`；轮询 → `authorization_pending`；`POST /whatever` → 404；不带 secret 换 token → `incorrect_client_credentials`（证明"纯一键"必须把 secret 放进中继）。
+- **OCR 复核**：环境面板「伐木」「取水」按钮、账号面板「云账号绑定/导出存档文件/从文件导入/自动同步」、完整性警告「存档被修改过 · 存档里有越界数值：hp = 99999 超过 hpMax = 100（游戏照常能玩）」均读到。
+
+### 探针抓到并修掉的真 bug
+1. **auth-config 注入被跳过**：同步脚本用裸路径 `/games/auth-config.js` 当"已注入"判据，而这段字符串本来就出现在 account.js 的报错文案里（被打进 bundle）→ 永远判定已注入。改成完整 `<script …>` 标签做判据。
+2. **包 `window.autosave` / `window.writeSave` 全都无效**：legacy 是一个 IIFE，内部 28 处 `autosave()`、3 处 `writeSave()` 调的是闭包里的局部函数，改 window 属性拦不到——指纹一直没盖上、自动同步从来没触发过。改为在 `Storage.prototype.setItem` 上挂钩（只有"内容与内存状态一致"的写入才盖指纹，外部塞进去的不盖，反而留下证据），自动同步改为订阅"存档落盘"事件。
+3. **首档误报篡改**：没有存档（全新一局）被判 `corrupt/tampered`，导致第一份存档就带"被改过"标记。改为"无存档 = missing 且不标记"。
+4. 语法检查漏洞：tsc 不查 `allowJs:false` 之外的 JS，`account.js` 的括号错误只在 vite 构建期暴露 → `npm run build` 现在先跑 `node --check src/account/account.js`。
+
+### 已知问题 / 下一波
+- **P2**：GitHub"纯一键"依赖用户自建中继 + 在中继里配 `GH_CLIENT_SECRET`；没配时走设备码（输 9 位码），令牌粘贴是永远可用的兜底。
+- **P3**：完整性指纹是"防顺手改 + 防损坏"，不防蓄意伪造（可重算）。要不可伪造得让中继用只有它知道的密钥做 HMAC 签名。
+- 候选：成就系统（把"未被篡改"接成成就前置）、排行榜（需要中继做可信时间戳）、多存档槽 UI（库里已支持任意槽位）。
