@@ -1,0 +1,26 @@
+# Cloudflare Worker 声明式配置：dsh-oauth-relay（账号/云存档 + GitHub OAuth 中继）
+# 用法：cd tools && npx wrangler deploy
+name = "dsh-oauth-relay"
+main = "cf-worker.js"
+compatibility_date = "2025-09-01"
+account_id = "52a13b49136fb7a37a74fc8093ee1897"
+
+# 面板里手工加的变量/机密（DSH_PEPPER、GH_CLIENT_SECRET）在部署时保留，别被本次覆盖掉
+keep_vars = true
+
+# 关掉预览 URL（面板里原本就是关的），否则 wrangler 部署会默认打开
+preview_urls = false
+
+# 保留面板里的日志/追踪设置：grep 线上问题时全靠它
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[observability.logs]
+enabled = true
+invocation_logs = true
+
+# KV 绑定：env.DSH_KV —— 代码里读写存档、账号记录都走它
+[[kv_namespaces]]
+binding = "DSH_KV"
+id = "55c168162fc8475990ba74b5a728003f"

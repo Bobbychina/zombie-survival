@@ -212,6 +212,115 @@ let token1 = '', uid1 = '';
   globalThis.fetch = realFetch;
 }
 
-console.log(results.join('\n'));
+/* 12. 每日上传配额（每账号 10 次/天，护 KV 免费额度 1000 写/天） */
+{
+  const e = { ...env, DSH_KV: memoryKV(), DSH_PEPPER: env.DSH_PEPPER };
+  const t = (await j(await handle(req('POST', '/api/register', { body: { name: 'quota', verifier: VER, salt: SALT } }), e))).token;
+  const q0 = await j(await handle(req('GET', '/api/quota', { token: t }), e));
+  ok('新账号额度 0/10，剩 10 次', q0.used === 0 && q0.limit === 10 && q0.left === 10, JSON.stringify(q0));
+  ok('额度带重置时间（ISO 串）', /^\d{4}-\d{2}-\d{2}T/.test(q0.resetAt), q0.resetAt);
+
+  let last = null;
+  for (let i = 1; i <= 10; i++) {
+    last = await handle(req('PUT', '/api/save', { token: t, body: { game: 'g', slot: 'auto', data: { i } } }), e);
+    if (last.status !== 200) break;
+  }
+  const b10 = await j(last);
+  ok('第 10 次上传仍然成功', last.status === 200, 'HTTP ' + last.status);
+  ok('第 10 次响应带回剩余额度 0', b10.quota && b10.quota.used === 10 && b10.quota.left === 0, JSON.stringify(b10.quota));
+
+  const over = await handle(req('PUT', '/api/save', { token: t, body: { game: 'g', slot: 'auto', data: { i: 11 } } }), e);
+  const ob = await j(over);
+  ok('第 11 次上传 → 429 quota_exceeded', over.status === 429 && ob.error === 'quota_exceeded', 'HTTP ' + over.status + ' ' + ob.error);
+  ok('429 里带 used/limit/resetAt 供前端提示', ob.used === 10 && ob.limit === 10 && !!ob.resetAt, JSON.stringify(ob).slice(0, 120));
+  const still = await j(await handle(req('GET', '/api/save?game=g&slot=auto', { token: t }), e));
+  ok('被拒的那次没污染云端存档（仍是第 10 次的内容）', still.data.i === 10, JSON.stringify(still.data));
+
+  const t2 = (await j(await handle(req('POST', '/api/register', { body: { name: 'quota2', verifier: VER2, salt: SALT } }), e))).token;
+  const r2 = await handle(req('PUT', '/api/save', { token: t2, body: { game: 'g', slot: 'auto', data: { ok: 1 } } }), e);
+  ok('额度按账号隔离（别人不受影响）', r2.status === 200, 'HTTP ' + r2.status);
+
+  const qkey = Object.keys(e.DSH_KV._dump()).find(k => k.startsWith('q:'));
+  ok('配额计数落在 KV 里（q:<uid>:<日期>）', !!qkey && /^q:[0-9a-f]+:\d{4}-\d{2}-\d{2}$/.test(qkey), String(qkey));
+  await e.DSH_KV.delete(qkey);
+  const next = await handle(req('PUT', '/api/save', { token: t, body: { game: 'g', slot: 'auto', data: { i: 11 } } }), e);
+  ok('跨天（计数键过期）后额度恢复', next.status === 200, 'HTTP ' + next.status);
+  const del = await handle(req('DELETE', '/api/save?game=g&slot=auto', { token: t }), e);
+  const qAfterDel = await j(await handle(req('GET', '/api/quota', { token: t }), e));
+  ok('删除存档不消耗也不退还额度', del.status === 200 && qAfterDel.used === 1, JSON.stringify(qAfterDel));
+}
+
+/* 13. 恢复码：忘口令也能找回账号 + 拿回云存档密钥；老账号可补设 */
+{
+  const e = { ...env, DSH_KV: memoryKV(), DSH_PEPPER: env.DSH_PEPPER };
+  const WRAP = 'v1.' + 'A'.repeat(16) + '.' + 'B'.repeat(44);
+  const WRAP2 = 'v1.' + 'C'.repeat(16) + '.' + 'D'.repeat(44);
+  const RCSALT = 'd'.repeat(32), RCVER = 'e'.repeat(64), VER3 = 'f'.repeat(64), SALT3 = '1'.repeat(32);
+  const reg = await j(await handle(req('POST', '/api/register', {
+    body: { name: 'recover', verifier: VER, salt: SALT, rcVerifier: RCVER, rcSalt: RCSALT, wrap: { pw: WRAP, rc: WRAP2 } } }), e));
+  ok('注册带恢复码 → 201 且 hasRecovery=true', reg.hasRecovery === true && reg.wrap && reg.wrap.rc === WRAP2, JSON.stringify(reg).slice(0, 100));
+  ok('注册响应里没有口令/恢复码哈希、也不回显派生值（只有包好的密文）',
+    reg.pw === undefined && reg.rcPw === undefined
+      && !JSON.stringify(reg).includes(VER) && !JSON.stringify(reg).includes(RCVER),
+    JSON.stringify(reg).slice(0, 100));
+  const lg = await j(await handle(req('POST', '/api/login', { body: { name: 'recover', verifier: VER } }), e));
+  ok('登录响应带回口令包好的密钥（服务端解不开）', lg.wrap && lg.wrap.pw === WRAP, JSON.stringify(lg.wrap || {}));
+
+  const badRc = await handle(req('POST', '/api/recover/begin', { body: { name: 'recover', rcVerifier: VER2 } }), e);
+  ok('恢复码错 → 401', badRc.status === 401, String(badRc.status));
+  const begin = await j(await handle(req('POST', '/api/recover/begin', { body: { name: 'recover', rcVerifier: RCVER } }), e));
+  ok('恢复码对 → 拿到 rcSalt + 被恢复码包好的密钥', begin.ok === true && begin.rcSalt === RCSALT && begin.wrap.rc === WRAP2, JSON.stringify(begin));
+
+  const badCommit = await handle(req('POST', '/api/recover/commit', {
+    body: { name: 'recover', rcVerifier: VER2, verifier: VER3, salt: SALT3, wrap: { pw: WRAP } } }), e);
+  ok('恢复码错时不许改口令 → 401', badCommit.status === 401, String(badCommit.status));
+  const commit = await handle(req('POST', '/api/recover/commit', {
+    body: { name: 'recover', rcVerifier: RCVER, verifier: VER3, salt: SALT3, wrap: { pw: WRAP } } }), e);
+  const cb = await j(commit);
+  ok('恢复码改口令成功并直接发会话', commit.status === 200 && !!cb.token && cb.recovered === true, String(commit.status));
+  const oldPw = await handle(req('POST', '/api/login', { body: { name: 'recover', verifier: VER } }), e);
+  const newPw = await handle(req('POST', '/api/login', { body: { name: 'recover', verifier: VER3 } }), e);
+  ok('旧口令立即失效、新口令可登录', oldPw.status === 401 && newPw.status === 200, oldPw.status + '/' + newPw.status);
+  const again = await j(await handle(req('POST', '/api/recover/begin', { body: { name: 'recover', rcVerifier: RCVER } }), e));
+  ok('恢复码改口令后仍然有效（同一个 DEK 还在）', again.ok === true && again.wrap.rc === WRAP2);
+
+  const t3 = (await j(await handle(req('POST', '/api/register', { body: { name: 'legacy', verifier: VER, salt: SALT } }), e))).token;
+  const noRc = await handle(req('POST', '/api/recover/begin', { body: { name: 'legacy', rcVerifier: RCVER } }), e);
+  ok('没设过恢复码的账号 → 401（恢复不了，如实说）', noRc.status === 401, String(noRc.status));
+  const set = await handle(req('POST', '/api/wrap', { token: t3, body: { rcSalt: RCSALT, rcVerifier: RCVER, wrap: { rc: WRAP2, pw: WRAP } } }), e);
+  const afterSet = await j(await handle(req('POST', '/api/recover/begin', { body: { name: 'legacy', rcVerifier: RCVER } }), e));
+  ok('老账号补设恢复码后即可走恢复流程', set.status === 200 && afterSet.ok === true && afterSet.wrap.rc === WRAP2, String(set.status));
+
+  const t4 = (await j(await handle(req('POST', '/api/login', { body: { name: 'legacy', verifier: VER } }), e))).token;
+  const chg = await handle(req('POST', '/api/password', { token: t4, body: { verifier: VER3, salt: SALT3, wrap: { pw: WRAP } } }), e);
+  const oldAfter = await handle(req('POST', '/api/login', { body: { name: 'legacy', verifier: VER } }), e);
+  const newAfter = await handle(req('POST', '/api/login', { body: { name: 'legacy', verifier: VER3 } }), e);
+  ok('改口令后旧口令失效、新口令可用（云端密文不用重传）', chg.status === 200 && oldAfter.status === 401 && newAfter.status === 200);
+  ok('改口令不会伤到恢复码', (await j(await handle(req('POST', '/api/recover/begin', { body: { name: 'legacy', rcVerifier: RCVER } }), e))).ok === true);
+  const badWrap = await handle(req('POST', '/api/password', { token: t4, body: { verifier: VER3, salt: SALT3, wrap: { pw: 'not-a-wrap' } } }), e);
+  ok('非法密钥包裹格式 → 400', badWrap.status === 400, String(badWrap.status));
+}
+
+/* 14. 密钥不外泄：任何接口的响应体里都不应该出现 pepper / GH secret / 令牌原文 */
+{
+  const e = { ...env, DSH_KV: memoryKV(), DSH_PEPPER: 'PEPPER-CANARY-abc123', GH_CLIENT_SECRET: 'GHSECRET-CANARY-xyz789' };
+  const t = (await j(await handle(req('POST', '/api/register', { body: { name: 'leaktest', verifier: VER, salt: SALT } }), e))).token;
+  const probe = [
+    await handle(req('GET', '/api/health'), e),
+    await handle(req('GET', '/api/me', { token: t }), e),
+    await handle(req('GET', '/api/saves?game=g', { token: t }), e),
+    await handle(req('GET', '/api/gh/status', { token: t }), e),
+    await handle(req('GET', '/api/save?game=g&slot=x', { token: t }), e),
+    await handle(req('POST', '/api/login', { body: { name: 'leaktest', verifier: VER2 } }), e),
+    await handle(req('GET', '/api/nope', { token: t }), e),
+  ];
+  const bodies = await Promise.all(probe.map(r => r.text()));
+  const leaked = bodies.filter(b => /PEPPER-CANARY|GHSECRET-CANARY|ghs_fake/.test(b));
+  ok('所有接口响应体里都不出现 pepper / GH secret', leaked.length === 0, JSON.stringify(leaked).slice(0, 200));
+  ok('/api/health 只报 pepper 是 custom 还是 default，不回值', bodies[0].includes('"pepper":"custom"') && !bodies[0].includes('PEPPER-CANARY'));
+}
+/* 失败时把每条断言都打出来（成功的不刷屏），否则只看到"有失败"没法定位 */
+const fails = results.filter(r => r.includes('⛔'));
+if (fails.length) console.log(fails.join('\n'));
 console.log(`\n${fail === 0 ? '✅ 全绿' : '⛔ 有失败'}：${pass} 通过 / ${fail} 失败\n`);
 process.exit(fail === 0 ? 0 : 1);

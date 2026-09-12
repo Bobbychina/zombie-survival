@@ -77,7 +77,7 @@
       });
       var text = await r.text();
       var data = null; try { data = text ? JSON.parse(text) : null; } catch (e) { data = { raw: text }; }
-      if (!r.ok) return { ok: false, status: r.status, err: (data && (data.message || data.error)) || ('HTTP ' + r.status), offline: false };
+      if (!r.ok) return { ok: false, status: r.status, err: (data && (data.message || data.error)) || ('HTTP ' + r.status), data: data, offline: false };
       return { ok: true, status: r.status, data: data };
     } catch (e) {
       return { ok: false, err: '连不上云后端（离线？）', offline: true };
@@ -156,6 +156,67 @@
   function enc(str) { return new TextEncoder().encode(str); }
   function bytes(n) { return crypto.getRandomValues(new Uint8Array(n)); }
 
+  /* ---------- 恢复码 + 信封加密（存档密钥与口令解耦） ----------
+     改这里的原因：原来"存档密钥 = PBKDF2(口令)"，忘了口令 = 云存档永久打不开。
+     现在：存档密钥是一把随机 DEK，口令和恢复码各包一份 DEK 存服务端（服务端解不开）；
+     忘口令时用恢复码解开 DEK、换个口令重包一次即可，云端密文一个字节都不用动。
+     代价（写进 PRIVACY.md）：服务端存了 wrapped DEK，拿到 KV 的人可以离线猜口令——
+     这是所有端到端加密方案的固有属性，PBKDF2 210k 轮是唯一缓冲。 */
+  var KEK_PW = 'dsh-kek-v1:', KEK_RC = 'dsh-rek-v1:', RCV = 'dsh-rcv-v1:';
+  /** PBKDF2-SHA256(secret, saltStr, 210k) → 32 字节裸密钥（与 deriveKey 同参，可互换） */
+  async function pbkdf2Raw(secret, saltStr) {
+    var base = await crypto.subtle.importKey('raw', enc(secret), 'PBKDF2', false, ['deriveBits']);
+    var bits = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: enc(saltStr), iterations: PBKDF2_ITER, hash: 'SHA-256' }, base, 256);
+    return new Uint8Array(bits);
+  }
+  function kekRaw(secret, purpose, name, saltHex) { return pbkdf2Raw(secret, purpose + String(name).toLowerCase() + ':' + saltHex); }
+  async function wrapWith(kekBytes, dekBytes) {
+    var kek = await crypto.subtle.importKey('raw', kekBytes, { name: 'AES-GCM' }, false, ['encrypt']);
+    var iv = bytes(12);
+    var ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, kek, dekBytes);
+    return 'v1.' + b64url(iv) + '.' + b64url(ct);
+  }
+  async function unwrapWith(kekBytes, str) {
+    try {
+      var p = String(str || '').split('.');
+      if (p.length !== 3 || p[0] !== 'v1') return null;
+      var kek = await crypto.subtle.importKey('raw', kekBytes, { name: 'AES-GCM' }, false, ['decrypt']);
+      return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64url(p[1]) }, kek, fromB64url(p[2])));
+    } catch (e) { return null; }   // GCM 校验失败 = 密钥不对（口令/恢复码错）
+  }
+  /** 恢复码：20 字节随机 → Crockford base32（去掉易混的 I/L/O/U）→ 8 组 4 字符 */
+  function newRecoveryCode() {
+    var A = 'ABCDEFGHJKMNPQRSTVWXYZ0123456789', b = bytes(20), bits = 0, val = 0, out = '';
+    for (var i = 0; i < b.length; i++) {
+      val = (val << 8) | b[i]; bits += 8;
+      while (bits >= 5) { out += A[(val >>> (bits - 5)) & 31]; bits -= 5; }
+    }
+    if (bits > 0) out += A[(val << (5 - bits)) & 31];
+    return out.replace(/(.{4})(?=.)/g, '$1-');
+  }
+  /** 归一化：大小写、连字符、I/L→1、O→0、U→V（抄错一个字也能救回来） */
+  function normCode(c) {
+    return String(c || '').toUpperCase().replace(/[^0-9A-Z]/g, '')
+      .replace(/[ILO]/g, function (m) { return m === 'O' ? '0' : '1'; }).replace(/U/g, 'V');
+  }
+  function rcVerifierHex(code, name) { return pbkdf2Raw(normCode(code), RCV + String(name).toLowerCase()).then(toHex); }
+  function cacheRawKey(rawBytes, name, saltHex) { writeJSON(ENC_KEY, { v: 2, name: String(name).toLowerCase(), salt: saltHex || '', k: b64url(rawBytes) }); }
+  function currentRawKey() {
+    var rec = readJSON(ENC_KEY, null);
+    if (!rec || !rec.k) return null;
+    try { return fromB64url(rec.k); } catch (e) { return null; }
+  }
+  /** 登录/注册后用"口令包好的密钥"解出 DEK 并缓存；老账号没有 wrap 时退回旧方案（口令直接当密钥） */
+  async function keyFromWrap(pass, name, saltHex, wrap) {
+    if (wrap && wrap.pw) {
+      var raw = await unwrapWith(await kekRaw(pass, KEK_PW, name, saltHex), wrap.pw);
+      if (raw) { cacheRawKey(raw, name, saltHex); return { ok: true, legacy: false }; }
+    }
+    var legacy = await pbkdf2Raw(pass, encSaltKey(name, saltHex));   // 与旧 deriveKey 完全等价 → 老密文照旧能解
+    cacheRawKey(legacy, name, saltHex);
+    return { ok: true, legacy: true };
+  }
+
   async function hashPassword(password, saltB64, iter) {
     var key = await crypto.subtle.importKey('raw', enc(password), 'PBKDF2', false, ['deriveBits']);
     var bits = await crypto.subtle.deriveBits(
@@ -223,14 +284,18 @@
     var Account = {
     version: VERSION,
     /** 云后端信息（UI 用它显示"服务器账号 / 本机账号"） */
-    serverInfo: function () { return { base: apiBase(), enabled: !!apiBase(), loggedIn: serverMode() }; },
+    serverInfo: function () {
+      var s = readJSON(K.session, null) || {};
+      return { base: apiBase(), enabled: !!apiBase(), loggedIn: serverMode(),
+        hasRecovery: typeof s.hasRecovery === 'boolean' ? s.hasRecovery : undefined };
+    },
     serverAvailable: apiAvailable,
     /** 端到端加密的状态与解锁（UI 用）：锁着的时候只存本地、不上传 */
     cryptoInfo: function () {
       var rec = readJSON(ENC_KEY, null);
       return { locked: !rec, name: rec ? rec.name : '', alg: 'AES-GCM-256 / PBKDF2-SHA256-' + PBKDF2_ITER };
     },
-    /** 重新输入口令解锁（不重新登录，只重新派生加密密钥） */
+    /** 重新输入口令解锁（重新登录一次拿回 wrap，再解开 DEK；不新建本地壳） */
     unlock: async function (password) {
       var u = Account.current();
       if (!u) return { ok: false, err: '先登录' };
@@ -238,8 +303,12 @@
       var sr = await api('/api/salt?name=' + encodeURIComponent(u.name));
       var saltHex = sr.ok && sr.data && sr.data.salt ? sr.data.salt : null;
       if (!saltHex) return { ok: false, err: '拿不到盐，无法解锁' };
-      /* 拿一份云存档试着解一下：口令不对就当解锁失败（避免"假解锁"后把新存档写成解不开的密文） */
-      await cacheKey(password, u.name, saltHex);
+      /* 口令对不对由服务端判定（顺带续一个会话），再解开 wrap 拿到 DEK */
+      var li = await api('/api/login', { method: 'POST', body: { name: u.name, verifier: await pbkdf2Hex(String(password || ''), saltHex, PBKDF2_ITER) } });
+      if (!li.ok) return { ok: false, err: li.offline ? li.err : '口令不对（服务端没通过）' };
+      await keyFromWrap(String(password || ''), u.name, saltHex, li.data.wrap);
+      if (li.data.token) Account._setSession(u.uid, { token: li.data.token, exp: li.data.exp });
+      /* 拿一份云存档试着解一下：避免"假解锁"后把新存档写成解不开的密文 */
       var probe = await api('/api/saves?game=zombie-survival');
       if (probe.ok && probe.data && probe.data.slots && probe.data.slots.length) {
         var one = await api('/api/save?game=zombie-survival&slot=main');
@@ -277,7 +346,16 @@
       /* ① 云后端优先：口令派生在本机做，只有 verifier 上传（服务端再叠一层 pepper 哈希） */
       if (await apiAvailable()) {
         var verifier = await pbkdf2Hex(pass, salt, PBKDF2_ITER);
-        var r = await api('/api/register', { method: 'POST', body: { name: name, email: String((opts && opts.email) || ''), verifier: verifier, salt: salt } });
+        /* 存档密钥改成随机 DEK：口令和恢复码各包一份，服务端只存包好的密文 */
+        var dek = bytes(32);
+        var rcCode = newRecoveryCode();
+        var rcSalt = toHex(bytes(16));
+        var rcVerifier = await rcVerifierHex(rcCode, name);
+        var wrap = {
+          pw: await wrapWith(await kekRaw(pass, KEK_PW, name, salt), dek),
+          rc: await wrapWith(await kekRaw(normCode(rcCode), KEK_RC, name, rcSalt), dek),
+        };
+        var r = await api('/api/register', { method: 'POST', body: { name: name, email: String((opts && opts.email) || ''), verifier: verifier, salt: salt, rcSalt: rcSalt, rcVerifier: rcVerifier, wrap: wrap } });
         if (!r.ok) return { ok: false, err: r.err };
         /* 本地同时留一份"壳"：能记住头像/绑定，且断网时还能用本地口令登录 */
         var lu = { uid: r.data.uid, name: r.data.name, email: r.data.email || '', salt: b64url(fromHex(salt)),
@@ -286,10 +364,11 @@
         db.users[lu.uid] = lu;
         var w = saveDB(db);
         if (!w.ok) return { ok: false, err: w.err };
-        Account._setSession(lu.uid, { token: r.data.token, exp: r.data.exp });
-        await cacheKey(pass, name, salt);                    // 派生并缓存加密密钥（本标签页）
+        Account._setSession(lu.uid, { token: r.data.token, exp: r.data.exp, hasRecovery: !!r.data.hasRecovery });
+        cacheRawKey(dek, name, salt);                        // 缓存的是 DEK，不是口令派生值
         emit();
-        return { ok: true, uid: lu.uid, user: publicUser(lu), server: true };
+        /* recoveryCode 只在这里返回一次，UI 必须弹给用户抄下来 */
+        return { ok: true, uid: lu.uid, user: publicUser(lu), server: true, recoveryCode: rcCode };
       }
 
       /* ② 没有云后端：老的本机账号 */
@@ -330,10 +409,12 @@
               db.users[u.uid] = u;
               saveDB(db);
             }
-            Account._setSession(u.uid, { token: r.data.token, exp: r.data.exp });
-            await cacheKey(pass, name, saltHex);             // 派生并缓存加密密钥（本标签页）
+            Account._setSession(u.uid, { token: r.data.token, exp: r.data.exp, hasRecovery: !!r.data.hasRecovery });
+            /* 用口令解开服务端那份"包好的存档密钥"（老账号没有 wrap → 退回口令直接派生，老密文照旧可解） */
+            var ks = await keyFromWrap(pass, name, saltHex, r.data.wrap);
             emit();
-            return { ok: true, uid: u.uid, user: publicUser(u), server: true };
+            return { ok: true, uid: u.uid, user: publicUser(u), server: true,
+              needsRecoverySetup: !(r.data.wrap && r.data.wrap.rc), legacyKey: ks.legacy };
           }
         }
       }
@@ -350,11 +431,15 @@
     logout: async function () {
       /* 必须等这一次请求发完再清会话：否则服务端那份 token 还活着（探针里就是这么抓到的） */
       if (serverMode()) { try { await api('/api/logout', { method: 'POST' }); } catch (e) { /* 离线也要能登出 */ } }
+      /* 退出就顺手把加密密钥从本标签页抹掉：不然锁屏图标还显示"已解锁"，人走了密钥还在内存里 */
+      removeKey(ENC_KEY);
       removeKey(K.session); emit(); return { ok: true };
     },
     /** 会话：uid + 过期时间（云账号会额外存服务端 token），同一台设备免登录 */
     _setSession: function (u, extra) {
-      writeJSON(K.session, Object.assign({ uid: u, exp: Date.now() + SESSION_DAYS * 86400000 }, extra || {}));
+      var prev = readJSON(K.session, null) || {};
+      /* hasRecovery 跟着会话一起存：注册/登录/恢复时带上，UI 才能提示"你还没设恢复码" */
+      writeJSON(K.session, Object.assign({ uid: u, exp: Date.now() + SESSION_DAYS * 86400000, hasRecovery: prev.hasRecovery }, extra || {}));
     },
     currentUid: function () {
       var s = readJSON(K.session, null);
@@ -376,16 +461,90 @@
     changePassword: async function (oldPass, newPass) {
       var db = loadDB(), u = db.users[Account.currentUid()];
       if (!u) return { ok: false, err: '先登录' };
+      if (String(newPass || '').length < 6) return { ok: false, err: '新密码至少 6 位' };
       if (u.hash) {
         var h = await hashPassword(String(oldPass || ''), u.salt, u.iter || PBKDF2_ITER);
         if (!safeEqual(h, u.hash)) return { ok: false, err: '原密码不对' };
       }
-      if (String(newPass || '').length < 6) return { ok: false, err: '新密码至少 6 位' };
-      u.salt = b64url(bytes(16));
+      /* 云账号：只把 DEK 用新口令重包一次就完事，云端那些密文一个字节都不用动 */
+      var shellSaltHex = null;
+      if (u.server && serverMode() && apiBase()) {
+        var raw = currentRawKey();
+        if (!raw) return { ok: false, err: '先解锁（重新输入一次当前口令）再改密码' };
+        var salt = toHex(bytes(16));
+        var verifier = await pbkdf2Hex(String(newPass), salt, PBKDF2_ITER);
+        var wrapPw = await wrapWith(await kekRaw(String(newPass), KEK_PW, u.name, salt), raw);
+        var r = await api('/api/password', { method: 'POST', body: { verifier: verifier, salt: salt, wrap: { pw: wrapPw } } });
+        if (!r.ok) return { ok: false, err: '服务端改密失败：' + r.err };
+        cacheRawKey(raw, u.name, salt);                     // 缓存里的盐要跟着换，否则下次 unlock 对不上
+        shellSaltHex = salt;
+      }
+      u.salt = shellSaltHex ? b64url(fromHex(shellSaltHex)) : b64url(bytes(16));
       u.hash = await hashPassword(String(newPass), u.salt, PBKDF2_ITER);
       u.iter = PBKDF2_ITER;
       saveDB(db);
+      emit();
       return { ok: true };
+    },
+    /** 今日云上传额度（账号面板显示"今天还能传几次"） */
+    quota: async function () {
+      if (!serverMode() || !apiBase()) return { ok: false, err: '没登录云账号', local: true };
+      var r = await api('/api/quota');
+      return r.ok ? { ok: true, used: r.data.used, limit: r.data.limit, left: r.data.left, resetAt: r.data.resetAt } : { ok: false, err: r.err };
+    },
+    /** 补设/更新恢复码：把当前 DEK 再用恢复码包一份传给服务端（老账号也能补） */
+    setRecovery: async function () {
+      var u = Account.current();
+      if (!u) return { ok: false, err: '先登录' };
+      if (!serverMode() || !apiBase()) return { ok: false, err: '只有云账号能设恢复码' };
+      var raw = currentRawKey();
+      if (!raw) return { ok: false, err: '先解锁（重新输入一次口令）再设恢复码' };
+      var code = newRecoveryCode();
+      var rcSalt = toHex(bytes(16));
+      var wrapRc = await wrapWith(await kekRaw(normCode(code), KEK_RC, u.name, rcSalt), raw);
+      var body = { rcSalt: rcSalt, rcVerifier: await rcVerifierHex(code, u.name), wrap: { rc: wrapRc } };
+      var r = await api('/api/wrap', { method: 'POST', body: body });
+      if (!r.ok) return { ok: false, err: '服务端保存恢复码失败：' + r.err };
+      var s = readJSON(K.session, null) || {};
+      if (s.uid) writeJSON(K.session, Object.assign({}, s, { hasRecovery: true }));
+      emit();
+      return { ok: true, code: code };
+    },
+    /** 忘记口令：用恢复码解开 DEK → 设新口令 → 重包 DEK（云端密文不动，存档不丢） */
+    recover: async function (opts) {
+      opts = opts || {};
+      var name = String(opts.name || '').trim();
+      var code = String(opts.code || '');
+      var pass = String(opts.password || '');
+      if (name.length < 2) return { ok: false, err: '用户名至少 2 个字符' };
+      if (normCode(code).length < 32) return { ok: false, err: '恢复码看起来不完整（应该是 8 组 4 位）' };
+      if (pass.length < 6) return { ok: false, err: '新密码至少 6 位' };
+      if (!apiBase() || !(await apiAvailable())) return { ok: false, err: '连不上云后端，恢复码只在云账号上有效' };
+      var rcVerifier = await rcVerifierHex(code, name);
+      var begin = await api('/api/recover/begin', { method: 'POST', body: { name: name, rcVerifier: rcVerifier } });
+      if (!begin.ok) return { ok: false, err: begin.err };
+      var dek = await unwrapWith(await kekRaw(normCode(code), KEK_RC, name, begin.data.rcSalt), begin.data.wrap && begin.data.wrap.rc);
+      if (!dek) return { ok: false, err: '恢复码不对（解不开存档密钥）' };
+      var salt = toHex(bytes(16));
+      var verifier = await pbkdf2Hex(pass, salt, PBKDF2_ITER);
+      var wrapPw = await wrapWith(await kekRaw(pass, KEK_PW, name, salt), dek);
+      var commit = await api('/api/recover/commit', { method: 'POST', body: { name: name, rcVerifier: rcVerifier, verifier: verifier, salt: salt, wrap: { pw: wrapPw } } });
+      if (!commit.ok) return { ok: false, err: commit.err };
+      /* 建/更新本地壳（断网时也能用新口令登录）+ 会话 + 缓存 DEK */
+      var db = loadDB();
+      var lower = name.toLowerCase();
+      var u = Object.keys(db.users).map(function (k) { return db.users[k]; })
+        .filter(function (x) { return x.name.toLowerCase() === lower; })[0];
+      if (!u) { u = { uid: commit.data.uid, name: commit.data.name, email: commit.data.email || '', createdAt: commit.data.createdAt || nowISO(), providers: {}, games: {}, server: true }; db.users[u.uid] = u; }
+      u.salt = b64url(fromHex(salt));
+      u.hash = await hashPassword(pass, u.salt, PBKDF2_ITER);
+      u.iter = PBKDF2_ITER;
+      u.server = true;
+      saveDB(db);
+      Account._setSession(u.uid, { token: commit.data.token, exp: commit.data.exp, hasRecovery: true });
+      cacheRawKey(dek, name, salt);
+      emit();
+      return { ok: true, uid: u.uid, user: publicUser(u) };
     },
     /** 删账号 = 删本地记录 + 本地存档（云后端账号顺带删服务端；gist/OneDrive 里的文件要用户自己删） */
     deleteAccount: async function (confirmName) {

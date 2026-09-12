@@ -82,7 +82,65 @@ function loginHtml(): string {
     '<div class="row" style="margin-top:10px"><input id="acc-name" placeholder="用户名（2~24 字）" style="flex:1">' +
     '<input id="acc-pass" type="password" placeholder="密码（≥6 位）" style="flex:1"></div>' +
     '<div class="row" style="margin-top:8px"><input id="acc-mail" placeholder="邮箱（选填，只用来认账号）" style="flex:1"></div>' +
+    '<div class="hint" style="margin-top:8px">注册后会给你一串<b>恢复码</b>：忘了密码时用它找回账号和云存档（服务端解不开它，只有你手里那份有效）。</div>' +
+    '<div class="row" style="margin-top:8px"><button class="btn ghost" onclick="V4Account.showRecover()">😵 忘记密码 / 用恢复码登录</button></div>' +
     '<div class="hint" id="acc-msg" style="margin-top:8px"></div>';
+}
+
+/* ── 恢复码：展示（注册后一次性）/ 补设 / 忘记密码流程 ── */
+export function showRecoveryCode(code: string, opts: { fresh?: boolean } = {}): void {
+  L.modal({
+    title: opts.fresh ? '🎫 抄下你的恢复码' : '🎫 你的新恢复码',
+    sticky: true,
+    body: '<p class="muted">这串码只在<b>现在</b>显示一次，之后服务端和我们都拿不到明文。</p>' +
+      '<div class="mono" style="font-size:19px;letter-spacing:1px;padding:12px;background:#1b1f24;border-radius:8px;' +
+      'text-align:center;user-select:all" id="acc-rc-code">' + esc(code) + '</div>' +
+      '<div class="hint" style="margin-top:10px">用途：忘了密码时点登录页的「😵 忘记密码」→ 输入用户名 + 这串码 + 新密码，' +
+      '云存档原样拿回来（存档密钥是被这串码包住的，服务端自己解不开）。</div>' +
+      '<div class="hint">怎么存：抄纸上 / 存手机密码管理器 / 存你自己的加密保险箱。<b>别</b>和游戏账号密码放在同一处。</div>' +
+      '<div class="hint">抄错了也不要紧：大小写、连字符、I/L/O/U 都会被自动纠正。</div>',
+    footer: '<button class="btn ok" onclick="V4Account.copyRecovery(\'' + esc(code) + '\')">📋 复制</button>' +
+      '<button class="btn" data-close>我抄好了</button>',
+  });
+}
+export function copyRecovery(code: string): void {
+  try {
+    void navigator.clipboard.writeText(code);
+    toastMsg('已复制', '粘到你自己存密码的地方，然后清一下剪贴板。', 'ok');
+  } catch { toastMsg('复制失败', '手动选中上面那串字符复制。', 'bad'); }
+}
+export function showRecover(): void {
+  L.modal({
+    title: '😵 忘记密码：用恢复码找回',
+    sticky: true,
+    body: '<p class="muted">恢复码是注册时给你的那串 8 组 4 位字母数字。它会解开云存档的密钥，' +
+      '所以找回之后<b>存档还在</b>（这一点和普通网站不一样：它们能改密码，但救不回加密数据）。</p>' +
+      '<div class="row" style="margin-top:10px"><input id="acc-rc-name" placeholder="用户名" style="flex:1"></div>' +
+      '<div class="row" style="margin-top:8px"><input id="acc-rc-code2" placeholder="恢复码（如 R3J7-6DAM-…）" style="flex:1"></div>' +
+      '<div class="row" style="margin-top:8px"><input id="acc-rc-pass" type="password" placeholder="新密码（≥6 位）" style="flex:1"></div>' +
+      '<div class="hint" style="margin-top:8px">没设过恢复码的账号找回不了（服务端只有口令哈希，没有任何后门）——' +
+      '那就只能用还留着本地存档的设备导出存档文件，重新注册一个账号再导入。</div>' +
+      '<div class="hint" id="acc-msg" style="margin-top:8px"></div>',
+    footer: '<button class="btn ok" onclick="V4Account.doRecover()">找回并设置新密码</button>' +
+      '<button class="btn" data-close>取消</button>',
+  });
+}
+export async function doRecover(): Promise<boolean> {
+  const a = A(); if (!a) return false;
+  msg('正在用恢复码解开存档密钥…（本机 PBKDF2 21 万轮，几秒）');
+  const r = await a.recover({ name: val('#acc-rc-name'), code: val('#acc-rc-code2'), password: val('#acc-rc-pass') });
+  if (!r.ok) { msg(r.err ?? '找回失败', true); return false; }
+  L.log('🎫 已用恢复码找回账号：' + r.user?.name + '（云存档没丢）', 'success');
+  L.closeAllModals(); openPanel(); L.render();
+  return true;
+}
+/** 已登录状态下补设恢复码（老账号升级用） */
+export async function setupRecovery(): Promise<void> {
+  const a = A(); if (!a) return;
+  msg('正在生成恢复码…');
+  const r = await a.setRecovery();
+  if (!r.ok || !r.code) { msg(r.err ?? '生成失败', true); return; }
+  showRecoveryCode(r.code, { fresh: false });
 }
 
 function loggedInHtml(u: NonNullable<ReturnType<typeof currentUser>>, a: NonNullable<ReturnType<typeof A>>): string {
@@ -124,6 +182,9 @@ function loggedInHtml(u: NonNullable<ReturnType<typeof currentUser>>, a: NonNull
     'GitHub 一条就够用（免费、无额度限制）。</div>';
   if (g) h += '<div class="hint">GitHub 云盘 = 一个私有 Gist（描述里写着 bobbychina.github.io/games），删除 gist 就等于删云端存档。</div>';
   if (m) h += '<div class="hint">微软云盘 = OneDrive 的「应用文件夹 /dsh-saves」，不占用你可见的文档目录。</div>';
+  /* 今日上传额度：服务端每账号每天 10 次（免费版 KV 每天只有 1000 次写），挂载后异步填进来 */
+  if (backend === 'server') h += '<div class="hint" id="acc-quota">☁️ 今日云上传额度：查询中…</div>';
+  h += '<div class="hint">🎫 恢复码：<span id="acc-rc-state">…</span></div>';
   h += '<div class="sect-title" style="margin-top:12px">本机存档（槽位 main）</div>';
   h += '<div class="hint">' + (info ? '本机 ' + esc(info.updatedAt.slice(0, 16).replace('T', ' ')) + ' · ' + Math.round(info.bytes / 1024) + ' KB'
     : '还没有上传过（点下面的「上传存档」把当前进度存进账号）') + '</div>';
@@ -131,6 +192,7 @@ function loggedInHtml(u: NonNullable<ReturnType<typeof currentUser>>, a: NonNull
   h += '<div class="hint">🔒 ' + esc(integritySummary()) + '</div>';
   h += '<div class="sect-title" style="margin-top:12px">账号操作</div><div class="row">' +
     '<button class="btn" onclick="V4Account.changePass()">🔑 改密码</button>' +
+    '<button class="btn" onclick="V4Account.setupRecovery()">🎫 设/换恢复码</button>' +
     '<button class="btn" onclick="V4Account.exportFile()">💾 导出存档文件</button>' +
     '<button class="btn" onclick="V4Account.importFile()">📂 从文件导入</button>' +
     '<button class="btn ghost" onclick="V4Account.exportAll()">⬆️ 导出文本</button>' +
@@ -143,6 +205,37 @@ function loggedInHtml(u: NonNullable<ReturnType<typeof currentUser>>, a: NonNull
 function paint() {
   const box = L.$('#acc-msg') as HTMLElement | null;
   if (box) box.textContent = '';
+  void paintQuota();
+}
+/** 异步补上"今日额度"和"恢复码状态"两行（面板先渲染，数据后到） */
+async function paintQuota(): Promise<void> {
+  const a = A(); if (!a) return;
+  const qBox = L.$('#acc-quota') as HTMLElement | null;
+  const rcBox = L.$('#acc-rc-state') as HTMLElement | null;
+  if (qBox) {
+    const q = await a.quota();
+    if (q.ok) {
+      const left = q.left ?? 0, limit = q.limit ?? 10;
+      const reset = q.resetAt ? q.resetAt.slice(11, 16) : '';
+      qBox.textContent = '☁️ 今日云上传额度：还剩 ' + left + ' / ' + limit + ' 次' +
+        (reset ? '（UTC+8 ' + reset + ' 后重置）' : '') +
+        (left === 0 ? ' —— 明天的额度到了再传，本地存档不受影响' : '');
+    } else if (!q.local) {
+      qBox.textContent = '☁️ 今日云上传额度：查询失败（' + (q.err ?? '') + '）';
+    } else {
+      qBox.textContent = '☁️ 今日云上传额度：本机账号没有额度限制（也不会上云）';
+    }
+  }
+  if (rcBox) {
+    const info = a.serverInfo?.() as { hasRecovery?: boolean } | undefined;
+    if (info && info.hasRecovery === false) {
+      rcBox.innerHTML = '<b>还没设</b> —— 忘了密码就找不回云存档，点下面的「🎫 设/换恢复码」补一个';
+    } else if (info && info.hasRecovery) {
+      rcBox.textContent = '已设置（服务端只存校验值，明文只有你手里那份）';
+    } else {
+      rcBox.textContent = '本机账号：密码忘了可以用「导出存档文件」救，再去新账号导入';
+    }
+  }
 }
 function msg(text: string, bad = false) {
   const box = L.$('#acc-msg') as HTMLElement | null;
@@ -156,7 +249,11 @@ export async function doRegister(): Promise<boolean> {
   const r = await a.register({ name: val('#acc-name'), password: val('#acc-pass'), email: val('#acc-mail') });
   if (!r.ok) { msg(r.err ?? '注册失败', true); return false; }
   L.log('👤 账号已创建：' + r.user?.name + '（存档会跟着这个账号走）', 'success');
-  L.closeAllModals(); openPanel(); L.render();
+  const code = typeof r.recoveryCode === 'string' ? r.recoveryCode : '';
+  L.closeAllModals();
+  if (code) showRecoveryCode(code, { fresh: true });   // 只显示这一次，务必让玩家抄下来
+  else openPanel();
+  L.render();
   return true;
 }
 export async function doLogin(): Promise<boolean> {
@@ -379,7 +476,9 @@ async function pushAsync(): Promise<void> {
   const u = a.current();
   if (!u) { toastMsg('先登录', '没登录时存档只在本机，登录后才能带账号走。', 'bad'); return; }
   stampInPlace(L.S as Record<string, unknown>);          // 盖指纹：云端那份才能校验通过
-  const r = a.savePut(GAME, SLOT, L.S);
+  /* noServer：savePut 默认会自己异步推一次云；这里紧接着就 pushAll，不关掉会同一份存两次
+     —— 每账号每天只有 10 次上传额度，白烧一半 */
+  const r = a.savePut(GAME, SLOT, L.S, { noServer: true });
   if (!r.ok) { toastMsg('存档失败', r.err ?? '', 'bad'); return; }
   const up = await a.pushAll(GAME);
   if (up.ok) toastMsg('已存档到账号', '本机 + ' + (up.provider === 'github' ? 'GitHub Gist' : 'OneDrive') + ' 都写好了。', 'ok');
@@ -558,7 +657,7 @@ export function subscribeAutoSync(): void {
       lastCloudWrite = Date.now();
       try {
         stampInPlace(L.S as Record<string, unknown>);      // 先盖指纹再上传，云端那份才校验得通过
-        a.savePut(GAME, SLOT, L.S);
+        a.savePut(GAME, SLOT, L.S, { noServer: true });    // 同上：别让 savePut 和 pushAll 各推一次（额度翻倍消耗）
         void a.pushAll(GAME).then(res => {
           if (res.ok) L.log('☁️ 自动同步：存档已推到云端。', 'dim');
         });

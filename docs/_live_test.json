@@ -6,17 +6,17 @@
    "ok": true,
    "kv": false,
    "pepper": "default",
-   "time": "2026-09-12T15:42:32.753Z"
+   "time": "2026-09-12T15:50:23.882Z"
   },
   "relay": {
    "status": 200,
-   "body": "{\"device_code\":\"ac1fc2fb6e02dee09885e488ea3a54a388be1b3b\",\"user_code\":\"9C73-FBDF\",\"verification_uri\":\"https://github.com/login/device\",\"expires_in\":899,\"interval\":5}"
+   "body": "{\"device_code\":\"4dffda37111232d923d7664c11f5416b3442285f\",\"user_code\":\"03FB-F0DA\",\"verification_uri\":\"https://github.com/login/device\",\"expires_in\":899,\"interval\":5}"
   },
   "register": {
    "apiConfigured": true,
-   "available": true,
-   "ok": false,
-   "err": "Worker 还没绑定 KV：Settings → Bindings → 添加 DSH_KV",
+   "available": false,
+   "ok": true,
+   "server": false,
    "unlocked": false,
    "backend": null
   },
@@ -48,13 +48,8 @@
   }
  },
  "errors": [
-  "A:console:Failed to load resource: the server responded with a status of 404 ()",
   "A:console:Failed to load resource: the server responded with a status of 503 ()",
   "A:console:Failed to load resource: the server responded with a status of 503 ()",
-  "A:console:Failed to load resource: the server responded with a status of 503 ()",
-  "A:console:Failed to load resource: the server responded with a status of 503 ()",
-  "B:console:Failed to load resource: the server responded with a status of 503 ()",
-  "B:console:Failed to load resource: the server responded with a status of 503 ()",
-  "B:console:Failed to load resource: the server responded with a status of 503 ()"
+  "A:console:Failed to load resource: the server responded with a status of 503 ()"
  ]
 }

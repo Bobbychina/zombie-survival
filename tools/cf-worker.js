@@ -25,6 +25,19 @@
      4) 自检：浏览器打开 https://<你的>.workers.dev/api/health
            期望 {"ok":true,"kv":true,"pepper":"custom"}
 
+    推荐用同目录的 wrangler.toml 声明式部署（cd tools && npx wrangler deploy）：
+    绑定写在配置里就不会点错，也不用每次往面板贴代码。
+
+    账号安全模型（免费额度下的取舍）：
+      · 口令：客户端 PBKDF2-SHA256 210k → verifier；服务端只存 SHA256(pepper + verifier)
+      · 会话：KV 里只存 SHA256(token)，退登即删
+      · 存档：客户端 AES-GCM 端到端加密，服务端只有密文
+      · 存档密钥（DEK）是随机的，被"口令"和"恢复码"各包一份存在用户记录里（wrap.pw / wrap.rc）：
+        忘了口令可以拿恢复码解开 DEK、换个口令重包一次，老存档照旧能读
+        （代价：拿到 KV 的人可以离线猜口令，PBKDF2 210k 挡着——这是所有端到端方案的固有属性）
+      · 配额：每账号每天 SAVE_WRITES_PER_DAY 次云存档上传（护 KV 免费额度 1000 写/天），
+        以 UTC+8 零点为界，超了返回 429 quota_exceeded
+
    本地测试：本文件不依赖 Cloudflare 专有 API（只用 env.DSH_KV 的 get/put/delete/list），
    所以 tools/dev-api-server.mjs 能用内存 KV 把它跑在 Node 上，tools/test-worker.mjs 直接跑断言。
    ========================================================================== */
@@ -38,6 +51,8 @@ const MAX_SAVE_BYTES = 262144;        // 单份存档 256KB
 const SESSION_DAYS = 60;
 const RL_PER_MIN = 20;                // 每 IP 每分钟的注册/登录尝试上限
 const DEFAULT_PEPPER = 'dsh-default-pepper-please-set-DSH_PEPPER';
+const SAVE_WRITES_PER_DAY = 10;       // 每账号每天云存档上传上限（护 KV 免费额度：1000 写/天）
+const QUOTA_TZ_OFFSET = 8 * 3600e3;   // 以 UTC+8 划"一天"，对国内玩家最直观
 
 /* ---------- 小工具 ---------- */
 const enc = new TextEncoder();
@@ -118,6 +133,32 @@ const readJSON = async req => { try { return await req.json(); } catch { return 
 const validName = n => typeof n === 'string' && /^[\w\u4e00-\u9fa5.-]{2,24}$/.test(n);
 const validVerifier = v => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);   // PBKDF2-SHA256 → 32B → 64 hex
 const validSalt = s => typeof s === 'string' && /^[0-9a-f]{32}$/.test(s);        // 16B → 32 hex
+/* 客户端包好的存档密钥（信封加密）：形如 v1.<b64 iv>.<b64 ct>，服务端只存不拆 */
+const validWrap = w => typeof w === 'string' && /^v1\.[A-Za-z0-9_-]{12,32}\.[A-Za-z0-9_-]{40,400}$/.test(w);
+
+/* ---------- 每日上传配额 ----------
+   免费版 KV 每天只有 1000 次写，所以给每账号每天 10 次云存档上传的机会。
+   KV 没有原子自增：并发下最多多放行几次——配额是防滥用，不是计费，容忍这点误差。 */
+function dayInfo(ts = Date.now()) {
+  const local = ts + QUOTA_TZ_OFFSET;                       // 挪到 UTC+8
+  const day = new Date(local).toISOString().slice(0, 10);   // 取日期部分
+  const nextMidnightLocal = Math.floor(local / 86400000) * 86400000 + 86400000;
+  return {
+    day,
+    resetAt: new Date(nextMidnightLocal - QUOTA_TZ_OFFSET).toISOString(),
+    ttl: Math.ceil((nextMidnightLocal - local) / 1000) + 3600,   // 多留 1 小时，避免边界抖动
+  };
+}
+const quotaKey = (uid, day) => 'q:' + uid + ':' + day;
+async function quotaRead(env, uid) {
+  const d = dayInfo();
+  const rec = await kvGet(env, quotaKey(uid, d.day));
+  const used = (rec && Number(rec.n)) || 0;
+  return { day: d.day, used, limit: SAVE_WRITES_PER_DAY, left: Math.max(0, SAVE_WRITES_PER_DAY - used), resetAt: d.resetAt, ttl: d.ttl };
+}
+async function quotaBump(env, uid, q) {
+  await kvPut(env, quotaKey(uid, q.day), { n: q.used + 1, day: q.day }, { expirationTtl: q.ttl });
+}
 
 /* ---------- 令牌"落地即加密"（AES-GCM，密钥由 DSH_PEPPER 派生） ----------
    为什么不用 PBKDF2 派生这把钥匙：免费版 Worker 只有 10ms CPU，PBKDF2 会超。
@@ -238,7 +279,7 @@ export async function handle(req, env) {
     }
   }
   if (RELAY[path] || path === '/oauth/access_token') return err(req, 405, 'method_not_allowed', '只接受 POST');
-  if (path === '/' || path === '') return json(req, { ok: true, service: 'bobbychina cloud', api: ['/api/health', '/api/register', '/api/login', '/api/me', '/api/saves', '/api/save'] });
+  if (path === '/' || path === '') return json(req, { ok: true, service: 'bobbychina cloud', api: ['/api/health', '/api/register', '/api/login', '/api/recover/begin', '/api/recover/commit', '/api/me', '/api/quota', '/api/saves', '/api/save'] });
 
   /* ---- 健康检查 ---- */
   if (path === '/api/health') {
@@ -256,6 +297,12 @@ export async function handle(req, env) {
       const b = await readJSON(req);
       if (!b || !validName(b.name)) return err(req, 400, 'bad_name', '用户名 2~24 字，可用中文/字母/数字/._-');
       if (!validVerifier(b.verifier) || !validSalt(b.salt)) return err(req, 400, 'bad_credential', '客户端派生值格式不对');
+      /* 恢复码是可选的：给了就必须三件套齐全（盐 + 派生值 + 用它包好的存档密钥） */
+      const hasRc = b.rcVerifier || b.rcSalt || (b.wrap && b.wrap.rc);
+      if (hasRc && !(validVerifier(b.rcVerifier) && validSalt(b.rcSalt) && b.wrap && validWrap(b.wrap.rc))) {
+        return err(req, 400, 'bad_recovery', '恢复码字段不完整');
+      }
+      if (b.wrap && b.wrap.pw && !validWrap(b.wrap.pw)) return err(req, 400, 'bad_wrap', '存档密钥包裹格式不对');
       const key = 'u:' + String(b.name).toLowerCase();
       if (await kvGet(env, key)) return err(req, 409, 'name_taken', '这个名字已经被注册了');
       const uid = rand(9);
@@ -263,10 +310,13 @@ export async function handle(req, env) {
         uid, name: b.name, email: String(b.email || '').slice(0, 120),
         salt: b.salt, pw: await sha256(pepper + b.verifier), v: 1, createdAt: nowISO(),
       };
+      if (hasRc) { rec.rcSalt = b.rcSalt; rec.rcPw = await sha256(pepper + b.rcVerifier); }
+      if (b.wrap && validWrap(b.wrap.pw)) rec.wrap = { pw: b.wrap.pw, ...(hasRc ? { rc: b.wrap.rc } : {}) };
       await kvPut(env, key, rec);
       await kvPut(env, 'uid:' + uid, { name: rec.name });
       const s = await newSession(env, uid, rec.name);
-      return json(req, { uid, name: rec.name, email: rec.email, createdAt: rec.createdAt, ...s }, 201);
+      return json(req, { uid, name: rec.name, email: rec.email, createdAt: rec.createdAt,
+        wrap: rec.wrap || null, hasRecovery: !!rec.rcPw, ...s }, 201);
     }
 
     if (path === '/api/login' && req.method === 'POST') {
@@ -278,7 +328,45 @@ export async function handle(req, env) {
       // 用户名不存在时也走一次哈希比较，避免用响应时间区分"用户不存在/口令错"
       if (!rec || !timingSafeEq(rec.pw, want)) return err(req, 401, 'bad_credentials', '用户名或口令不对');
       const s = await newSession(env, rec.uid, rec.name);
-      return json(req, { uid: rec.uid, name: rec.name, email: rec.email || '', createdAt: rec.createdAt, ...s });
+      /* 把"被口令包好的存档密钥"交给客户端：服务端解不开，但忘口令时客户端可用恢复码解开它 */
+      return json(req, { uid: rec.uid, name: rec.name, email: rec.email || '', createdAt: rec.createdAt,
+        wrap: rec.wrap || null, hasRecovery: !!rec.rcPw, ...s });
+    }
+
+    /* ---- 忘记口令：用恢复码找回（两个都是登录前接口，所以放在鉴权之前） ----
+       流程：begin 校验恢复码 → 客户端用恢复码解开存档密钥 → commit 换新口令 + 重包密钥
+       服务端全程只见到密文，既不知道恢复码也不知道新口令的明文。 */
+    if (path === '/api/recover/begin' && req.method === 'POST') {
+      if (await rateLimited(env, req)) return err(req, 429, 'rate_limited', '请求太频繁，等一分钟再试');
+      const b = await readJSON(req);
+      if (!b || !validName(b.name) || !validVerifier(b.rcVerifier)) return err(req, 400, 'bad_request', '缺用户名或恢复码派生值');
+      const rec = await kvGet(env, 'u:' + String(b.name).toLowerCase());
+      const want = await sha256(pepper + b.rcVerifier);
+      if (!rec || !rec.rcPw || !timingSafeEq(rec.rcPw, want)) {
+        return err(req, 401, 'bad_recovery', '恢复码不对，或这个账号没有设置恢复码');
+      }
+      if (!rec.wrap || !rec.wrap.rc) return err(req, 409, 'no_wrap', '这个账号没有可恢复的存档密钥（旧版账号，请用原口令登录后补设恢复码）');
+      return json(req, { ok: true, name: rec.name, rcSalt: rec.rcSalt, wrap: { rc: rec.wrap.rc } });
+    }
+    if (path === '/api/recover/commit' && req.method === 'POST') {
+      if (await rateLimited(env, req)) return err(req, 429, 'rate_limited', '请求太频繁，等一分钟再试');
+      const b = await readJSON(req);
+      if (!b || !validName(b.name) || !validVerifier(b.rcVerifier)) return err(req, 400, 'bad_request', '缺用户名或恢复码派生值');
+      if (!validVerifier(b.verifier) || !validSalt(b.salt) || !b.wrap || !validWrap(b.wrap.pw)) {
+        return err(req, 400, 'bad_request', '缺新口令派生值 / 新盐 / 重包后的密钥');
+      }
+      const key = 'u:' + String(b.name).toLowerCase();
+      const rec = await kvGet(env, key);
+      const want = await sha256(pepper + b.rcVerifier);
+      if (!rec || !rec.rcPw || !timingSafeEq(rec.rcPw, want)) return err(req, 401, 'bad_recovery', '恢复码不对');
+      rec.pw = await sha256(pepper + b.verifier);     // 换口令哈希
+      rec.salt = b.salt;                              // 换口令盐（恢复码的盐不动 → 恢复码继续有效）
+      rec.wrap = { pw: b.wrap.pw, ...(rec.wrap && rec.wrap.rc ? { rc: rec.wrap.rc } : {}) };
+      rec.recoveredAt = nowISO();
+      await kvPut(env, key, rec);
+      const s = await newSession(env, rec.uid, rec.name);
+      return json(req, { ok: true, uid: rec.uid, name: rec.name, email: rec.email || '', createdAt: rec.createdAt,
+        wrap: rec.wrap, hasRecovery: true, recovered: true, ...s });
     }
 
     /* 登录前取盐（公开接口）：用户不存在时也返回一个稳定的假盐，
@@ -294,6 +382,46 @@ export async function handle(req, env) {
 
     const me = await authed(env, req);
     if (!me) return err(req, 401, 'unauthorized', '没登录或会话过期');
+
+    /* ---- 今日上传额度（账号面板显示"今天还能传几次"） ---- */
+    if (path === '/api/quota' && req.method === 'GET') {
+      const q = await quotaRead(env, me.uid);
+      return json(req, { used: q.used, limit: q.limit, left: q.left, resetAt: q.resetAt });
+    }
+
+    /* ---- 补设恢复码（老账号：口令登录后补一份"被恢复码包好的存档密钥"） ---- */
+    if (path === '/api/wrap' && req.method === 'POST') {
+      const b = await readJSON(req);
+      if (!b || !validVerifier(b.rcVerifier) || !validSalt(b.rcSalt) || !b.wrap || !validWrap(b.wrap.rc)) {
+        return err(req, 400, 'bad_request', '缺 rcVerifier / rcSalt / wrap.rc');
+      }
+      const key = 'u:' + String(me.name).toLowerCase();
+      const rec = await kvGet(env, key);
+      if (!rec) return err(req, 404, 'not_found', '账号记录不见了');
+      rec.rcSalt = b.rcSalt;
+      rec.rcPw = await sha256(pepper + b.rcVerifier);
+      rec.wrap = { ...(rec.wrap || {}), rc: b.wrap.rc };
+      if (b.wrap.pw && validWrap(b.wrap.pw)) rec.wrap.pw = b.wrap.pw;   // 老账号同时补口令包，之后就走上信封加密
+      await kvPut(env, key, rec);
+      return json(req, { ok: true, hasRecovery: true });
+    }
+
+    /* ---- 改口令：只重包存档密钥，云端密文一个字节都不用动 ---- */
+    if (path === '/api/password' && req.method === 'POST') {
+      const b = await readJSON(req);
+      if (!b || !validVerifier(b.verifier) || !validSalt(b.salt) || !b.wrap || !validWrap(b.wrap.pw)) {
+        return err(req, 400, 'bad_request', '缺新口令派生值 / 新盐 / 重包后的密钥');
+      }
+      const key = 'u:' + String(me.name).toLowerCase();
+      const rec = await kvGet(env, key);
+      if (!rec) return err(req, 404, 'not_found', '账号记录不见了');
+      rec.pw = await sha256(pepper + b.verifier);
+      rec.salt = b.salt;
+      rec.wrap = { ...(rec.wrap || {}), pw: b.wrap.pw };
+      rec.pwChangedAt = nowISO();
+      await kvPut(env, key, rec);
+      return json(req, { ok: true });
+    }
 
     /* ---- GitHub 绑定：换 token 只在服务端做，前端拿到的永远只是用户名/头像 ---- */
     if (path === '/api/gh/bind' && req.method === 'POST') {
@@ -313,7 +441,11 @@ export async function handle(req, env) {
         tok = await r.json();
       } catch (e) { return err(req, 502, 'github_unreachable', String(e && e.message || e)); }
       if (!tok || !tok.access_token) {
-        return err(req, 400, 'exchange_failed', (tok && (tok.error_description || tok.error)) || '换 token 失败');
+        /* 把 GitHub 的错误码一并带出来：bad_verification_code = 客户端凭据没问题、只是 code 无效；
+           incorrect_client_credentials = client_id/secret 配错了。排查时一眼能分清（这次就是靠它验证 secret 生效的） */
+        const code = (tok && tok.error) || '';
+        const desc = (tok && tok.error_description) || code || '换 token 失败';
+        return json(req, { error: 'exchange_failed', github: code, message: desc + (code ? '（' + code + '）' : '') }, 400);
       }
       const usr = await ghApi(tok.access_token, 'GET', '/user');
       if (!usr.ok) return err(req, 400, 'token_invalid', usr.err);
@@ -494,6 +626,13 @@ export async function handle(req, env) {
     if (path === '/api/save' && req.method === 'PUT') {
       const b = await readJSON(req);
       if (!b || !b.game || !b.slot || typeof b.data === 'undefined') return err(req, 400, 'bad_request', '缺 game / slot / data');
+      /* 每日上传配额：先查后写，超了直接 429，让 KV 免费额度（1000 写/天）撑得住 */
+      const q = await quotaRead(env, me.uid);
+      if (q.used >= q.limit) {
+        const hoursLeft = Math.max(1, Math.ceil((Date.parse(q.resetAt) - Date.now()) / 3600000));
+        return json(req, { error: 'quota_exceeded', used: q.used, limit: q.limit, left: 0, resetAt: q.resetAt,
+          message: `今天的云存档上传次数用完了（${q.limit}/${q.limit}），${hoursLeft} 小时后（UTC+8 零点）恢复` }, 429);
+      }
       const body = JSON.stringify(b.data);
       if (body.length > MAX_SAVE_BYTES) return err(req, 413, 'too_large', '单份存档上限 ' + Math.round(MAX_SAVE_BYTES / 1024) + 'KB');
       const game = String(b.game).slice(0, 64), slot = String(b.slot).slice(0, 64);
@@ -508,7 +647,10 @@ export async function handle(req, env) {
       const idx = await idxRead(env, me.uid, game);
       idx.slots[slot] = { updatedAt: rec.updatedAt, bytes: rec.bytes, digest: rec.digest };
       await idxWrite(env, me.uid, game, idx);
-      return json(req, { ok: true, slot, updatedAt: rec.updatedAt, bytes: rec.bytes });
+      /* 计数放在写成功之后：计数失败就当这次白送，绝不因为配额记账而丢存档 */
+      try { await quotaBump(env, me.uid, q); } catch { /* 记账失败不影响存档 */ }
+      return json(req, { ok: true, slot, updatedAt: rec.updatedAt, bytes: rec.bytes,
+        quota: { used: q.used + 1, limit: q.limit, left: Math.max(0, q.limit - q.used - 1), resetAt: q.resetAt } });
     }
 
     /* 删一份存档 */
@@ -528,7 +670,7 @@ export async function handle(req, env) {
       const b = await readJSON(req);
       if (!b || b.confirm !== me.name) return err(req, 400, 'need_confirm', '要把用户名原样传进 confirm');
       const k = kv(env);
-      for (const prefix of ['v:' + me.uid + ':', 'i:' + me.uid + ':']) {
+      for (const prefix of ['v:' + me.uid + ':', 'i:' + me.uid + ':', 'q:' + me.uid + ':']) {
         for (const item of await kvList(env, prefix)) await k.delete(item.name);
       }
       await k.delete('u:' + String(me.name).toLowerCase());

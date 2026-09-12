@@ -119,10 +119,11 @@ node docs/_file_check.mjs                                       # file:// 直开
 | 面 | 做法 |
 |---|---|
 | 口令 | 浏览器 PBKDF2-SHA256 210k 派生 → 只上传 `verifier`；服务端存 `SHA256(pepper+verifier)`，pepper 是 Worker Secret（不在库里） |
-| 存档内容 | 上传前 **AES-GCM-256 端到端加密**（密钥由口令另派生一次，独立盐；每文件随机 IV；密文带版本头）；密钥只在 `sessionStorage`，重开页面需「解锁」 |
+| 忘了口令 | 注册时发一串**恢复码**（一次性显示）：它把存档密钥另包一份存服务端，找回时用它解开密钥再换口令，**云存档不会丢**。代价：服务端存了包裹后的密钥 → 拿到 KV 的人可离线猜口令（PBKDF2 210k + 长口令是唯一缓冲，已写进 PRIVACY.md） |
+| 存档内容 | 上传前 **AES-GCM-256 端到端加密**（密钥是注册时生成的随机 DEK，口令只负责包住它；每文件随机 IV；密文带版本头）；密钥只在 `sessionStorage`，重开页面需「解锁」，退出登录即抹掉 |
 | GitHub 令牌 | **不进前端**：Worker 里换 token、AES-GCM 加密后存 KV；读写 Gist 全部走 Worker 代理，且只允许动它自己创建的那一个 Gist 里的 `<game>__<slot>.json`；解绑时调 GitHub 撤销接口 |
 | 冲突 | 上传带乐观锁（`expectUpdatedAt` / `expectVersion`），过期写入返回 409，客户端先拉再重试 |
-| 频率 | 自动同步两段节流（8s 合并 + 距上次写云 ≥60s）；KV 免费额度 1000 写/天 |
+| 频率 | **每账号每天 10 次上传**（UTC+8 零点重置，`429 quota_exceeded`；面板显示剩余次数）+ 自动同步两段节流（8s 合并 + 距上次写云 ≥60s）；KV 免费额度 1000 写/天 |
 | 跨域 | Worker 只回显白名单 Origin（不是 `*`）+ `Vary: Origin`；游戏厅页面加了 CSP（`connect-src` 只放行自己的 Worker 与 api.github.com） |
 | 暴力破解 | `/api/login`、`/api/register`、`/api/salt` 按 IP 限流 20 次/分钟 |
 

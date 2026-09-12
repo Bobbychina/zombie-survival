@@ -32,6 +32,12 @@ export interface DshAccount {
   logout(): Promise<AccountResult>;
   current(): AccountUser | null;
   changePassword(oldPass: string, newPass: string): Promise<AccountResult>;
+  /** 今日云上传额度（服务端每账号每天 10 次，护 KV 免费额度） */
+  quota(): Promise<{ ok: boolean; used?: number; limit?: number; left?: number; resetAt?: string; local?: boolean; err?: string }>;
+  /** 补设恢复码：返回一次性明文 code，UI 必须让用户抄下来 */
+  setRecovery(): Promise<{ ok: boolean; code?: string; err?: string }>;
+  /** 忘记口令：用恢复码解开存档密钥并设新口令（老云存档不会丢） */
+  recover(o: { name: string; code: string; password: string }): Promise<AccountResult>;
   deleteAccount(confirmName: string): AccountResult;
   bindGitHubToken(token: string): Promise<AccountResult>;
   bindGitHubOAuth(): Promise<AccountResult>;
@@ -43,7 +49,8 @@ export interface DshAccount {
   slots(game: string): SaveSlot[];
   saveGet(game: string, slot: string): unknown;
   saveInfo(game: string, slot: string): { updatedAt: string; bytes: number; cloud?: unknown } | null;
-  savePut(game: string, slot: string, data: unknown, opts?: { cloud?: unknown }): AccountResult;
+  /** noServer=true：只写本机，不自动推云（调用方紧接着自己 pushAll 时用，避免同一份存两次、白烧每日额度） */
+  savePut(game: string, slot: string, data: unknown, opts?: { cloud?: unknown; noServer?: boolean; expectUpdatedAt?: string }): AccountResult;
   saveDelete(game: string, slot: string, quiet?: boolean): AccountResult;
   syncNow(game: string): Promise<AccountResult & { pulled?: string[]; pushed?: string[]; provider?: string }>;
   pushAll(game: string): Promise<AccountResult & { pushed?: string[]; provider?: string }>;

@@ -19,6 +19,8 @@ async function device(tag) {
   const page = await (await browser.newContext()).newPage();
   page.on('pageerror', e => out.errors.push(tag + ':' + String(e.message).slice(0, 160)));
   page.on('console', m => { if (m.type() === 'error' && !/frame-ancestors/.test(m.text())) out.errors.push(tag + ':console:' + m.text().slice(0, 140)); });
+  /* GitHub Pages 给静态资源带 10 分钟缓存，测试时要穿透，否则测的是旧 account.js */
+  await page.route('**/games/account.js*', r => r.continue({ url: r.request().url().split('?')[0] + '?cb=' + Date.now() }));
   await page.goto(site + '/games/', { waitUntil: 'load' });
   await page.waitForTimeout(600);
   return page;

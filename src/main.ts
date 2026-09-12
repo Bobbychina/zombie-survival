@@ -71,6 +71,8 @@ async function main() {
   (window as any).V4Account = {
     open: accountUi.openPanel, summary: accountUi.accountSummary,
     doRegister: accountUi.doRegister, doLogin: accountUi.doLogin, logout: accountUi.logout,
+    showRecover: accountUi.showRecover, doRecover: accountUi.doRecover,
+    setupRecovery: accountUi.setupRecovery, copyRecovery: accountUi.copyRecovery,
     bindGitHub: accountUi.bindGitHub, bindGitHubConfirm: accountUi.bindGitHubConfirm,
     bindGitHubToken: accountUi.bindGitHubToken,
     bindGitHubDevice: accountUi.bindGitHubDevice, bindMicrosoft: accountUi.bindMicrosoft, unbind: accountUi.unbind,
