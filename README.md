@@ -114,6 +114,20 @@ node docs/_file_check.mjs                                       # file:// 直开
 - client_id 的注册步骤写在主页仓库的 `games/auth-config.js` 顶部（GitHub 约 3 分钟，填进去就生效）。
 - **安全边界**：这是"防同事手滑"级别的本地账号——持有浏览器 profile 的人可以直接读到存档与云令牌，别拿它当密码保险箱。
 
+### 安全模型（M8.1 加固后）
+
+| 面 | 做法 |
+|---|---|
+| 口令 | 浏览器 PBKDF2-SHA256 210k 派生 → 只上传 `verifier`；服务端存 `SHA256(pepper+verifier)`，pepper 是 Worker Secret（不在库里） |
+| 存档内容 | 上传前 **AES-GCM-256 端到端加密**（密钥由口令另派生一次，独立盐；每文件随机 IV；密文带版本头）；密钥只在 `sessionStorage`，重开页面需「解锁」 |
+| GitHub 令牌 | **不进前端**：Worker 里换 token、AES-GCM 加密后存 KV；读写 Gist 全部走 Worker 代理，且只允许动它自己创建的那一个 Gist 里的 `<game>__<slot>.json`；解绑时调 GitHub 撤销接口 |
+| 冲突 | 上传带乐观锁（`expectUpdatedAt` / `expectVersion`），过期写入返回 409，客户端先拉再重试 |
+| 频率 | 自动同步两段节流（8s 合并 + 距上次写云 ≥60s）；KV 免费额度 1000 写/天 |
+| 跨域 | Worker 只回显白名单 Origin（不是 `*`）+ `Vary: Origin`；游戏厅页面加了 CSP（`connect-src` 只放行自己的 Worker 与 api.github.com） |
+| 暴力破解 | `/api/login`、`/api/register`、`/api/salt` 按 IP 限流 20 次/分钟 |
+
+已知边界（诚实版）：CSP 的 `script-src` 仍需要 `'unsafe-inline'`（单文件产物把脚本内联了），所以 XSS 防线主要靠"高价值令牌不在页面里"；KV/Gist 都存在服务端可见的**元数据**（文件名、大小、更新时间）——内容本身是密文。
+
 ### 存档完整性（反作弊"取证"，不是"阻止"）
 
 单机游戏跑在玩家机器上，**纯前端不可能阻止改档**（代码、存档、运行时全在他手里）。这里做的是三层"看得见"：

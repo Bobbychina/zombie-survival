@@ -16,6 +16,8 @@ const esc = (s: unknown) => String(s ?? '').replace(/[<>&"]/g, c => ({ '<': '&lt
 
 let autoSync = false;
 let autoTimer: ReturnType<typeof setTimeout> | null = null;
+let lastCloudWrite = 0;                       // 上次真正写到云端的时间（节流用）
+const CLOUD_MIN_INTERVAL = 60000;             // 自动同步最短间隔：别把 KV 当高频存储刷
 
 export const available = () => !!A();
 export const currentUser = () => (A()?.current() ?? null);
@@ -63,6 +65,7 @@ export function openPanel(): void {
       ? '<button class="btn ok" onclick="V4Account.push()">⬆️ 上传存档</button>' +
         '<button class="btn" onclick="V4Account.pull()">⬇️ 下载存档</button>' +
         '<button class="btn" onclick="V4Account.sync()">☁️ 双向同步</button>' +
+        (a.cryptoInfo?.().locked ? '<button class="btn" onclick="V4Account.unlock()">🔓 解锁同步</button>' : '') +
         '<button class="btn ghost" onclick="V4Account.toggleAuto()">🔁 自动同步：' + (autoSync ? '开' : '关') + '</button>' +
         '<button class="btn" data-close>关闭</button>'
       : '<button class="btn ok" onclick="V4Account.doRegister()">注册并登录</button>' +
@@ -95,6 +98,14 @@ function loggedInHtml(u: NonNullable<ReturnType<typeof currentUser>>, a: NonNull
       : backend === 'github' ? 'GitHub 私有 Gist（你自己的账号下）'
         : backend === 'microsoft' ? 'OneDrive 应用文件夹'
           : '只在这台设备（浏览器本地）—— 想跨设备就注册云账号或绑定 GitHub') + '</div>';
+  // 加密状态：云模式下上传的是密文，密钥由口令派生、只留在本标签页
+  if (backend === 'server') {
+    const ci = a.cryptoInfo?.();
+    h += '<div class="hint">🔐 上传前在本机加密（' + esc(ci?.alg ?? 'AES-GCM') + '，随机 IV，密文带版本头）：' +
+      (ci?.locked ? '<b>当前未解锁</b> —— 点下面的「🔓 解锁同步」输入一次口令即可（口令不会上传）'
+        : '已解锁（密钥只在本标签页内存里，关掉即失效）') + '</div>';
+  }
+  if (g && g.serverSide !== false) h += '<div class="hint">GitHub 令牌保存在 Worker 里（前端拿不到），中继只允许读写你名下那一个存档 Gist。</div>';
   h += '<div class="sect-title" style="margin-top:12px">云账号绑定</div><div class="row">';
   h += g
     ? '<button class="btn ok" onclick="V4Account.unbind(\'github\')">GitHub @' + esc(g.login) + ' ✕</button>'
@@ -334,8 +345,31 @@ export async function diagnose(): Promise<void> {
   console.log('[account] diagnose', rows);
 }
 export function unbind(provider: 'github' | 'microsoft'): void {
-  A()?.unbind(provider);
+  void (async () => {
+    const r = await A()?.unbind(provider);
+    L.closeAllModals(); openPanel();
+    if (r?.note) toastMsg('已解绑', String(r.note), 'info');
+  })();
+}
+
+/* ── 解锁：重新输入一次口令，在本机重新派生加密密钥（口令不上传） ── */
+export function unlock(): void {
+  L.modal({
+    title: '🔓 解锁云同步', sticky: true,
+    body: '<p class="muted">云端的存档是加密的，密钥由你的口令在本机派生。' +
+      '换设备/重开标签页后需要重新输入一次口令来解锁——<b>口令不会被发送到任何地方</b>，只用来在本机算出密钥。</p>' +
+      '<input id="acc-unlock" type="password" placeholder="账号口令" style="width:100%;margin-top:10px">' +
+      '<div class="hint" id="acc-msg" style="margin-top:8px"></div>',
+    footer: '<button class="btn ok" onclick="V4Account.doUnlock()">解锁</button><button class="btn" data-close>取消</button>',
+  });
+}
+export async function doUnlock(): Promise<void> {
+  const a = A(); if (!a) return;
+  msg('正在本机派生密钥…');
+  const r = await a.unlock(val('#acc-unlock'));
+  if (!r.ok) { msg(r.err ?? '解锁失败', true); return; }
   L.closeAllModals(); openPanel();
+  toastMsg('已解锁', '本次会话内可以直接同步了。', 'ok');
 }
 
 /* ── 存档上传 / 下载 ── */
@@ -519,8 +553,9 @@ export function subscribeAutoSync(): void {
   onSaveWritten(() => {
     const a = A();
     if (!autoSync || !a?.current()) return;
-    if (autoTimer) clearTimeout(autoTimer);
-    autoTimer = setTimeout(() => {
+    const fire = () => {
+      autoTimer = null;
+      lastCloudWrite = Date.now();
       try {
         stampInPlace(L.S as Record<string, unknown>);      // 先盖指纹再上传，云端那份才校验得通过
         a.savePut(GAME, SLOT, L.S);
@@ -528,6 +563,11 @@ export function subscribeAutoSync(): void {
           if (res.ok) L.log('☁️ 自动同步：存档已推到云端。', 'dim');
         });
       } catch (e) { console.warn('[v4] 自动同步失败', e); }
-    }, 8000);
+    };
+    /* 两段节流：先 debounce 8 秒（连续几次保存合并成一次），
+       再保证距上次写云至少 60 秒——KV 每天只有 1000 次写，别按"每存一次就写一次"来。 */
+    if (autoTimer) clearTimeout(autoTimer);
+    const sinceLast = Date.now() - lastCloudWrite;
+    autoTimer = setTimeout(fire, Math.max(8000, CLOUD_MIN_INTERVAL - sinceLast));
   });
 }

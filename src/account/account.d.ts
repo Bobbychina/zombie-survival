@@ -1,6 +1,6 @@
 /* src/account/account.js 的类型声明：那个文件是原生 JS（同时被 /games/ 大厅直接 <script> 引用，
    保持"一份源码两处用"），这里只声明游戏侧用到的那部分接口。 */
-export interface AccountProviderGitHub { login: string; name: string; avatar?: string; boundAt: string }
+export interface AccountProviderGitHub { login: string; name: string; avatar?: string; boundAt: string; gistId?: string; serverSide?: boolean }
 export interface AccountProviderMS { name: string; email?: string; oid?: string; boundAt: string }
 export interface AccountUser {
   uid: string;
@@ -19,6 +19,12 @@ export interface DshAccount {
   /** 云后端信息：enabled = 配了 api 地址；loggedIn = 当前会话带服务端 token */
   serverInfo(): { base: string; enabled: boolean; loggedIn: boolean };
   serverAvailable(): Promise<boolean>;
+  /** 端到端加密状态：locked = 本标签页还没派生密钥（此时只存本地、不上传） */
+  cryptoInfo(): { locked: boolean; name: string; alg: string };
+  /** 重新输入口令以派生加密密钥（口令不上传） */
+  unlock(password: string): Promise<AccountResult>;
+  /** GitHub 绑定状态（云模式下来自服务端，不含令牌） */
+  ghStatus(): Promise<{ bound: boolean; login?: string; avatar?: string; gistId?: string; serverSide?: boolean }>;
   /** 当前同步去向：云后端 / github / microsoft / null */
   backend(): 'server' | 'github' | 'microsoft' | null;
   register(o: { name: string; password: string; email?: string }): Promise<AccountResult>;

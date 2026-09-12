@@ -26,6 +26,7 @@
     manifest: function (uid, game) { return 'dsh.saves.v1.' + uid + '.' + game; },
     save: function (uid, game, slot) { return 'dsh.save.v1.' + uid + '.' + game + '.' + slot; },
     oauth: 'dsh.oauth.pending',
+    ghtok: 'dsh.ghtok.v1',                                 // 本机模式的 GitHub 令牌：只放 sessionStorage
   };
   var listeners = [];
   var popup = null;
@@ -80,6 +81,55 @@
     return s && s.token ? s.token : '';
   }
   var serverMode = () => !!serverToken();
+
+  /* ---------- 端到端加密（上传前加密，密钥只在本机内存/本标签页会话里） ----------
+     为什么加密：KV 与 Gist 都不是"只有你能看"的地方（Secret Gist 拿到 URL 就能读）。
+     方案：AES-GCM-256，密钥 = PBKDF2(password, 'dsh-enc-v1:' + 用户名 + 服务端盐, 210k)，
+     每个文件独立随机 IV，密文带版本头 { e:1, alg, kdf, salt, iv, ct }。
+     密钥缓存在 sessionStorage（关掉标签页即失效），不写 localStorage；
+     代价：换密码后旧密文解不开，所以改密时会把已有存档重新加密一遍。 */
+  var ENC_KEY = 'dsh.eckey.v1';
+  var ENC_VERSION = 1;
+  function encSaltKey(name, saltHex) { return 'dsh-enc-v1:' + String(name).toLowerCase() + ':' + saltHex; }
+  async function deriveKey(password, name, saltHex) {
+    var base = await crypto.subtle.importKey('raw', enc(password), 'PBKDF2', false, ['deriveKey']);
+    /* extractable=true：需要把密钥原文缓存进 sessionStorage（本标签页有效），
+       否则每次刷新页面都要重新输口令。密钥只在 sessionStorage，不写 localStorage。 */
+    return crypto.subtle.deriveKey(
+      { name: 'PBKDF2', salt: enc(encSaltKey(name, saltHex)), iterations: PBKDF2_ITER, hash: 'SHA-256' },
+      base, { name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+  }
+  async function cacheKey(password, name, saltHex) {
+    var k = await deriveKey(password, name, saltHex);
+    var raw = await crypto.subtle.exportKey('raw', k);
+    writeJSON(ENC_KEY, { v: 1, name: String(name).toLowerCase(), salt: saltHex, k: b64url(raw) });
+    return k;
+  }
+  async function currentKey() {
+    var rec = readJSON(ENC_KEY, null);
+    if (!rec || !rec.k || !rec.salt) return null;
+    var raw; try { raw = fromB64url(rec.k); } catch (e) { return null; }
+    return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+  }
+  function encLocked() { return !readJSON(ENC_KEY, null); }
+  var isEnvelope = v => !!(v && typeof v === 'object' && v.e === ENC_VERSION && v.ct && v.iv);
+  async function encryptSave(obj) {
+    var key = await currentKey();
+    if (!key) return null;
+    var iv = bytes(12);
+    var ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, enc(JSON.stringify(obj)));
+    var rec = readJSON(ENC_KEY, {});
+    return { e: ENC_VERSION, alg: 'A256GCM', kdf: 'PBKDF2-SHA256-' + PBKDF2_ITER, salt: rec.salt || '', iv: b64url(iv), ct: b64url(ct) };
+  }
+  async function decryptSave(env2) {
+    if (!isEnvelope(env2)) return env2;                      // 老数据/明文：原样返回
+    var key = await currentKey();
+    if (!key) return null;                                   // 锁着：让 UI 提示输入口令解锁
+    try {
+      var pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64url(env2.iv) }, key, fromB64url(env2.ct));
+      return JSON.parse(new TextDecoder().decode(pt));
+    } catch (e) { console.warn('[account] 解密失败（换过密码？）', e); return null; }
+  }
   function nowISO() { return new Date().toISOString(); }
   function uid() {
     var b = crypto.getRandomValues(new Uint8Array(9));
@@ -142,6 +192,9 @@
     }
   }
   function removeKey(key) { try { localStorage.removeItem(key); } catch (e) { /* ignore */ } }
+  /* 会话级存储：GitHub 令牌（仅本机模式才会用到）放这里，关掉标签页即消失，不落 localStorage */
+  function readSess(key, def) { try { var r = sessionStorage.getItem(key); return r ? JSON.parse(r) : def; } catch (e) { return def; } }
+  function writeSess(key, v) { try { sessionStorage.setItem(key, JSON.stringify(v)); return { ok: true }; } catch (e) { return { ok: false, err: 'sessionStorage 不可用（无痕模式？）' }; } }
 
   /* ---------- 账号 ---------- */
   function loadDB() { return readJSON(K.accounts, { v: 1, users: {} }); }
@@ -165,6 +218,42 @@
     /** 云后端信息（UI 用它显示"服务器账号 / 本机账号"） */
     serverInfo: function () { return { base: apiBase(), enabled: !!apiBase(), loggedIn: serverMode() }; },
     serverAvailable: apiAvailable,
+    /** 端到端加密的状态与解锁（UI 用）：锁着的时候只存本地、不上传 */
+    cryptoInfo: function () {
+      var rec = readJSON(ENC_KEY, null);
+      return { locked: !rec, name: rec ? rec.name : '', alg: 'AES-GCM-256 / PBKDF2-SHA256-' + PBKDF2_ITER };
+    },
+    /** 重新输入口令解锁（不重新登录，只重新派生加密密钥） */
+    unlock: async function (password) {
+      var u = Account.current();
+      if (!u) return { ok: false, err: '先登录' };
+      if (!apiBase()) { await cacheKey(password, u.name, 'local'); return { ok: true }; }
+      var sr = await api('/api/salt?name=' + encodeURIComponent(u.name));
+      var saltHex = sr.ok && sr.data && sr.data.salt ? sr.data.salt : null;
+      if (!saltHex) return { ok: false, err: '拿不到盐，无法解锁' };
+      /* 拿一份云存档试着解一下：口令不对就当解锁失败（避免"假解锁"后把新存档写成解不开的密文） */
+      await cacheKey(password, u.name, saltHex);
+      var probe = await api('/api/saves?game=zombie-survival');
+      if (probe.ok && probe.data && probe.data.slots && probe.data.slots.length) {
+        var one = await api('/api/save?game=zombie-survival&slot=main');
+        if (one.ok && one.data && isEnvelope(one.data.data)) {
+          var dec = await decryptSave(one.data.data);
+          if (!dec) { removeKey(ENC_KEY); return { ok: false, err: '口令不对（解不开云端存档）' }; }
+        }
+      }
+      emit();
+      return { ok: true };
+    },
+    /** GitHub 绑定状态（云模式下来自服务端；本地模式来自本机记录） */
+    ghStatus: async function () {
+      if (serverMode()) {
+        var r = await api('/api/gh/status');
+        if (r.ok) return r.data;
+      }
+      var u = Account.current();
+      var g = u && u.providers && u.providers.github;
+      return { bound: !!g, login: g ? g.login : '', avatar: g ? g.avatar : '', serverSide: false };
+    },
     /* ----- 注册 / 登录 / 会话 ----- */
     register: async function (opts) {
       var name = String((opts && opts.name) || '').trim();
@@ -191,6 +280,7 @@
         var w = saveDB(db);
         if (!w.ok) return { ok: false, err: w.err };
         Account._setSession(lu.uid, { token: r.data.token, exp: r.data.exp });
+        await cacheKey(pass, name, salt);                    // 派生并缓存加密密钥（本标签页）
         emit();
         return { ok: true, uid: lu.uid, user: publicUser(lu), server: true };
       }
@@ -234,6 +324,7 @@
               saveDB(db);
             }
             Account._setSession(u.uid, { token: r.data.token, exp: r.data.exp });
+            await cacheKey(pass, name, saltHex);             // 派生并缓存加密密钥（本标签页）
             emit();
             return { ok: true, uid: u.uid, user: publicUser(u), server: true };
           }
@@ -344,11 +435,15 @@
       /* 记一下"这个账号玩过哪些游戏"，删号时要能清干净 */
       var db = loadDB(), u = db.users[id];
       if (u) { u.games = u.games || {}; u.games[game] = true; saveDB(db); }
-      /* 云账号：顺手推到服务端（失败不阻塞本地存档，由 syncNow/下次上传补） */
+      /* 云账号：顺手推到服务端（失败不阻塞本地存档，由 syncNow/下次上传补）
+         上传的是**密文**（未解锁就不传，避免明文落库） */
       if (serverMode() && !(opts && opts.noServer)) {
-        var digest = (data && data[INTEGRITY_FIELD] && data[INTEGRITY_FIELD].d) || '';
-        void api('/api/save', { method: 'PUT', body: { game: game, slot: slot, data: data, digest: digest } })
-          .then(function (r) { if (!r.ok && !r.offline) console.warn('[account] 服务端存档失败：' + r.err); });
+        void (async function () {
+          var envl = await encryptSave(data);
+          if (!envl) { console.warn('[account] 未解锁（缺少加密密钥），这次只存了本地'); return; }
+          var r = await api('/api/save', { method: 'PUT', body: { game: game, slot: slot, data: envl, enc: true, expectUpdatedAt: (opts && opts.expectUpdatedAt) || '' } });
+          if (!r.ok && !r.offline && r.status !== 409) console.warn('[account] 服务端存档失败：' + r.err);
+        })();
       }
       emit({ type: 'save', game: game, slot: slot });
       return { ok: true, updatedAt: rec.updatedAt, bytes: rec.bytes };
@@ -368,16 +463,29 @@
     /* ----- 第三方绑定 ----- */
     config: cfg,
     providerInfo: function () { return Account.current() ? Account.current().providers : {}; },
-    /** extra 里可以带 refresh/exp（OAuth App 勾了「Expire user access tokens」时 GitHub 会发刷新令牌） */
+    /** extra 里可以带 refresh/exp（本地模式才需要；云模式下 token 不进前端，见 _bindServerGithub） */
     bindGitHubToken: async function (token, extra) {
       token = String(token || '').trim();
       if (!/^(gh[pousr]_|github_pat_)/.test(token)) return { ok: false, err: '这不像 GitHub 令牌（应以 ghp_ / github_pat_ 开头）' };
+      /* 云模式：令牌只发给自己的 Worker，由服务端保存（前端不留 token，gist 授权太宽，不能落地） */
+      if (serverMode()) {
+        var sr = await api('/api/gh/token', { method: 'POST', body: { token: token } });
+        if (!sr.ok) return { ok: false, err: '服务端校验令牌失败：' + sr.err };
+        return Account._bindServerGithub(sr.data);
+      }
       var me = await gh('GET', '/user', token);
       if (!me.ok) return { ok: false, err: '令牌无效或缺少权限：' + me.err };
       return Account._bind('github', Object.assign({
         token: token, login: me.data.login, name: me.data.name || me.data.login,
         avatar: me.data.avatar_url, boundAt: nowISO(),
       }, extra || {}));
+    },
+    /** 服务端绑定成功后只记"身份"，不记令牌 */
+    _bindServerGithub: function (d) {
+      return Account._bind('github', {
+        login: d.login, name: d.login, avatar: d.avatar || '', gistId: d.gistId || '',
+        serverSide: true, boundAt: nowISO(),
+      });
     },
     /** GitHub OAuth（PKCE）：需要 auth-config.js 里填 clientId；设备码流程见 bindGitHubDevice */
     bindGitHubOAuth: async function () {
@@ -392,8 +500,17 @@
       });
       var code = await Account._popup(url, 'github', pk.state);
       if (!code) return { ok: false, err: '授权被取消' };
-      /* 换 token：先试 form（简单请求，不触发预检），再试 json。历史上这条接口不给 CORS 头，
-         但"预检没过"和"完全没开 CORS"是两回事——两种都试过才知道属于哪种。 */
+      /* 云模式：把 code 交给服务端去换 token（带 PKCE verifier），令牌永远不进这个页面 */
+      if (serverMode()) {
+        var sr = await api('/api/gh/bind', {
+          method: 'POST',
+          body: { code: code, client_id: c.clientId, redirect_uri: cfg().redirect, verifier: pk.verifier },
+        });
+        if (!sr.ok) return { ok: false, err: '服务端换 token 失败：' + sr.err, tried: ['server-side: ' + sr.err] };
+        return Account._bindServerGithub(sr.data);
+      }
+      /* 本机模式（没配云后端）：只能在前端换 token —— 存 sessionStorage 而不是 localStorage，
+         并且明确提示这条路的风险（gist 是全量授权） */
       var ex = await ghTokenWithFallback({ client_id: c.clientId, code: code, code_verifier: pk.verifier, redirect_uri: cfg().redirect });
       if (!ex.data || !ex.data.access_token) {
         return {
@@ -408,10 +525,27 @@
     /** 通道诊断：用户点一下就出结论（纯 GET/POST 空跑，用假 code，不会产生任何令牌） */
     diagnoseGitHub: probeGitHubChannel,
     /** GitHub 设备码流程：只需 client_id（OAuth App 里要勾选 Enable Device Flow）
-     *  同样先用 form（不触发预检）再退到 json。 */
+     *  云模式：整条流程在 Worker 里跑，前端只拿到 9 位码；本机模式：先 form 再 json 直连。 */
     bindGitHubDevice: async function (onCode) {
       var c = cfg().github;
       if (!c.clientId) return { ok: false, err: '还没配 GitHub client_id（见 /games/auth-config.js）' };
+
+      if (serverMode()) {
+        var start = await api('/api/gh/device/start', { method: 'POST', body: { client_id: c.clientId } });
+        if (!start.ok) return { ok: false, err: '拿设备码失败：' + start.err };
+        if (onCode) onCode({ user_code: start.data.user_code, verification_uri: start.data.verification_uri, expires_in: start.data.expires_in });
+        var deadline = Date.now() + Math.min(start.data.expires_in || 900, 900) * 1000;
+        var wait = Math.max(3, start.data.interval || 5) * 1000;
+        while (Date.now() < deadline) {
+          await new Promise(function (s) { setTimeout(s, wait); });
+          var p = await api('/api/gh/device/poll', { method: 'POST' });
+          if (p.ok && p.data && p.data.ok) return Account._bindServerGithub(p.data);
+          if (!p.ok) return { ok: false, err: '设备码失败：' + p.err };
+          if (p.ok && p.data && !p.data.pending) return { ok: false, err: '设备码没被授权' };
+        }
+        return { ok: false, err: '设备码超时（重新发起即可）' };
+      }
+
       var dc = await ghTokenWithFallback({ client_id: c.clientId, scope: c.scope }, 'https://github.com/login/device/code');
       var r = dc.data || {};
       if (!r.device_code) return { ok: false, err: '拿设备码失败：' + (r.error || '网络/CORS 受限') + '（尝试记录：' + dc.tried.join(' ｜ ') + '）', tried: dc.tried };
@@ -453,17 +587,38 @@
         oid: me.id || '', name: me.displayName || me.userPrincipalName || '微软用户', email: me.mail || me.userPrincipalName || '', boundAt: nowISO(),
       });
     },
-    unbind: function (provider) {
+    unbind: async function (provider) {
       var db = loadDB(), u = db.users[Account.currentUid()];
       if (!u || !u.providers || !u.providers[provider]) return { ok: false, err: '没绑定这个' };
+      var note = '';
+      if (provider === 'github') {
+        if (u.providers.github.serverSide && serverMode()) {
+          /* 云模式：让 Worker 去 GitHub 撤销这个 token（用户不用再手动去设置页删） */
+          var r = await api('/api/gh/unbind', { method: 'POST', body: { client_id: cfg().github.clientId } });
+          note = r.ok ? (r.data && r.data.revoked ? '已同时撤销 GitHub 授权' : '服务端记录已删除') : ('撤销失败：' + r.err);
+        } else {
+          var bag = readSess(K.ghtok, {});
+          delete bag[u.uid];
+          writeSess(K.ghtok, bag);                       // 本机模式：令牌只在内存/本标签页，删掉即失效
+          note = '本机令牌已清除（可去 GitHub 设置里再撤销那次授权）';
+        }
+      }
       delete u.providers[provider];
       saveDB(db); emit();
-      return { ok: true };
+      return { ok: true, note: note };
     },
     _bind: function (provider, data) {
       var db = loadDB(), u = db.users[Account.currentUid()];
       if (!u) return { ok: false, err: '先登录' };
       u.providers = u.providers || {};
+      /* 本机模式的 GitHub 令牌一律不写进账号记录（那是 localStorage）：挪到 sessionStorage */
+      if (provider === 'github' && data && data.token) {
+        var bag = readSess(K.ghtok, {});
+        bag[u.uid] = data.token;
+        writeSess(K.ghtok, bag);
+        data = Object.assign({}, data);
+        delete data.token;
+      }
       u.providers[provider] = data;
       var w = saveDB(db);
       if (!w.ok) return { ok: false, err: w.err };
@@ -517,20 +672,11 @@
       var p = u && u.providers && u.providers[provider];
       if (!p) return null;
       if (provider === 'github') {
-        if (!p.exp || Date.now() < p.exp) return p.token;
-        if (!p.refresh) return null;                     // 过期的长期令牌只能重新绑定
-        /* OAuth App 开了「Expire user access tokens」时：用 refresh_token 换新的一对 */
-        var c = cfg().github;
-        var nt = await fetch('https://github.com/login/oauth/access_token', {
-          method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify({ client_id: c.clientId, grant_type: 'refresh_token', refresh_token: p.refresh }),
-        }).then(function (x) { return x.json(); }).catch(function () { return {}; });
-        if (!nt.access_token) return null;
-        p.token = nt.access_token;
-        p.refresh = nt.refresh_token || p.refresh;
-        p.exp = Date.now() + (nt.expires_in || 28800) * 1000 - 60000;
-        saveDB(db);
-        return p.token;
+        /* 本机模式的令牌在 sessionStorage；云模式的令牌在服务端，前端根本拿不到 */
+        var bag = readSess(K.ghtok, {});
+        var gtok = bag[u.uid];
+        if (!gtok) return null;
+        return gtok;
       }
       if (Date.now() < (p.exp || 0)) return p.access;
       if (!p.refresh) return null;
@@ -793,11 +939,14 @@
   }
   async function serverGet(game, slot) {
     var r = await api('/api/save?game=' + encodeURIComponent(game) + '&slot=' + encodeURIComponent(slot));
-    return r.ok && r.data ? r.data.data : null;
+    if (!r.ok || !r.data) return null;
+    return await decryptSave(r.data.data);                  // 密文就地解密；明文（老数据）原样返回
   }
   async function serverPut(game, slot, data) {
-    var digest = (data && data[INTEGRITY_FIELD] && data[INTEGRITY_FIELD].d) || '';
-    var r = await api('/api/save', { method: 'PUT', body: { game: game, slot: slot, data: data, digest: digest } });
+    var envl = await encryptSave(data);
+    if (!envl) return false;
+    var r = await api('/api/save', { method: 'PUT', body: { game: game, slot: slot, data: envl, enc: true } });
+    if (r.status === 409) return { conflict: true, updatedAt: (r.data && r.data.updatedAt) || '' };
     return r.ok;
   }
   async function serverSync(game) {

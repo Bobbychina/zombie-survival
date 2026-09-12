@@ -144,19 +144,71 @@ let token1 = '', uid1 = '';
   ok('注销后账号没了、存档也清了', del.status === 200 && relog.status === 401 && leftovers.length === 0, '剩余 ' + JSON.stringify(leftovers));
 }
 
-/* 10. GitHub 中继（fetch 打桩，不碰真网络） */
+/* 10. 并发保护 + GitHub 绑定（token 只在服务端、加密落盘、只能碰自己那一个 gist） */
 {
+  const e = { ...env, DSH_KV: memoryKV(), GH_CLIENT_SECRET: 'ghs_fake' };
+  const t = (await j(await handle(req('POST', '/api/register', { body: { name: 'ghuser', verifier: VER, salt: SALT } }), e))).token;
+  /* KV 存档的乐观并发 */
+  await handle(req('PUT', '/api/save', { token: t, body: { game: 'g', slot: 'main', data: { a: 1 } } }), e);
+  const first = await j(await handle(req('GET', '/api/save?game=g&slot=main', { token: t }), e));
+  const okPut = await handle(req('PUT', '/api/save', { token: t, body: { game: 'g', slot: 'main', data: { a: 2 }, expectUpdatedAt: first.updatedAt } }), e);
+  ok(('带上最新的 updatedAt 可以正常覆盖'), okPut.status === 200);
+  const stale = await handle(req('PUT', '/api/save', { token: t, body: { game: 'g', slot: 'main', data: { a: 3 }, expectUpdatedAt: '2020-01-01T00:00:00.000Z' } }), e);
+  const staleBody = await j(stale);
+  ok('拿着过期 updatedAt 写入 → 409 conflict（不吃掉别的设备的进度）', stale.status === 409 && staleBody.error === 'conflict', JSON.stringify(staleBody));
+
+  /* GitHub：把 fetch 打桩成"假 GitHub" */
   const realFetch = globalThis.fetch;
-  let seen = null;
+  const ghCalls = [];
+  const gistFiles = {};
   globalThis.fetch = async (url, init) => {
-    seen = { url: String(url), body: init && init.body };
-    return new Response(JSON.stringify({ device_code: 'd1', user_code: 'AAAA-1111' }), { status: 200, headers: { 'content-type': 'application/json' } });
+    const u = String(url), m = (init && init.method) || 'GET';
+    ghCalls.push(m + ' ' + u.replace('https://api.github.com', '').replace('https://github.com', ''));
+    const J = (o, s = 200) => new Response(JSON.stringify(o), { status: s, headers: { 'content-type': 'application/json' } });
+    if (u.includes('github.com/login/oauth/access_token')) {
+      const body = String(init.body || '');
+      if (!body.includes('client_secret=ghs_fake')) return J({ error: 'incorrect_client_credentials' }, 200);
+      return J({ access_token: 'ghp_SERVERSIDE', token_type: 'bearer', scope: 'gist read:user' });
+    }
+    if (u.endsWith('/user')) return J({ login: 'bobby', avatar_url: 'https://x/a.png' });
+    if (u.includes('/gists?per_page')) return J([]);
+    if (m === 'POST' && /\/gists$/.test(u)) { gistFiles['manifest.json'] = { content: '{"files":{}}' }; return J({ id: 'gist1', files: gistFiles }, 201); }
+    if (m === 'GET' && u.includes('/gists/gist1')) return J({ id: 'gist1', files: gistFiles, history: [{ version: 'v' + ghCalls.length }] });
+    if (m === 'PATCH' && u.includes('/gists/gist1')) {
+      const body = JSON.parse(init.body);
+      for (const [k, v] of Object.entries(body.files)) { if (v === null) delete gistFiles[k]; else gistFiles[k] = { content: v.content }; }
+      return J({ id: 'gist1', files: gistFiles, history: [{ version: 'v' + ghCalls.length }] });
+    }
+    if (m === 'DELETE' && u.includes('/applications/')) return new Response(null, { status: 204 });
+    return J({ message: 'unstubbed ' + m + ' ' + u }, 404);
   };
-  const r = await handle(req('POST', '/relay/login/device/code', { body: { client_id: 'x' } }), env);
-  const b = await j(r);
-  ok('中继 /relay/login/device/code 转发到 GitHub', seen && seen.url.includes('github.com/login/device/code') && b.user_code === 'AAAA-1111');
-  const r2 = await handle(req('POST', '/oauth/access_token', { body: { code: 'c' } }), env);   // 旧路径仍要能用
-  ok('旧路径 /oauth/access_token 兼容，并注入 client_secret', seen.url.includes('access_token') && String(seen.body).includes('client_secret=ghs_fake'));
+
+  const bind = await j(await handle(req('POST', '/api/gh/bind', { token: t, body: { code: 'CODE1', client_id: 'Ov23liXX', redirect_uri: 'https://bobbychina.github.io/games/oauth-callback.html' } }), e));
+  ok('绑定 GitHub：服务端换 token，前端只拿到 login（token 不出现）', bind.ok === true && bind.login === 'bobby' && !('token' in bind) && !JSON.stringify(bind).includes('ghp_'), JSON.stringify(bind));
+  const dump = JSON.stringify(e.DSH_KV._dump());
+  ok('令牌在 KV 里是密文（AES-GCM v1. 前缀，找不到明文）', dump.includes('v1.') && !dump.includes('ghp_SERVERSIDE'));
+  const st = await j(await handle(req('GET', '/api/gh/status', { token: t }), e));
+  ok('状态接口只回 login/头像/gistId', st.bound === true && st.login === 'bobby' && st.gistId === 'gist1' && !JSON.stringify(st).includes('ghp_'));
+
+  const putGh = await j(await handle(req('PUT', '/api/gh/save', { token: t, body: { game: 'zombie-survival', slot: 'main', payload: { enc: 'CIPHERTEXT' }, updatedAt: '2026-09-12T00:00:00.000Z' } }), e));
+  ok('通过 Worker 代理写 Gist（前端不碰 token）', putGh.ok === true, JSON.stringify(putGh));
+  const listGh = await j(await handle(req('GET', '/api/gh/saves?game=zombie-survival', { token: t }), e));
+  ok('列 Gist 里的槽位', listGh.slots.length === 1 && listGh.slots[0].slot === 'main');
+  const getGh = await j(await handle(req('GET', '/api/gh/save?game=zombie-survival&slot=main', { token: t }), e));
+  ok('读回 Gist 内容', JSON.stringify(getGh.payload) === JSON.stringify({ enc: 'CIPHERTEXT' }));
+  const conflict = await handle(req('PUT', '/api/gh/save', { token: t, body: { game: 'zombie-survival', slot: 'main', payload: { enc: 'X' }, expectVersion: 'vOLD' } }), e);
+  ok('Gist 版本对不上 → 409（不自作主张覆盖）', conflict.status === 409, String(conflict.status));
+  const evil = await handle(req('PUT', '/api/gh/save', { token: t, body: { game: '../../evil', slot: 'x', payload: {} } }), e);
+  ok('非法 game/slot 名 → 400（不许写到别的文件）', evil.status === 400, String(evil.status));
+  const delGh = await handle(req('DELETE', '/api/gh/save?game=zombie-survival&slot=main', { token: t }), e);
+  const listAfter = await j(await handle(req('GET', '/api/gh/saves?game=zombie-survival', { token: t }), e));
+  ok('删掉 Gist 里的存档', delGh.status === 200 && listAfter.slots.length === 0);
+  const unbind = await j(await handle(req('POST', '/api/gh/unbind', { token: t, body: { client_id: 'Ov23liXX' } }), e));
+  const stAfter = await j(await handle(req('GET', '/api/gh/status', { token: t }), e));
+  ok('解绑会去 GitHub 撤销 token 并清掉服务端记录', unbind.revoked === true && stAfter.bound === false,
+    'revoked=' + unbind.revoked + ' ghCalls=' + ghCalls.filter(c => c.startsWith('DELETE')).join(','));
+  const notBound = await handle(req('GET', '/api/gh/saves?game=g', { token: t }), e);
+  ok('解绑后再调 Gist 接口 → 409 not_bound', notBound.status === 409);
   globalThis.fetch = realFetch;
 }
 

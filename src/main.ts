@@ -78,6 +78,7 @@ async function main() {
     push: accountUi.push, pull: accountUi.pull, sync: accountUi.sync, toggleAuto: accountUi.toggleAuto,
     exportAll: accountUi.exportAll, importAll: accountUi.importAll, doImport: accountUi.doImport,
     exportFile: accountUi.exportFile, importFile: accountUi.importFile, doImportFile: accountUi.doImportFile,
+    unlock: accountUi.unlock, doUnlock: accountUi.doUnlock,
     changePass: accountUi.changePass, doChangePass: accountUi.doChangePass, del: accountUi.del, doDelete: accountUi.doDelete,
   };
   (V4 as any).account = accountUi;

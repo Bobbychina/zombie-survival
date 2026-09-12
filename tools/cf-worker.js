@@ -119,6 +119,96 @@ const validName = n => typeof n === 'string' && /^[\w\u4e00-\u9fa5.-]{2,24}$/.te
 const validVerifier = v => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);   // PBKDF2-SHA256 → 32B → 64 hex
 const validSalt = s => typeof s === 'string' && /^[0-9a-f]{32}$/.test(s);        // 16B → 32 hex
 
+/* ---------- 令牌"落地即加密"（AES-GCM，密钥由 DSH_PEPPER 派生） ----------
+   为什么不用 PBKDF2 派生这把钥匙：免费版 Worker 只有 10ms CPU，PBKDF2 会超。
+   pepper 本身是高熵随机串，单次 SHA-256 做成 AES 密钥在密码学上够用（不涉及抗暴力）。 */
+async function atrestKey(env) {
+  const seed = await sha256('dsh-at-rest-v1:' + ((env && env.DSH_PEPPER) || DEFAULT_PEPPER));
+  const raw = new Uint8Array(32);
+  for (let i = 0; i < 32; i++) raw[i] = parseInt(seed.substr(i * 2, 2), 16);
+  return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+}
+const b64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf)));
+const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+async function seal(env, obj) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await atrestKey(env), enc.encode(JSON.stringify(obj)));
+  return 'v1.' + b64(iv) + '.' + b64(ct);
+}
+async function unseal(env, str) {
+  const [v, ivs, cts] = String(str || '').split('.');
+  if (v !== 'v1' || !ivs || !cts) throw new Error('密文格式不对');
+  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(ivs) }, await atrestKey(env), unb64(cts));
+  return JSON.parse(new TextDecoder().decode(pt));
+}
+
+/* ---------- GitHub：token 只在服务端，前端永远拿不到 ---------- */
+async function ghApi(token, method, path, body) {
+  const r = await fetch('https://api.github.com' + path, {
+    method,
+    headers: Object.assign({ Accept: 'application/vnd.github+json', Authorization: 'Bearer ' + token },
+      body ? { 'Content-Type': 'application/json' } : {}),
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const text = await r.text();
+  let data = null; try { data = text ? JSON.parse(text) : null; } catch { data = { raw: text }; }
+  return { ok: r.ok, status: r.status, data, err: (data && data.message) || ('HTTP ' + r.status) };
+}
+const GIST_DESC = 'bobbychina.github.io/games 云存档（自动生成，可随时删除）';
+const FILE_RE = /^[a-z0-9_-]{1,32}__[a-z0-9_-]{1,32}$/i;          // <game>__<slot>，不接受任意文件名
+const fileOf = (game, slot) => String(game).toLowerCase() + '__' + String(slot).toLowerCase();
+async function ghState(env, uid) {
+  const rec = await kvGet(env, 'gh:' + uid);
+  if (!rec) return null;
+  try { return Object.assign({}, rec, { token: await unseal(env, rec.tokenEnc) }); }
+  catch (e) { return null; }                                        // pepper 换过 → 旧令牌解不开，让用户重绑
+}
+async function ghSaveState(env, uid, st) {
+  await kvPut(env, 'gh:' + uid, { tokenEnc: await seal(env, { t: st.token }), login: st.login, avatar: st.avatar || '', gistId: st.gistId || '', linkedAt: st.linkedAt || nowISO() });
+}
+/** 只认自己那一个 gist：id 存在 KV 里，别的 gist 一律不碰 */
+async function ghEnsureGist(env, uid, st) {
+  if (st.gistId) {
+    const chk = await ghApi(st.token, 'GET', '/gists/' + st.gistId);
+    if (chk.ok) return st.gistId;
+  }
+  const found = await ghApi(st.token, 'GET', '/gists?per_page=100');
+  if (found.ok && Array.isArray(found.data)) {
+    const hit = found.data.filter(g => g.description === GIST_DESC)[0];
+    if (hit) { st.gistId = hit.id; await ghSaveState(env, uid, st); return hit.id; }
+  }
+  const made = await ghApi(st.token, 'POST', '/gists', { description: GIST_DESC, public: false, files: { 'manifest.json': { content: '{"files":{}}' } } });
+  if (!made.ok) throw new Error(made.err);
+  st.gistId = made.data.id;
+  await ghSaveState(env, uid, st);
+  return st.gistId;
+}
+async function ghReadGist(env, uid, st) {
+  const id = await ghEnsureGist(env, uid, st);
+  const g = await ghApi(st.token, 'GET', '/gists/' + id);
+  if (!g.ok) throw new Error(g.err);
+  let manifest = { files: {} };
+  try { manifest = JSON.parse((g.data.files['manifest.json'] || {}).content || '{"files":{}}'); } catch { /* 坏了就重建 */ }
+  if (!manifest.files) manifest.files = {};
+  return { id, gist: g.data, manifest, version: (g.data.history && g.data.history[0] && g.data.history[0].version) || '' };
+}
+async function ghWriteFile(env, uid, st, name, payload, opts) {
+  const cur = await ghReadGist(env, uid, st);
+  if (opts && opts.expectVersion && cur.version && opts.expectVersion !== cur.version) {
+    return { conflict: true, version: cur.version };                 // 别的设备刚写过 → 让前端先拉再重试
+  }
+  const files = {};
+  files[name + '.json'] = { content: typeof payload === 'string' ? payload : JSON.stringify(payload) };
+  if (opts && opts.delete) files[name + '.json'] = null;
+  const manifest = { files: Object.assign({}, cur.manifest.files) };
+  if (opts && opts.delete) delete manifest.files[name];
+  else manifest.files[name] = { updatedAt: (opts && opts.updatedAt) || nowISO(), bytes: (typeof payload === 'string' ? payload : JSON.stringify(payload)).length };
+  files['manifest.json'] = { content: JSON.stringify(manifest) };
+  const r = await ghApi(st.token, 'PATCH', '/gists/' + cur.id, { files });
+  if (!r.ok) throw new Error(r.err);
+  return { ok: true, version: (r.data.history && r.data.history[0] && r.data.history[0].version) || '' };
+}
+
 /* ============================ 主入口 ============================ */
 export async function handle(req, env) {
   const url = new URL(req.url);
@@ -205,6 +295,157 @@ export async function handle(req, env) {
     const me = await authed(env, req);
     if (!me) return err(req, 401, 'unauthorized', '没登录或会话过期');
 
+    /* ---- GitHub 绑定：换 token 只在服务端做，前端拿到的永远只是用户名/头像 ---- */
+    if (path === '/api/gh/bind' && req.method === 'POST') {
+      const b = await readJSON(req);
+      if (!b || !b.code || !b.client_id) return err(req, 400, 'bad_request', '缺 code / client_id');
+      const secret = env && env.GH_CLIENT_SECRET;
+      if (!secret) return err(req, 503, 'no_secret', 'Worker 没配 GH_CLIENT_SECRET，无法在服务端换 token');
+      const form = new URLSearchParams({
+        client_id: b.client_id, client_secret: secret, code: String(b.code),
+        redirect_uri: String(b.redirect_uri || ''), ...(b.verifier ? { code_verifier: String(b.verifier) } : {}),
+      });
+      let tok = null;
+      try {
+        const r = await fetch('https://github.com/login/oauth/access_token', {
+          method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' }, body: form.toString(),
+        });
+        tok = await r.json();
+      } catch (e) { return err(req, 502, 'github_unreachable', String(e && e.message || e)); }
+      if (!tok || !tok.access_token) {
+        return err(req, 400, 'exchange_failed', (tok && (tok.error_description || tok.error)) || '换 token 失败');
+      }
+      const usr = await ghApi(tok.access_token, 'GET', '/user');
+      if (!usr.ok) return err(req, 400, 'token_invalid', usr.err);
+      const st = { token: tok.access_token, login: usr.data.login, avatar: usr.data.avatar_url || '', gistId: '', linkedAt: nowISO() };
+      try { await ghEnsureGist(env, me.uid, st); } catch (e) { /* 建 gist 失败不影响绑定 */ }
+      return json(req, { ok: true, login: st.login, avatar: st.avatar, gistId: st.gistId, scope: 'gist read:user' });
+    }
+    if (path === '/api/gh/token' && req.method === 'POST') {
+      const b = await readJSON(req);
+      const t = String((b && b.token) || '').trim();
+      if (!/^(gh[pousr]_|github_pat_)/.test(t)) return err(req, 400, 'bad_token', '这不像 GitHub 令牌');
+      const usr = await ghApi(t, 'GET', '/user');
+      if (!usr.ok) return err(req, 400, 'token_invalid', usr.err);
+      const st = { token: t, login: usr.data.login, avatar: usr.data.avatar_url || '', gistId: '', linkedAt: nowISO() };
+      try { await ghEnsureGist(env, me.uid, st); } catch (e) { }
+      return json(req, { ok: true, login: st.login, avatar: st.avatar, gistId: st.gistId });
+    }
+    if (path === '/api/gh/status' && req.method === 'GET') {
+      const st = await ghState(env, me.uid);
+      return json(req, st ? { bound: true, login: st.login, avatar: st.avatar, gistId: st.gistId, linkedAt: st.linkedAt }
+        : { bound: false });
+    }
+    if (path === '/api/gh/unbind' && req.method === 'POST') {
+      const st = await ghState(env, me.uid);
+      let revoked = false;
+      if (st) {
+        /* 退出就顺手在 GitHub 侧撤销这个 token（用户不用再手动去设置页删） */
+        const secret = env && env.GH_CLIENT_SECRET, cid = (await readJSON(req) || {}).client_id;
+        if (secret && cid) {
+          try {
+            const r = await fetch('https://api.github.com/applications/' + cid + '/token', {
+              method: 'DELETE', headers: { Authorization: 'Basic ' + btoa(cid + ':' + secret), Accept: 'application/vnd.github+json' },
+              body: JSON.stringify({ access_token: st.token }),
+            });
+            revoked = r.ok || r.status === 204;
+          } catch (e) { /* 撤销失败也要把本地令牌删掉 */ }
+        }
+      }
+      const k = kv(env); await k.delete('gh:' + me.uid);
+      return json(req, { ok: true, revoked });
+    }
+    /* 设备码：整条流程也放服务端，前端只拿到 9 位码（token 同样不落地前端） */
+    if (path === '/api/gh/device/start' && req.method === 'POST') {
+      const b = (await readJSON(req)) || {};
+      if (!b.client_id) return err(req, 400, 'bad_request', '缺 client_id');
+      let d = null;
+      try {
+        const r = await fetch('https://github.com/login/device/code', {
+          method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+          body: new URLSearchParams({ client_id: String(b.client_id), scope: 'gist read:user' }).toString(),
+        });
+        d = await r.json();
+      } catch (e) { return err(req, 502, 'github_unreachable', String(e && e.message || e)); }
+      if (!d || !d.device_code) return err(req, 502, 'device_failed', (d && (d.error_description || d.error)) || '拿设备码失败');
+      await kvPut(env, 'dev:' + me.uid, { device_code: d.device_code, client_id: String(b.client_id) }, { expirationTtl: 900 });
+      return json(req, { user_code: d.user_code, verification_uri: d.verification_uri, expires_in: d.expires_in, interval: d.interval });
+    }
+    if (path === '/api/gh/device/poll' && req.method === 'POST') {
+      const rec = await kvGet(env, 'dev:' + me.uid);
+      if (!rec) return err(req, 409, 'no_device', '没有进行中的设备码流程');
+      let t = null;
+      try {
+        const r = await fetch('https://github.com/login/oauth/access_token', {
+          method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+          body: new URLSearchParams({ client_id: rec.client_id, device_code: rec.device_code, grant_type: 'urn:ietf:params:oauth:grant-type:device_code' }).toString(),
+        });
+        t = await r.json();
+      } catch (e) { return err(req, 502, 'github_unreachable', String(e && e.message || e)); }
+      if (t && t.access_token) {
+        const usr = await ghApi(t.access_token, 'GET', '/user');
+        if (!usr.ok) return err(req, 400, 'token_invalid', usr.err);
+        const st = { token: t.access_token, login: usr.data.login, avatar: usr.data.avatar_url || '', gistId: '', linkedAt: nowISO() };
+        try { await ghEnsureGist(env, me.uid, st); } catch (e) { }
+        await kv(env).delete('dev:' + me.uid);
+        return json(req, { ok: true, login: st.login, avatar: st.avatar, gistId: st.gistId });
+      }
+      if (t && t.error && t.error !== 'authorization_pending' && t.error !== 'slow_down') {
+        return err(req, 400, 'device_failed', t.error_description || t.error);
+      }
+      return json(req, { ok: false, pending: true });
+    }
+
+    /* 代理读写 Gist：前端只能通过这里，且只允许动我们那一个 gist 里的 <game>__<slot>.json */
+    if (path === '/api/gh/saves' && req.method === 'GET') {
+      const st = await ghState(env, me.uid);
+      if (!st) return err(req, 409, 'not_bound', '这个账号还没绑定 GitHub');
+      const game = String(url.searchParams.get('game') || '').toLowerCase();
+      try {
+        const cur = await ghReadGist(env, me.uid, st);
+        const slots = Object.keys(cur.manifest.files)
+          .filter(f => FILE_RE.test(f) && (!game || f.split('__')[0] === game))
+          .map(f => ({ game: f.split('__')[0], slot: f.split('__')[1], ...cur.manifest.files[f] }));
+        return json(req, { ok: true, gistId: cur.id, version: cur.version, slots });
+      } catch (e) { return err(req, 502, 'gist_failed', String(e.message)); }
+    }
+    if (path === '/api/gh/save' && req.method === 'GET') {
+      const st = await ghState(env, me.uid);
+      if (!st) return err(req, 409, 'not_bound', '这个账号还没绑定 GitHub');
+      const name = fileOf(url.searchParams.get('game') || '', url.searchParams.get('slot') || '');
+      if (!FILE_RE.test(name)) return err(req, 400, 'bad_name', 'game/slot 只允许字母数字_-');
+      try {
+        const cur = await ghReadGist(env, me.uid, st);
+        const f = cur.gist.files[name + '.json'];
+        if (!f) return err(req, 404, 'not_found', 'Gist 里没有这份存档');
+        const content = f.truncated ? await (await fetch(f.raw_url)).text() : f.content;
+        let payload = null; try { payload = JSON.parse(content); } catch { payload = { raw: content }; }
+        return json(req, { ok: true, payload, updatedAt: (cur.manifest.files[name] || {}).updatedAt || '', version: cur.version });
+      } catch (e) { return err(req, 502, 'gist_failed', String(e.message)); }
+    }
+    if (path === '/api/gh/save' && req.method === 'PUT') {
+      const st = await ghState(env, me.uid);
+      if (!st) return err(req, 409, 'not_bound', '这个账号还没绑定 GitHub');
+      const b = await readJSON(req);
+      const name = fileOf((b && b.game) || '', (b && b.slot) || '');
+      if (!FILE_RE.test(name) || !b || typeof b.payload === 'undefined') return err(req, 400, 'bad_request', '缺 game/slot/payload 或名字不合法');
+      const body = typeof b.payload === 'string' ? b.payload : JSON.stringify(b.payload);
+      if (body.length > MAX_SAVE_BYTES) return err(req, 413, 'too_large', '单份存档上限 ' + Math.round(MAX_SAVE_BYTES / 1024) + 'KB');
+      try {
+        const r = await ghWriteFile(env, me.uid, st, name, body, { updatedAt: b.updatedAt, expectVersion: b.expectVersion });
+        if (r.conflict) return json(req, { error: 'conflict', message: '别的设备刚写过，先拉取再重试', version: r.version }, 409);
+        return json(req, { ok: true, version: r.version, updatedAt: b.updatedAt || nowISO() });
+      } catch (e) { return err(req, 502, 'gist_failed', String(e.message)); }
+    }
+    if (path === '/api/gh/save' && req.method === 'DELETE') {
+      const st = await ghState(env, me.uid);
+      if (!st) return err(req, 409, 'not_bound', '这个账号还没绑定 GitHub');
+      const name = fileOf(url.searchParams.get('game') || '', url.searchParams.get('slot') || '');
+      if (!FILE_RE.test(name)) return err(req, 400, 'bad_name', 'game/slot 只允许字母数字_-');
+      try { await ghWriteFile(env, me.uid, st, name, null, { delete: true }); return json(req, { ok: true }); }
+      catch (e) { return err(req, 502, 'gist_failed', String(e.message)); }
+    }
+
     if (path === '/api/logout' && req.method === 'POST') {
       const k = kv(env); await k.delete('s:' + (await sha256(me.token)));
       return json(req, { ok: true });
@@ -256,7 +497,13 @@ export async function handle(req, env) {
       const body = JSON.stringify(b.data);
       if (body.length > MAX_SAVE_BYTES) return err(req, 413, 'too_large', '单份存档上限 ' + Math.round(MAX_SAVE_BYTES / 1024) + 'KB');
       const game = String(b.game).slice(0, 64), slot = String(b.slot).slice(0, 64);
-      const rec = { updatedAt: nowISO(), bytes: body.length, digest: b.digest || '', data: b.data };
+      /* 乐观并发：带上你上次看到的 updatedAt，若云端已经被别的设备改过就 409，让前端先拉再重试
+         （不放任"最后写入赢"把另一台设备的进度吃掉） */
+      const prev = await kvGet(env, saveKey(me.uid, game, slot));
+      if (b.expectUpdatedAt && prev && prev.updatedAt && prev.updatedAt !== b.expectUpdatedAt) {
+        return json(req, { error: 'conflict', message: '云端这份存档已被别的设备更新', updatedAt: prev.updatedAt }, 409);
+      }
+      const rec = { updatedAt: nowISO(), bytes: body.length, digest: b.digest || '', data: b.data, enc: !!b.enc };
       await kvPut(env, saveKey(me.uid, game, slot), rec);
       const idx = await idxRead(env, me.uid, game);
       idx.slots[slot] = { updatedAt: rec.updatedAt, bytes: rec.bytes, digest: rec.digest };
