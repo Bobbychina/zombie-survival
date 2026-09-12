@@ -51,8 +51,15 @@
     try {
       var r = await fetch(apiBase() + '/api/health', { cache: 'no-store' });
       var b = await r.json();
-      apiOk = !!(r.ok && b && b.ok);
-      if (apiOk && !b.kv) console.warn('[account] 云后端没绑 KV，账号无法注册/登录（见 tools/cf-worker.js 顶部步骤）');
+      /* kv 没绑定 = 后端还没配好：对访客当作"没有云后端"处理，自动退回本机模式，
+         而不是让每个注册的人都撞一次 503（运维提示留在控制台给站长看）。 */
+      apiOk = !!(r.ok && b && b.ok && b.kv !== false);
+      if (r.ok && b && b.ok && b.kv === false) {
+        console.warn('[account] 云后端已部署但没绑 KV（Settings → Bindings → DSH_KV），暂时按本机模式运行');
+      }
+      if (apiOk && b.pepper === 'default') {
+        console.warn('[account] 云后端还没设 DSH_PEPPER（口令二次哈希/令牌加密都在用默认值），建议尽快补上');
+      }
       return apiOk;
     } catch (e) { apiOk = false; return false; }
   }
