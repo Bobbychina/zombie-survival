@@ -1,0 +1,33 @@
+{
+ "site": "http://127.0.0.1:5180",
+ "steps": {
+  "setup": {
+   "registered": true,
+   "panelOpen": true
+  },
+  "failPanel": {
+   "title": "🐙 一键授权被 GitHub 挡住了",
+   "mentionsCors": true,
+   "explainsNoToken": true,
+   "showsRawError": true,
+   "hasTokenInput": true,
+   "hasTokenPageButton": true,
+   "hasDeviceButton": true,
+   "hasFileAlternative": true
+  },
+  "failShot": "E:/Files/Games/ZombieSurvival/docs/_m8_shots/bind-fallback.png",
+  "tokenBind": {
+   "bound": true,
+   "login": "bobbychina32747",
+   "title": "👤 账号与云存档"
+  },
+  "apiCalls": {
+   "user": 1,
+   "gists": 3
+  },
+  "cleanup": {
+   "ok": true
+  }
+ },
+ "errors": []
+}

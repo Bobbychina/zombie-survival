@@ -130,6 +130,54 @@ out.steps.panel = await ev(() => ({
   saves: (document.getElementById('saves') || {}).textContent,
 }));
 
+/* ③b 隐私披露：站内说明页 + 授权前的确认闸门（不确认不许跳 GitHub） */
+out.steps.privacy = await ev(() => {
+  window.privacy();
+  const bd = document.getElementById('mo-bd');
+  const r = {
+    title: document.getElementById('mo-title').textContent.trim(),
+    mentionsNoData: /不收集任何数据/.test(bd.innerText),
+    mentionsGistScope: /Gists/.test(bd.innerText),
+    mentionsProfileScope: /Personal user data/.test(bd.innerText),
+    mentionsTokenStorage: /localStorage/.test(bd.innerText),
+    mentionsRevoke: /settings\/applications/.test(bd.innerHTML),
+    mentionsFileAlt: /导出存档文件/.test(bd.innerText),
+    linksPrivacyMd: /PRIVACY\.md/.test(bd.innerHTML),
+  };
+  window.closeAcct();
+  return r;
+});
+out.steps.consentGate = await ev(async () => {
+  window.__opened = [];
+  window.open = function (url) { window.__opened.push(String(url)); return { closed: false, close() { } }; };
+  window.panel();
+  await new Promise(r => setTimeout(r, 250));
+  const bindBtn = [...document.querySelectorAll('#mo-bd button')].find(b => /绑定 GitHub/.test(b.textContent));
+  if (!bindBtn) return { err: '找不到绑定按钮' };
+  bindBtn.click();
+  await new Promise(r => setTimeout(r, 250));
+  const bd = document.getElementById('mo-bd');
+  const before = {
+    title: document.getElementById('mo-title').textContent.trim(),
+    gistScope: /Gists — 读写/.test(bd.innerText),
+    profileScope: /Personal user data/.test(bd.innerText),
+    storageNote: /localStorage/.test(bd.innerText),
+    revokeLink: /settings\/applications/.test(bd.innerHTML),
+    fileAlternative: /导出存档文件/.test(bd.innerText),
+    openedBeforeConfirm: window.__opened.length,
+  };
+  const okBtn = document.querySelector('#mo-ft button.ok');
+  okBtn.click();
+  await new Promise(r => setTimeout(r, 300));
+  const openedAfterConfirm = window.__opened.length;
+  const url = window.__opened[0] || '';
+  const st = new URLSearchParams((url.split('?')[1]) || '').get('state') || '';
+  window.postMessage({ type: 'dsh-oauth', provider: 'github', code: 'GATE_TEST', state: st }, location.origin);
+  await new Promise(r => setTimeout(r, 900));
+  window.closeAcct();
+  return { before, openedAfterConfirm, authorizedHost: url.split('?')[0] };
+});
+
 /* ④ 绑定 GitHub（令牌路：api.github.com 已被打桩） */
 out.steps.bindGithub = await ev(async () => {
   const r = await window.DSHAccount.bindGitHubToken('ghp_' + 'x'.repeat(36));
@@ -206,18 +254,33 @@ out.steps.game = await ev(async () => {
     mainSlot: window.DSHAccount.saveGet('zombie-survival', 'main') ? '在（大厅写的存档游戏里读到了）' : '不在',
   };
 });
-/* 游戏内面板：文件导入/导出按钮要在，微软按钮要消失 */
+/* 游戏内面板：文件导入/导出按钮要在，微软按钮要消失，绑定前要先弹权限披露 */
 out.steps.gamePanel = await ev(() => {
   window.closeAllModals();
   window.V4Account.open();
   const btns = [...document.querySelectorAll('.overlay button, .modal button')].map(b => b.textContent.trim());
-  return {
+  const out = {
     buttons: btns,
     hasExportFile: btns.some(t => /导出存档文件/.test(t)),
     hasImportFile: btns.some(t => /从文件导入/.test(t)),
     hasMicrosoftButton: btns.some(t => /微软/.test(t)),
     apiShape: { exportFile: typeof window.V4Account.exportFile, importFile: typeof window.V4Account.importFile, doImportFile: typeof window.V4Account.doImportFile },
   };
+  /* 游戏里点「绑定 GitHub」也必须先出披露弹窗（不是直接跳授权页） */
+  const bindBtn = [...document.querySelectorAll('.overlay button')].find(b => /绑定 GitHub/.test(b.textContent));
+  bindBtn.click();
+  const box = document.querySelector('.overlay .modal-bd, .overlay .modal');
+  const txt = box ? box.innerText : '';
+  out.consent = {
+    title: (document.querySelector('.overlay .modal-hd h2') || {}).textContent,
+    gistScope: /Gists — 读写/.test(txt),
+    profileScope: /Personal user data/.test(txt),
+    storageNote: /localStorage/.test(txt),
+    revokeLink: /settings\/applications/.test(box ? box.innerHTML : ''),
+    fileAlternative: /导出存档文件/.test(txt),
+    confirmButton: [...document.querySelectorAll('.overlay button')].some(b => /我明白，继续授权/.test(b.textContent)),
+  };
+  return out;
 });
 out.steps.gameFileExport = await (async () => {
   try {
