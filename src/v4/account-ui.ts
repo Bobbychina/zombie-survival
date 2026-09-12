@@ -248,6 +248,7 @@ function afterBind(r: { ok: boolean; err?: string }, provider: string) {
 }
 /** 一键授权失败后的补救面板：令牌路（实测可用）放主位，设备码放备位 */
 function oauthFailHelp(err: string): void {
+  const noSecret = /incorrect_client_credentials/.test(err);
   L.modal({
     title: '🐙 一键授权被 GitHub 挡住了',
     sticky: true,
@@ -255,22 +256,27 @@ function oauthFailHelp(err: string): void {
       '纯静态站（GitHub Pages）读不到它的响应——这是 GitHub 的限制，跟你的操作无关。刚才那一步<b>没有拿到任何令牌</b>，' +
       '你可以在 GitHub 设置里随时撤销那次授权。</p>' +
       '<div class="hint">原始错误：' + esc(err) + '</div>' +
-      '<div class="sect-title" style="margin-top:12px">现在就能用：令牌绑定（2 步）</div>' +
+      (noSecret
+        ? '<div class="hint" style="color:#e0b06a">这条错误说明：中继已经连通，但中继里还没配 <span class="mono">client_secret</span>' +
+          '（GitHub 的 code 换 token 强制要它）。给 Worker 加一个名为 <span class="mono">GH_CLIENT_SECRET</span> 的 Secret 变量即可启用真一键；' +
+          '不加也行——用下面的「设备码」照样能绑。</div>'
+        : '') +
+      '<div class="sect-title" style="margin-top:12px">方式一：设备码（点一下就出码，浏览器里输 9 位）</div>' +
+      '<div class="hint">点「用设备码试试」→ 面板会给出 <span class="mono">XXXX-XXXX</span> 并自动打开 GitHub 的授权页 → 输入码 → 完成。' +
+      '这条通道已经实测可用（不需要任何密钥）。</div>' +
+      '<div class="sect-title" style="margin-top:12px">方式二：令牌绑定（2 步，任何情况下都能用）</div>' +
       '<div class="hint">1. 点下面按钮 → GitHub 打开「新建令牌」页，权限已勾好 <span class="mono">gist</span> → 点 <b>Generate token</b> → 复制；<br>' +
       '2. 粘到下面的框里，点「绑定」。令牌只存在你这台设备的浏览器里，随时可在 GitHub 设置里撤销。</div>' +
       '<div class="row" style="margin-top:8px"><button class="btn" onclick="window.open(\'https://github.com/settings/tokens/new?scopes=gist&description=bobbychina.github.io%2Fgames%20%E4%BA%91%E5%AD%98%E6%A1%A3\',\'_blank\')">🔗 打开 GitHub 令牌页</button></div>' +
       '<input id="acc-gh-token" placeholder="粘贴令牌（ghp_… 或 github_pat_…）" style="width:100%;margin-top:8px">' +
-      '<div class="sect-title" style="margin-top:12px">也可以试一次设备码</div>' +
-      '<div class="hint">设备码走的是同一条通道，点一下就知道通不通。' +
-      '要真正的"一键"，需要一个几十行的中继（Cloudflare Worker，免费不要卡）——需要的话告诉作者。</div>' +
-      '<div class="hint">不想给任何权限也行：用「💾 导出存档文件 / 📂 从文件导入」照样换设备。</div>' +
       '<div class="sect-title" style="margin-top:12px">查清楚到底被什么挡住（可选）</div>' +
-      '<div class="hint">点一下会空跑四种请求（用假 code，不会产生任何令牌），把结果贴给作者就能定位：是"没开 CORS"还是"只是预检没过"。</div>' +
+      '<div class="hint">点一下会空跑四种请求（用假 code，不会产生任何令牌），把结果贴给作者就能定位。</div>' +
       '<div id="acc-diag"></div>' +
+      '<div class="hint">不想给任何权限也行：用「💾 导出存档文件 / 📂 从文件导入」照样换设备。</div>' +
       '<div class="hint" id="acc-msg" style="margin-top:8px"></div>',
     footer: '<button class="btn ok" onclick="V4Account.bindGitHubToken()">绑定</button>' +
+      '<button class="btn' + (noSecret ? ' ok' : ' ghost') + '" onclick="V4Account.bindGitHubDevice()">用设备码试试</button>' +
       '<button class="btn ghost" onclick="V4Account.diagnose()">🔍 诊断连接</button>' +
-      '<button class="btn ghost" onclick="V4Account.bindGitHubDevice()">用设备码试试</button>' +
       '<button class="btn" data-close>取消</button>',
   });
 }

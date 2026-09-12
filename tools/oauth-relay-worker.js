@@ -8,13 +8,17 @@
    · 不记录、不缓存、不落盘任何内容（GitHub 的 code 是单次有效的，令牌直接还给浏览器）
    · 不需要 client secret：客户端走的是 PKCE 流程，Worker 只是个"跨域桥"
 
-   部署（免费，不需要信用卡）：
-     1) npx wrangler login                      # 浏览器里点一下授权（Cloudflare 账号可用邮箱注册）
-     2) npx wrangler deploy tools/oauth-relay-worker.js --name dsh-oauth-relay
-     3) 把输出的 https://dsh-oauth-relay.<你的子域>.workers.dev 填进
-        games/auth-config.js 的 github.relay，刷新页面即可
+   部署：
+     1) Cloudflare 控制台 → Workers & Pages → 创建 Worker → 粘贴本文件 → Deploy
+        （部署后地址形如 https://dsh-oauth-relay.<你的子域>.workers.dev）
+     2) 【想要"真一键"才需要这步】该 Worker → Settings → Variables and Secrets → 添加：
+          名称 GH_CLIENT_SECRET ／ 类型 Secret ／ 值 = GitHub 应用页的 client secret
+        GitHub 的 code 换 token 强制要 client_secret，所以密钥必须放在中继里；
+        没配也能用——客户端会自动退回"设备码"流程，在浏览器输入 9 位码即可绑定。
+     3) 把地址填进主页仓库 games/auth-config.js 的 github.relay
 
-   如果你有自定义域名，建议绑一个（workers.dev 在部分地区会被拦）。
+   安全边界：密钥只存在于你的 Cloudflare 账号里；浏览器、仓库、日志里都没有它。
+   中继带了 Origin 白名单（只接受自己站点发来的跨域请求），且只允许上面那两个路径。
 */
 const ALLOW = {
   '/oauth/access_token': 'https://github.com/login/oauth/access_token',
@@ -33,7 +37,7 @@ const CORS = {
 };
 
 export default {
-  async fetch(req) {
+  async fetch(req, env) {
     const url = new URL(req.url);
     const origin = req.headers.get('origin') || '';
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
@@ -42,7 +46,14 @@ export default {
     const target = ALLOW[url.pathname];
     if (!target) return json({ error: 'path_not_allowed', path: url.pathname, allowed: Object.keys(ALLOW) }, 404);
     try {
-      const body = await req.text();
+      let body = await req.text();
+      /* 换 token 必须带 client_secret（GitHub 的 authorization_code 交换强制要求），
+         所以密钥只放在 Worker 的环境变量里，浏览器永远看不到它。
+         设备码那两个端点不需要密钥，所以只给 /oauth/access_token 补。 */
+      const secret = env && env.GH_CLIENT_SECRET;
+      if (url.pathname === '/oauth/access_token' && secret && !/(^|&)client_secret=/.test(body)) {
+        body += '&client_secret=' + encodeURIComponent(secret);
+      }
       const r = await fetch(target, {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },

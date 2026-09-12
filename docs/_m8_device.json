@@ -1,0 +1,17 @@
+{
+ "relay": "https://dsh-oauth-relay.bobby-minecraft.workers.dev",
+ "steps": {
+  "deviceCode": {
+   "status": 200,
+   "body": "{\"device_code\":\"4da2f2e85a7aa57bf0741231360da5cbd80d5d47\",\"user_code\":\"819D-6F5B\",\"verification_uri\":\"https://github.com/login/device\",\"expires_in\":899,\"interval\":5}"
+  },
+  "pollNoSecret": {
+   "status": 200,
+   "body": "{\"error\":\"authorization_pending\",\"error_description\":\"The authorization request is still pending.\",\"error_uri\":\"https://docs.github.com/developers/apps/authorizing-oauth-apps#error-codes-for-the-device-flow\"}"
+  },
+  "codeExchangeNoSecret": {
+   "status": 200,
+   "body": "{\"error\":\"incorrect_client_credentials\",\"error_description\":\"The client_id and/or client_secret passed are incorrect.\",\"error_uri\":\"https://docs.github.com/apps/managing-oauth-apps/troubleshooting-oauth-app-access-token-request-errors/#inco"
+  }
+ }
+}

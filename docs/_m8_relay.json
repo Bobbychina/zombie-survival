@@ -1,0 +1,32 @@
+{
+ "relay": "https://dsh-oauth-relay.bobby-minecraft.workers.dev",
+ "steps": [
+  {
+   "name": "GET 中继根路径（应 405 JSON）",
+   "ok": true,
+   "status": 405,
+   "body": "{\"error\":\"method_not_allowed\"}"
+  },
+  {
+   "name": "form 换 token（应拿到 GitHub 的 bad_verification_code）",
+   "ok": true,
+   "status": 200,
+   "body": "{\"error\":\"incorrect_client_credentials\",\"error_description\":\"The client_id and/or client_secret passed are incorrect.\",\"error_uri\":\"https://docs.github.com/apps/managing-oauth-apps/troubleshooting-oauth-app-access-token-",
+   "ms": 573
+  },
+  {
+   "name": "form 申请设备码（应拿到 GitHub 的 device_code）",
+   "ok": true,
+   "status": 200,
+   "body": "{\"device_code\":\"2093445e9a431ee360ec70fbcb24fe40a68fa4e1\",\"user_code\":\"35EA-3AB3\",\"verification_uri\":\"https://github.com/login/device\",\"expires_in\":899,\"interval\":5}",
+   "ms": 561
+  },
+  {
+   "name": "不允许的路径（应 404 JSON）",
+   "ok": true,
+   "status": 404,
+   "body": "{\"error\":\"path_not_allowed\",\"path\":\"/whatever\",\"allowed\":[\"/oauth/access_token\",\"/login/device/code\"]}",
+   "ms": 395
+  }
+ ]
+}
