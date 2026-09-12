@@ -13,8 +13,9 @@ const NAME_A = ['长春','建设','红旗','解放','和平','光明','兴安','
 const NAME_B = ['路','街','大道','巷','桥','屯','站','口'];
 
 export const bkey = (x: number, y: number) => x + ',' + y;
-/** M7.1 新增的现代商业/建材建筑：刷点权重更高，避免地图上永远只有那几种老 POI */
-const MODERN_POIS = new Set(['furniture', 'hardware', 'megamart', 'office', 'appliance', 'depot', 'buildmart']);
+/** M7.1 新增的现代商业/建材建筑：刷点权重更高，避免地图上永远只有那几种老 POI
+    M8 追加 lumber（林场）/ sawmill（木材加工厂）——木头要能在地图上"看得见、跑得到" */
+const MODERN_POIS = new Set(['furniture', 'hardware', 'megamart', 'office', 'appliance', 'depot', 'buildmart', 'lumber', 'sawmill']);
 export const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 
 function blockName(x: number, y: number) {
@@ -33,7 +34,7 @@ function pickPoi(rng: () => number, biome: Biome, d2home: number): string | null
     if (id === 'outpost') w = 0.4 + d2home * 0.2;
     if (id === 'gas' || id === 'garage') w = biome === 'highway' ? 6 : 1.2;
     if (biome === 'highway') w *= id === 'gas' || id === 'garage' || id === 'warehouse' ? 3 : 0.4;
-    // M7.1：现代商业建筑（家具城/五金/仓储超市/写字楼/家电城/物流园/建材市场）刷得更勤，别老是那几种
+    // M7.1：现代商业建筑（家具城/五金/仓储超市/写字楼/家电城/物流园/建材市场）+ M8 的林场/木材加工厂刷得更勤，别老是那几种
     if (MODERN_POIS.has(id)) w *= 1.8;
     pool.push({ id, w });
   }

@@ -1,10 +1,15 @@
 /* M6 · 野外采集与拆解（会议 F01/C5/C8）：
    - 采集：林地/农田/郊区等区块，1 AP，产出野果/蘑菇/木料/污水/种子；每区块有次数上限**且**季节再生，冬天几乎归零。
-   - 拆解：报废车辆/废墟，1 AP，产材料；每区块资源池拆光为止（禁止无限材料机）。 */
+   - 拆解：报废车辆/废墟，1 AP，产材料；每区块资源池拆光为止（禁止无限材料机）。
+   M8 · 伐木（玩家反馈"木头找不到"）：第三种就地动作，数值全在 wood-core.ts。
+   与采集的区别：木头**任何季节都有保底**（冬天不掉到 0），代价是只能去有树的地方、且每天次数有限。 */
 import { L } from '../main';
 import { bkey } from './worldgen';
 import { ensureSaveWorld, worldOf, type SaveWorld } from './worldstate';
 import { FORAGE_AP, FORAGE_POOL, FORAGE_REGEN_DAYS, SALVAGE_AP, SALVAGE_POOL, forageYields, salvageYields } from './env-core';
+import {
+  CHOP_AP, chopEstimate, chopLeft, chopOnce, chopSpots, chopToolOf, type ChopTool,
+} from './wood-core';
 import { envOf, seasonNow, tempTick } from './env';
 import type { Block } from '../types';
 
@@ -66,6 +71,50 @@ export function forage(): boolean {
 }
 
 const seasonIcon = () => ({ spring: '🌱', summer: '☀️', autumn: '🍂', winter: '❄️' } as Record<string, string>)[seasonNow()] ?? '';
+
+/* ── M8 · 伐木 ── */
+const chopRec = (s: SaveWorld, b: Block) => {
+  s.chop = s.chop && typeof s.chop === 'object' ? s.chop : {};
+  return s.chop[bkey(b.x, b.y)];
+};
+
+export const chopToolNow = (): ChopTool => chopToolOf(L.itemCount('axe'), L.itemCount('crowbar'));
+const toolLabel = (t: ChopTool) => (t === 'axe' ? '消防斧加成' : t === 'crowbar' ? '撬棍加成' : '徒手');
+
+/** 伐木面板要的全部信息：能不能砍、今天还剩几次、这一斧大约几根木头、为什么不能砍 */
+export function chopInfo(): { ok: boolean; left: number; est: number; tool: ChopTool; why?: string } {
+  const b = curBlock();
+  const tool = chopToolNow();
+  if (!b) return { ok: false, left: 0, est: 0, tool, why: '不知道你在哪' };
+  const est = chopEstimate(b.biome, seasonNow(), envOf().weather, tool);
+  if (chopSpots(b.biome) <= 0) return { ok: false, left: 0, est, tool, why: '这一带没有树（林地/废墟/农田/郊区才能砍）' };
+  const left = chopLeft(chopRec(sw(), b), L.S.day, b.biome);
+  if (left <= 0) return { ok: false, left: 0, est, tool, why: '今天的柴火砍够了，明天再来' };
+  return { ok: true, left, est, tool };
+}
+
+/** 伐木（1 AP）→ 木料为主，少量附带树枝捆/废铁；每天每区块有次数上限 */
+export function chop(): boolean {
+  const S = L.S, s = sw(), b = curBlock();
+  if (!b) return false;
+  const info = chopInfo();
+  if (!info.ok) { L.toast('砍不动', info.why ?? '', 'bad'); return false; }
+  // 先掷骰再扣 AP：上限/群系不合格时一分行动力都不该花
+  const res = chopOnce(Math.random, {
+    biome: b.biome, season: seasonNow(), weather: envOf().weather, tool: info.tool, left: info.left,
+  });
+  if (!res.ok) { L.toast('砍不动', res.why ?? '', 'bad'); return false; }
+  if (!L.spendAP(CHOP_AP)) return false;
+  s.chop = s.chop && typeof s.chop === 'object' ? s.chop : {};
+  s.chop[bkey(b.x, b.y)] = { left: res.left, day: S.day };
+  const parts = ['木料×' + res.wood];
+  L.grant('wood', res.wood);
+  for (const it of res.extra) { L.grant(it.id, it.n); parts.push(L.itemName(it.id) + '×' + it.n); }
+  L.log(`🪵 伐木：${parts.join('、')}（${toolLabel(info.tool)}，这里今天还能砍 ${res.left} 次）`, 'loot');
+  tempTick(1.5);        // 抡斧头是重体力活：比采集更掉体温
+  L.sfx('loot'); L.autosave(); L.render();
+  return true;
+}
 
 /** 拆解点的剩余资源 */
 function salvageLeft(s: SaveWorld, b: Block): number {

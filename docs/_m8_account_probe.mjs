@@ -1,0 +1,207 @@
+/* M8 探针：账号系统 + 云存档（游戏厅 /games/ 与游戏 /games/zombie-survival/ 同源共用）
+   网络部分用 page.route 打桩（GitHub API / Graph 全程 mock），所以不碰真实账号、不产生真数据；
+   验证的是"我们这侧的客户端逻辑 + 界面 + 存档格式"，而不是 GitHub 的服务器。
+   用法：node docs/_m8_account_probe.mjs [siteRoot]   （默认 http://127.0.0.1:5179） */
+import { createRequire } from 'node:module';
+import { writeFileSync, mkdirSync } from 'node:fs';
+import path from 'node:path';
+const require = createRequire(import.meta.url);
+const { chromium } = require('D:/npm-global/node_modules/@playwright/cli/node_modules/playwright');
+
+const site = (process.argv[2] || 'http://127.0.0.1:5179').replace(/\/$/, '');
+const dir = 'E:/Files/Games/ZombieSurvival/docs/_m8_shots';
+mkdirSync(dir, { recursive: true });
+const out = { site, steps: {}, errors: [] };
+const browser = await chromium.launch({ headless: true, executablePath: 'C:\\Users\\lenovo\\AppData\\Local\\Thorium\\Application\\thorium.exe' });
+const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+
+/* ── 假的 GitHub 云盘（有状态：够验证 creation → push → list → delete 全链路） ── */
+const cloud = { gistId: 'gistTEST123', files: {}, created: 0, patches: 0 };
+async function stubGitHub(page) {
+  await page.route('https://api.github.com/**', async route => {
+    const req = route.request();
+    const url = req.url();
+    const method = req.method();
+    const json = (o, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(o) });
+    if (url.endsWith('/user')) return json({ login: 'tester', name: 'Tester', avatar_url: 'https://example.com/a.png' });
+    if (url.includes('/gists?per_page=')) return json(cloud.created ? [{ id: cloud.gistId, description: 'bobbychina.github.io/games 云存档（自动生成，可随时删除）' }] : []);
+    if (method === 'POST' && /\/gists$/.test(url)) {
+      cloud.created++;
+      const body = JSON.parse(req.postData() || '{}');
+      cloud.files = Object.assign({}, body.files || {});
+      return json({ id: cloud.gistId, files: cloud.files }, 201);
+    }
+    if (method === 'GET' && url.includes('/gists/' + cloud.gistId)) return json({ id: cloud.gistId, files: cloud.files });
+    if (method === 'PATCH' && url.includes('/gists/' + cloud.gistId)) {
+      cloud.patches++;
+      const body = JSON.parse(req.postData() || '{}');
+      Object.keys(body.files || {}).forEach(k => {
+        if (body.files[k] === null) delete cloud.files[k];
+        else cloud.files[k] = { content: body.files[k].content, truncated: false };
+      });
+      return json({ id: cloud.gistId, files: cloud.files });
+    }
+    return json({ message: 'unhandled ' + method + ' ' + url }, 404);
+  });
+}
+async function stubGraph(page) {
+  await page.route('https://graph.microsoft.com/**', async route => {
+    const req = route.request(), url = req.url(), method = req.method();
+    const json = (o, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(o) });
+    if (url.endsWith('/me')) return json({ id: 'ms-oid-1', displayName: '测试用户', mail: 'tester@example.com' });
+    if (url.endsWith(':/children')) {
+      const names = Object.keys(cloud.files).filter(f => f.startsWith('onedrive__'));
+      return json({ value: names.map(n => ({ name: n.replace('onedrive__', ''), lastModifiedDateTime: '2026-09-12T10:00:00Z' })) });
+    }
+    if (method === 'PUT') { const m = url.match(/approot:\/dsh-saves\/([^/:]+)\/([^/:]+)\.json:\/content/); if (m) { cloud.files['onedrive__' + decodeURIComponent(m[2]) + '.json'] = { content: req.postData() }; return json({ id: 'x' }, 201); } }
+    if (method === 'DELETE') { const m = url.match(/approot:\/dsh-saves\/([^/:]+)\/([^/:]+)\.json$/); if (m) { delete cloud.files['onedrive__' + decodeURIComponent(m[2]) + '.json']; return route.fulfill({ status: 204 }); } }
+    return json({ error: { message: 'unhandled ' + method + ' ' + url } }, 404);
+  });
+}
+async function stubMSAuth(page) {
+  await page.route('https://login.microsoftonline.com/**', async route => {
+    const b = new URLSearchParams(route.request().postData() || '');
+    if (b.get('grant_type') === 'authorization_code') {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ access_token: 'ms-access-1', refresh_token: 'ms-refresh-1', expires_in: 3600, token_type: 'Bearer' }) });
+    }
+    return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: 'invalid_grant' }) });
+  });
+}
+
+const page = await ctx.newPage();
+page.on('pageerror', e => out.errors.push(String(e.message).slice(0, 200)));
+await stubGitHub(page); await stubGraph(page); await stubMSAuth(page);
+const ev = (fn, arg) => page.evaluate(fn, arg);
+
+/* ① 游戏大厅：页面结构 + 账号库装载 */
+await page.goto(site + '/games/', { waitUntil: 'load' });
+await page.waitForTimeout(600);
+out.steps.hub = await ev(() => ({
+  title: document.title,
+  hasLib: typeof window.DSHAccount === 'object',
+  libVersion: window.DSHAccount && window.DSHAccount.version,
+  games: [...document.querySelectorAll('.game h3')].map(e => e.textContent.trim()),
+  playBtns: [...document.querySelectorAll('.game .btn')].map(e => e.textContent.trim()),
+  acctBar: document.getElementById('acct-who').textContent.trim(),
+  configLoaded: !!window.DSH_AUTH_CONFIG,
+  githubClientIdSet: !!(window.DSH_AUTH_CONFIG && window.DSH_AUTH_CONFIG.github.clientId),
+}));
+
+/* ② 注册 → 会话持久化（刷新还在） → 密码校验（错密码要拒绝） */
+out.steps.register = await ev(async () => {
+  const r = await window.DSHAccount.register({ name: 'tester', password: 'hunter2secret', email: '' });
+  return { ok: r.ok, err: r.err, name: r.user && r.user.name, keys: Object.keys(localStorage).sort() };
+});
+await page.reload({ waitUntil: 'load' });
+await page.waitForTimeout(500);
+out.steps.sessionPersist = await ev(() => ({
+  loggedIn: !!window.DSHAccount.current(),
+  who: document.getElementById('acct-who').textContent.trim(),
+  wrongPass: null,
+}));
+out.steps.wrongPassword = await ev(async () => {
+  window.DSHAccount.logout();
+  const bad = await window.DSHAccount.login({ name: 'tester', password: 'WRONG' });
+  const good = await window.DSHAccount.login({ name: 'tester', password: 'hunter2secret' });
+  return { badOk: bad.ok, badErr: bad.err, goodOk: good.ok };
+});
+
+/* ③ 界面：点「账号与云存档」应该出现绑定按钮 */
+await page.click('#btn-acct');
+await page.waitForTimeout(300);
+out.steps.panel = await ev(() => ({
+  title: document.getElementById('mo-title').textContent.trim(),
+  buttons: [...document.querySelectorAll('#mo-ft button')].map(b => b.textContent.trim()),
+  bindButtons: [...document.querySelectorAll('#mo-bd button')].map(b => b.textContent.trim()),
+  saves: (document.getElementById('saves') || {}).textContent,
+}));
+
+/* ④ 绑定 GitHub（令牌路：api.github.com 已被打桩） */
+out.steps.bindGithub = await ev(async () => {
+  const r = await window.DSHAccount.bindGitHubToken('ghp_' + 'x'.repeat(36));
+  const u = window.DSHAccount.current();
+  return { ok: r.ok, err: r.err, providers: u.providers, who: document.getElementById('acct-who').textContent.trim() };
+});
+
+/* ⑤ 存档：写入 → 推云 → 列云 → 删云（云端=打桩的私有 gist） */
+out.steps.saveFlow = await ev(async () => {
+  const A = window.DSHAccount;
+  const fake = { day: 12, hp: 88, mat: 41, world: { seed: 'probe', cur: { x: 3, y: 4 } }, inv: { wood: 9 } };
+  const put = A.savePut('zombie-survival', 'main', fake);
+  const push = await A.pushAll('zombie-survival');
+  const sum = await A.cloudSummary('zombie-survival');
+  const back = A.saveGet('zombie-survival', 'main');
+  const del = await A.cloudDelete('zombie-survival', 'main');
+  const sum2 = await A.cloudSummary('zombie-survival');
+  return { putOk: put.ok, pushed: push.pushed, remote1: sum.remote, remote2: sum2.remote, delOk: del.ok,
+    roundTripSame: JSON.stringify(back) === JSON.stringify(fake), bytes: put.bytes };
+});
+out.steps.cloudFiles = JSON.parse(JSON.stringify(cloud));
+
+/* ⑥ 微软绑定（token/graph 都打桩）+ OneDrive 上传 + 导出/导入 */
+out.steps.bindMS = await ev(async () => {
+  const A = window.DSHAccount;
+  A.unbind('github');                                     // 换绑微软，验证 OneDrive 那条路
+  const c = A.config();
+  const oldId = c.microsoft.clientId;
+  window.DSH_AUTH_CONFIG.microsoft.clientId = '11111111-2222-3333-4444-555555555555';
+  /* 打桩环境下不开真弹窗：直接调内部令牌交换 + _bind，等价于回调拿到 code 之后的那一步 */
+  const tok = await A._msToken({ grant_type: 'authorization_code', code: 'fake-code', code_verifier: 'v'.repeat(43) });
+  let bound = { ok: false, err: 'no _msToken' };
+  if (tok && tok.access_token) {
+    const me = await fetch('https://graph.microsoft.com/v1.0/me', { headers: { Authorization: 'Bearer ' + tok.access_token } }).then(r => r.json());
+    bound = A._bind('microsoft', { access: tok.access_token, refresh: tok.refresh_token, exp: Date.now() + 3600000, oid: me.id, name: me.displayName, email: me.mail, boundAt: new Date().toISOString() });
+  }
+  window.DSH_AUTH_CONFIG.microsoft.clientId = oldId;
+  const push = await A.pushAll('zombie-survival');
+  const sum = await A.cloudSummary('zombie-survival');
+  const exp = A.exportAll();
+  const imp = A.importAll(exp.json);
+  return { bound, push, remote: sum.remote, exportOk: exp.ok, exportBytes: (exp.json || '').length, importOk: imp.ok, importCount: imp.count };
+});
+out.steps.cloudFilesAfterMS = JSON.parse(JSON.stringify(cloud));
+
+/* ⑦ 游戏本体（同源）：账号模块在场、面板能开、存档能互通 */
+await page.goto(site + '/games/zombie-survival/', { waitUntil: 'load' });
+await page.waitForTimeout(3000);
+out.steps.game = await ev(async () => {
+  const S = window.S || {};
+  const acctHint = [...document.querySelectorAll('.wenv .hint')].map(e => e.textContent).filter(t => /账号|登录|存档/.test(t));
+  const acctBtn = [...document.querySelectorAll('.wenv button')].map(b => b.textContent.trim()).find(t => /账号|注册/.test(t));
+  const saved = window.DSHAccount.current();
+  const put = window.DSHAccount.savePut('zombie-survival', 'demo-slot', { day: S.day, hp: S.hp, note: 'from game' });
+  const read = window.DSHAccount.saveGet('zombie-survival', 'demo-slot');
+  return {
+    hasLib: typeof window.DSHAccount === 'object',
+    v4account: typeof window.V4Account === 'object',
+    user: saved && saved.name, providers: saved && saved.providers,
+    acctBtn, acctHint,
+    mapCells: document.querySelectorAll('.wcell').length,
+    day: S.day, putOk: put.ok, readNote: read && read.note,
+    mainSlot: window.DSHAccount.saveGet('zombie-survival', 'main') ? '在（大厅写的存档游戏里读到了）' : '不在',
+  };
+});
+/* 游戏里点开账号面板截图 */
+await ev(() => { window.closeAllModals(); window.V4Account.open(); });
+await page.waitForTimeout(400);
+out.shots = { panel: dir + '/game-account-panel.png' };
+await page.screenshot({ path: out.shots.panel, fullPage: true });
+await ev(() => window.closeAllModals());
+{
+  await page.goto(site + '/games/', { waitUntil: 'load' });
+  await page.waitForTimeout(500);
+  await page.click('#btn-acct');
+  await page.waitForTimeout(400);
+  out.shots.hub = dir + '/hub-account.png';
+  await page.screenshot({ path: out.shots.hub, fullPage: true });
+}
+
+/* ⑧ 收尾：把探针造的本地账号清掉（不留垃圾在测试浏览器 profile 里） */
+out.steps.cleanup = await ev(async () => {
+  const r = window.DSHAccount.deleteAccount('tester');
+  return { ok: r.ok, remainingAccounts: Object.keys(localStorage).filter(k => /dsh\./.test(k)) };
+});
+
+writeFileSync('E:/Files/Games/ZombieSurvival/docs/_m8_account_probe.json', JSON.stringify(out, null, 1), 'utf8');
+await browser.close();
+console.log(JSON.stringify({ hub: out.steps.hub && out.steps.hub.games, errors: out.errors }, null, 1));

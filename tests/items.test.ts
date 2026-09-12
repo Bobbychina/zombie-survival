@@ -92,9 +92,15 @@ describe('配方 / 建造 / 掉落表只引用存在的物品', () => {
 describe('M7.1 现代建筑与建材产出', () => {
   it('7 个新增商业建筑都带 matBonus，且建材类给得比普通店多', () => {
     const modern = ['furniture', 'hardware', 'megamart', 'office', 'appliance', 'depot', 'buildmart'];
-    for (const id of modern) expect(poisSrc).toContain(id + ':');
+    for (const id of modern) {
+      // M8：逐个建筑自己那条必须有 matBonus（原来只断言了"全文出现 id:"，等于没查加成）
+      const entry = poisSrc.split('\n').find(l => l.includes(id + ':')) ?? '';
+      expect(entry).toContain('matBonus:');
+    }
     const bonus = [...poisSrc.matchAll(/matBonus:\s*(\d+)/g)].map(m => Number(m[1]));
-    expect(bonus.length).toBe(7);
+    // M8 新增的林场(lumber)/木材加工厂(sawmill) 也带 matBonus（木头专供），总数 7 → 9，
+    // 所以这里改成下界：原来的 7 个不许少，新增的不算破坏
+    expect(bonus.length).toBeGreaterThanOrEqual(7);
     expect(Math.max(...bonus)).toBeGreaterThanOrEqual(5);   // 建材市场/物流园是建材主力
     expect(bonus.every(n => n > 0)).toBe(true);
   });

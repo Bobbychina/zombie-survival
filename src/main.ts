@@ -3,6 +3,9 @@
 import './styles/game.css';
 import './styles/v4.css';
 import './legacy/game.ts';
+// M8：账号库（原生 JS，同一份文件也被 bobbychina.github.io/games 大厅用 <script> 引用——
+// 打进这里是为了让单文件离线版也能注册/登录/存本地档，云同步当然还是要联网）
+import './account/account.js';
 
 /** legacy 底座通过垫片挂在 window 上的 API（新模块统一从这里取） */
 export interface LegacyApi {
@@ -23,7 +26,7 @@ export const V4: Record<string, unknown> = {};
 (window as any).V4 = V4;
 
 async function main() {
-  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water] = await Promise.all([
+  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi] = await Promise.all([
     import('./v4/worldgen'),
     import('./v4/pois'),
     import('./v4/combat'),
@@ -38,6 +41,7 @@ async function main() {
     import('./v4/farm'),
     import('./v4/gather'),
     import('./v4/water'),
+    import('./v4/account-ui'),
   ]);
   Object.assign(V4, {
     worldgen: { generateWorld: worldgen.generateWorld, WORLD_W: worldgen.WORLD_W, WORLD_H: worldgen.WORLD_H },
@@ -60,8 +64,20 @@ async function main() {
   // 内联 onclick 只认 window 上的名字：今夜（过夜）与撤离
   (window as any).V4Night = { rest: night.rest, options: night.restOptions, apMaxOf: night.apMaxOf };
   (window as any).V4Farm = { plant: farm.plant, harvest: farm.harvest, plots: farm.plotSlots, summary: farm.farmSummary };
-  (window as any).V4Gather = { forage: gather.forage, salvage: gather.salvage };
+  (window as any).V4Gather = { forage: gather.forage, salvage: gather.salvage, chop: gather.chop };
   (window as any).V4Water = { fish: water.fish, intake: water.intake, dive: water.dive, swim: worldUi.V4World.swim, pond: water.pondSummary };
+  // 账号与云存档（内联 onclick 用；函数名与 account-ui.ts 导出保持一致）
+  (window as any).V4Account = {
+    open: accountUi.openPanel, summary: accountUi.accountSummary,
+    doRegister: accountUi.doRegister, doLogin: accountUi.doLogin, logout: accountUi.logout,
+    bindGitHub: accountUi.bindGitHub, bindGitHubToken: accountUi.bindGitHubToken,
+    bindGitHubDevice: accountUi.bindGitHubDevice, bindMicrosoft: accountUi.bindMicrosoft, unbind: accountUi.unbind,
+    push: accountUi.push, pull: accountUi.pull, sync: accountUi.sync, toggleAuto: accountUi.toggleAuto,
+    exportAll: accountUi.exportAll, importAll: accountUi.importAll, doImport: accountUi.doImport,
+    changePass: accountUi.changePass, doChangePass: accountUi.doChangePass, del: accountUi.del, doDelete: accountUi.doDelete,
+  };
+  (V4 as any).account = accountUi;
+  accountUi.wrapAutosave();
 
   // 接管战斗：legacy 的遭遇/守夜战/最终决战都会走到这里
   // 两条入口都要接：window.startCombat（内联 onclick / v4 自己调用）和 __v4StartCombat（legacy 内部直接调 startCombat）

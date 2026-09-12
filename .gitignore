@@ -23,4 +23,10 @@ docs/_pages_shots/
 docs/_pages_out.txt
 docs/_repoinfo.json
 docs/_tree*.json
+# 排查用的临时产物（一次性 dump，不进库）
+docs/_m8_b_*.html
+docs/_m8_head_index.html
+docs/_m8_count.mjs
+docs/_cors_check*.json
+docs/_cors_out*.txt
 .playwright-cli/

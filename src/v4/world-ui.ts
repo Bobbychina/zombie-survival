@@ -15,8 +15,9 @@ import { ensureEvac, evacAvailable, fireFlare } from './evac';
 import { CROPS, SEASON_INFO, WEATHER, growthDays } from './env-core';
 import { envLine, envOf, seasonNow, tempPenalty } from './env';
 import { farmSummary, cropList, harvest, plant, plotSlots } from './farm';
-import { forageInfo, salvageInfo } from './gather';
+import { chopInfo, forageInfo, salvageInfo } from './gather';
 import { diveInfo, fishInfo, intakeInfo, canSwim, pondSummary, swimStep, waterNearby, fish as doFish, dive as doDive } from './water';
+import { accountSummary, currentUser as accountUser } from './account-ui';
 import type { Block } from '../types';
 
 /** 面板用的薄包装：默认参数与图标都在 water.ts 里 */
@@ -139,11 +140,12 @@ export function renderMapPanel(): string {
   return h;
 }
 
-/** M6 · 环境/食物面板：季节天气体温、采集与拆解、菜园、断粮出路 */
+/** M6 · 环境/食物面板：季节天气体温、采集与拆解、菜园、断粮出路
+    M8：加「🪵 伐木」——放在采集/拆解旁边，可用时显示 1 行动力 / 剩几次 / 约几木 */
 function renderEnvPanel(): string {
   const S = L.S as any;
   const b = curBlock();
-  const fi = forageInfo(), si = salvageInfo();
+  const fi = forageInfo(), si = salvageInfo(), ci = chopInfo();
   const env = envOf();
   const p = tempPenalty(env.temp);
   let h = '<div class="wenv">';
@@ -156,14 +158,18 @@ function renderEnvPanel(): string {
     ' · 腐坏 ×' + (SEASON_INFO[seasonNow()].rot * WEATHER[env.weather].rot).toFixed(2) +
     (WEATHER[env.weather].fire ? '' : ' · ⛔ 生不了火') + '</div>';
 
-  // 采集 / 拆解
+  // 采集 / 拆解 / 伐木
   h += '<div class="row" style="margin-top:8px">' +
     '<button class="btn' + (fi.ok ? ' ok' : ' ghost') + '"' + (fi.ok ? '' : ' disabled') +
       ' onclick="V4Gather.forage()" title="' + esc(fi.ok ? '这一带还能采 ' + fi.left + ' 次' : (fi.why ?? '')) + '">🧺 采集 <span class="mono">(1 行动力' + (fi.ok ? ' · 剩 ' + fi.left : '') + ')</span></button>' +
     '<button class="btn' + (si.ok ? '' : ' ghost') + '"' + (si.ok ? '' : ' disabled') +
       ' onclick="V4Gather.salvage()" title="' + esc(si.ok ? '这一带还能拆 ' + si.left + ' 次' : (si.why ?? '')) + '">🔧 拆解 <span class="mono">(1 行动力' + (si.ok ? ' · 剩 ' + si.left : '') + ')</span></button>' +
+    // M8 伐木：木头的主渠道。不可用时禁用 + 下方 hint 写明原因（没树 / 今天砍够了）
+    '<button class="btn' + (ci.ok ? ' ok' : ' ghost') + '"' + (ci.ok ? '' : ' disabled') +
+      ' onclick="V4Gather.chop()" title="' + esc(ci.ok ? '这一带今天还能砍 ' + ci.left + ' 次，一斧约 ' + ci.est + ' 木' : (ci.why ?? '')) + '">🪵 伐木 <span class="mono">(1 行动力' + (ci.ok ? ' · 剩 ' + ci.left + ' · 约 ' + ci.est + ' 木' : '') + ')</span></button>' +
     '</div>';
   if (!fi.ok && fi.why) h += '<div class="hint">🧺 ' + esc(fi.why) + '</div>';
+  if (!ci.ok && ci.why) h += '<div class="hint">🪵 ' + esc(ci.why) + '</div>';
 
   // 菜园
   const slots = plotSlots();
@@ -215,6 +221,7 @@ function renderEnvPanel(): string {
   if (S.hun < 25 || S.thi < 25) {
     const ways: string[] = [];
     if (fi.ok) ways.push('🧺 就地采集（1 行动力）');
+    if (ci.ok) ways.push('🪵 就地伐木（约 ' + ci.est + ' 木：煮沸污水/做夹板都要它）');
     if (fi2.ok) ways.push('🎣 钓鱼（' + Math.round(fi2.chance * 100) + '% 命中）');
     if (ik.ok) ways.push('💧 就地接水（污水要煮沸或用净化片）');
     if (L.S.base?.pond) ways.push('🐟 鱼塘收鱼（投喂鱼饵/蔬菜翻倍）');
@@ -224,6 +231,17 @@ function renderEnvPanel(): string {
     h += '<div class="hint" style="color:#e0b06a;margin-top:6px">⚠️ ' +
       (S.hun < 25 ? '饱食 ' + Math.round(S.hun) : '水分 ' + Math.round(S.thi)) + ' 告急，出路：' + ways.join(' · ') + '</div>';
   }
+  // M8：缺木料（手上有污水要煮沸 / 骨折要夹板）时把伐木这条出路摆出来，别让玩家只看到"打开背包"
+  const needWood = (S.inv?.dirty || 0) > 0 || (L.S.wounds || []).some((w: any) => w.t === 'fracture');
+  if (needWood && L.itemCount('wood') < 2 && ci.ok) {
+    h += '<div class="hint" style="color:#e0b06a">🪵 木料不够：煮沸污水/固定骨折都要它——就地砍几斧（1 行动力 · 约 ' + ci.est + ' 木/次，今天还能砍 ' + ci.left + ' 次）</div>';
+  }
+  // M8：账号与云存档（放在面板最下面一格，不抢生存信息的位置）
+  h += '<div class="sect-title" style="margin-top:10px">👤 账号 <span class="badge">' +
+    esc(accountUser() ? '已登录' : '未登录') + '</span></div>';
+  h += '<div class="hint">' + esc(accountSummary()) + '</div>';
+  h += '<div class="row"><button class="btn" onclick="V4Account.open()">' +
+    (accountUser() ? '👤 账号与云存档' : '👤 注册 / 登录（存档跟账号走）') + '</button></div>';
   h += '</div>';
   return h;
 }

@@ -25,6 +25,8 @@ export interface SaveWorld {
   salvage: Record<string, { left: number }>;
   /** M7：钓鱼点当天剩余次数（key = "x,y"，每天刷新） */
   fish: Record<string, { left: number; day: number }>;
+  /** M8：伐木点当天剩余次数（key = "x,y"，每天刷新）—— 与 forage/salvage/fish 并列的第四张表 */
+  chop: Record<string, { left: number; day: number }>;
   /** 在营地买过情报：碎片点与实验室永久点亮（迷雾每次都由 visited + 这个派生出来） */
   intel: boolean;
   /** 睡眠债（档，0~3）：AP 上限 = 9 - 债，派生值不单独存 */
@@ -67,7 +69,7 @@ export function defaultSaveWorld(seed: string): SaveWorld {
   const w = worldOf(seed);
   const sw: SaveWorld = {
     v: 1, seed, cur: { x: w.home.x, y: w.home.y },
-    visited: {}, firstPoi: {}, left: {}, stock: {}, frag: {}, forage: {}, salvage: {}, fish: {}, intel: false,
+    visited: {}, firstPoi: {}, left: {}, stock: {}, frag: {}, forage: {}, salvage: {}, fish: {}, chop: {}, intel: false,
     debt: 0, lastNight: null, lastRaidDay: 0, evac: null,
     veh: null, steps: 0, fights: 0, trail: [],
   };
@@ -97,6 +99,8 @@ export function ensureSaveWorld(S: any): SaveWorld {
   sw.forage = sw.forage && typeof sw.forage === 'object' ? sw.forage : {};
   sw.salvage = sw.salvage && typeof sw.salvage === 'object' ? sw.salvage : {};
   sw.fish = sw.fish && typeof sw.fish === 'object' ? sw.fish : {};
+  // M8：伐木次数（老存档没有这张表，补空对象；每次伐木只写自己那一格）
+  sw.chop = sw.chop && typeof sw.chop === 'object' ? sw.chop : {};
   sw.intel = !!sw.intel;
   sw.debt = Math.max(0, Math.min(3, typeof sw.debt === 'number' && isFinite(sw.debt) ? sw.debt : 0));
   sw.lastNight = sw.lastNight && typeof sw.lastNight === 'object' ? sw.lastNight : null;
