@@ -246,12 +246,16 @@
     /* ----- 第三方绑定 ----- */
     config: cfg,
     providerInfo: function () { return Account.current() ? Account.current().providers : {}; },
-    bindGitHubToken: async function (token) {
+    /** extra 里可以带 refresh/exp（OAuth App 勾了「Expire user access tokens」时 GitHub 会发刷新令牌） */
+    bindGitHubToken: async function (token, extra) {
       token = String(token || '').trim();
       if (!/^(gh[pousr]_|github_pat_)/.test(token)) return { ok: false, err: '这不像 GitHub 令牌（应以 ghp_ / github_pat_ 开头）' };
       var me = await gh('GET', '/user', token);
       if (!me.ok) return { ok: false, err: '令牌无效或缺少权限：' + me.err };
-      return Account._bind('github', { token: token, login: me.data.login, name: me.data.name || me.data.login, avatar: me.data.avatar_url, boundAt: nowISO() });
+      return Account._bind('github', Object.assign({
+        token: token, login: me.data.login, name: me.data.name || me.data.login,
+        avatar: me.data.avatar_url, boundAt: nowISO(),
+      }, extra || {}));
     },
     /** GitHub OAuth（PKCE）：需要 auth-config.js 里填 clientId；设备码流程见 bindGitHubDevice */
     bindGitHubOAuth: async function () {
@@ -274,7 +278,7 @@
         body: JSON.stringify({ client_id: c.clientId, code: code, code_verifier: pk.verifier, redirect_uri: cfg().redirect }),
       }).then(function (r) { return r.json(); }).catch(function (e) { return { error: 'cors', error_description: String(e.message) }; });
       if (!res.access_token) return { ok: false, err: '换 token 失败：' + (res.error_description || res.error || '未知') + '（可改用设备码或令牌绑定）' };
-      return Account.bindGitHubToken(res.access_token);
+      return Account.bindGitHubToken(res.access_token, ghTokenExtra(res));
     },
     /** GitHub 设备码流程：只需 client_id（OAuth App 里要勾选 Enable Device Flow） */
     bindGitHubDevice: async function (onCode) {
@@ -293,7 +297,7 @@
           method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
           body: JSON.stringify({ client_id: c.clientId, device_code: r.device_code, grant_type: 'urn:ietf:params:oauth:grant-type:device_code' }),
         }).then(function (x) { return x.json(); }).catch(function (e) { return { error: String(e.message) }; });
-        if (t.access_token) return Account.bindGitHubToken(t.access_token);
+        if (t.access_token) return Account.bindGitHubToken(t.access_token, ghTokenExtra(t));
         if (t.error && t.error !== 'authorization_pending' && t.error !== 'slow_down') return { ok: false, err: '设备码失败：' + (t.error_description || t.error) };
       }
       return { ok: false, err: '设备码超时（重新发起即可）' };
@@ -377,12 +381,27 @@
         body: new URLSearchParams(Object.assign({ client_id: c.clientId, redirect_uri: cfg().redirect, scope: c.scope }, params)).toString(),
       }).then(function (r) { return r.json(); }).catch(function (e) { return { error: 'cors', error_description: String(e.message) }; });
     },
-    /** 拿一个还能用的云访问令牌（微软的会顺手刷新） */
+    /** 拿一个还能用的云访问令牌（微软与 GitHub 的会顺手刷新） */
     _cloudToken: async function (provider) {
       var db = loadDB(), u = db.users[Account.currentUid()];
       var p = u && u.providers && u.providers[provider];
       if (!p) return null;
-      if (provider === 'github') return p.token;
+      if (provider === 'github') {
+        if (!p.exp || Date.now() < p.exp) return p.token;
+        if (!p.refresh) return null;                     // 过期的长期令牌只能重新绑定
+        /* OAuth App 开了「Expire user access tokens」时：用 refresh_token 换新的一对 */
+        var c = cfg().github;
+        var nt = await fetch('https://github.com/login/oauth/access_token', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+          body: JSON.stringify({ client_id: c.clientId, grant_type: 'refresh_token', refresh_token: p.refresh }),
+        }).then(function (x) { return x.json(); }).catch(function () { return {}; });
+        if (!nt.access_token) return null;
+        p.token = nt.access_token;
+        p.refresh = nt.refresh_token || p.refresh;
+        p.exp = Date.now() + (nt.expires_in || 28800) * 1000 - 60000;
+        saveDB(db);
+        return p.token;
+      }
       if (Date.now() < (p.exp || 0)) return p.access;
       if (!p.refresh) return null;
       var t = await Account._msToken({ grant_type: 'refresh_token', refresh_token: p.refresh });
@@ -523,6 +542,13 @@
   };
 
   function emit(ev) { listeners.forEach(function (fn) { try { fn(ev || {}); } catch (e) { console.warn(e); } }); }
+
+  /** GitHub 的 token 响应在「Expire user access tokens」开启时会多带 refresh_token / expires_in，
+      这里把过期时间换算成本地时间戳存下来；没开就是空对象（长期令牌）。 */
+  function ghTokenExtra(t) {
+    if (!t || !t.refresh_token) return {};
+    return { refresh: t.refresh_token, exp: Date.now() + (t.expires_in || 28800) * 1000 - 60000 };
+  }
 
   /* ---------- GitHub 云盘（私有 Gist，一个账号一个 gist，里面按 <game>-<slot>.json 存） ---------- */
   function gh(method, path, token, body) {

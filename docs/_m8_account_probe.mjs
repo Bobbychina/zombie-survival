@@ -16,14 +16,28 @@ const browser = await chromium.launch({ headless: true, executablePath: 'C:\\Use
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
 
 /* ── 假的 GitHub 云盘（有状态：够验证 creation → push → list → delete 全链路） ── */
-const cloud = { gistId: 'gistTEST123', files: {}, created: 0, patches: 0 };
+const cloud = { gistId: 'gistTEST123', files: {}, created: 0, patches: 0, lastAuth: '', refreshes: 0 };
+/* GitHub 的 OAuth 端点在真机上连不通（本机对 github.com 的 HTTPS 是超时），所以连刷新令牌那条路也一起打桩 */
+async function stubGitHubOAuth(page) {
+  await page.route('https://github.com/login/oauth/**', async route => {
+    const body = JSON.parse(route.request().postData() || '{}');
+    const json = (o, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(o) });
+    if (body.grant_type === 'refresh_token') {
+      cloud.refreshes++;
+      return json({ access_token: 'ghp_REFRESHED', refresh_token: 'ghr_NEW', expires_in: 28800, token_type: 'bearer' });
+    }
+    return json({ access_token: 'ghp_FRESH', refresh_token: 'ghr_1', expires_in: 28800, token_type: 'bearer' });
+  });
+  await page.route('https://github.com/login/device/code', async route =>
+    route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ device_code: 'dev1', user_code: 'ABCD-1234', verification_uri: 'https://github.com/login/device', interval: 1, expires_in: 900 }) }));
+}
 async function stubGitHub(page) {
   await page.route('https://api.github.com/**', async route => {
     const req = route.request();
     const url = req.url();
     const method = req.method();
     const json = (o, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(o) });
-    if (url.endsWith('/user')) return json({ login: 'tester', name: 'Tester', avatar_url: 'https://example.com/a.png' });
+    if (url.endsWith('/user')) { cloud.lastAuth = req.headers()['authorization'] || ''; return json({ login: 'tester', name: 'Tester', avatar_url: 'https://example.com/a.png' }); }
     if (url.includes('/gists?per_page=')) return json(cloud.created ? [{ id: cloud.gistId, description: 'bobbychina.github.io/games 云存档（自动生成，可随时删除）' }] : []);
     if (method === 'POST' && /\/gists$/.test(url)) {
       cloud.created++;
@@ -70,7 +84,7 @@ async function stubMSAuth(page) {
 
 const page = await ctx.newPage();
 page.on('pageerror', e => out.errors.push(String(e.message).slice(0, 200)));
-await stubGitHub(page); await stubGraph(page); await stubMSAuth(page);
+await stubGitHub(page); await stubGraph(page); await stubMSAuth(page); await stubGitHubOAuth(page);
 const ev = (fn, arg) => page.evaluate(fn, arg);
 
 /* ① 游戏大厅：页面结构 + 账号库装载 */
@@ -122,6 +136,17 @@ out.steps.bindGithub = await ev(async () => {
   const u = window.DSHAccount.current();
   return { ok: r.ok, err: r.err, providers: u.providers, who: document.getElementById('acct-who').textContent.trim() };
 });
+
+/* ④b GitHub 过期令牌自动刷新（OAuth App 勾了「Expire user access tokens」时才有刷新令牌） */
+out.steps.githubRefresh = await ev(async () => {
+  const A = window.DSHAccount;
+  A._bind('github', { token: 'ghp_EXPIRED', login: 'tester', name: 'Tester', refresh: 'ghr_OLD', exp: Date.now() - 1000, boundAt: new Date().toISOString() });
+  const tok = await A._cloudToken('github');
+  const raw = A._raw().providers.github;
+  const sum = await A.cloudSummary('zombie-survival');
+  return { refreshedToken: tok, storedToken: raw.token, keptRefresh: raw.refresh, cloudReadOk: sum.ok };
+});
+out.steps.githubRefreshServer = { refreshes: cloud.refreshes, lastAuthSeen: cloud.lastAuth };
 
 /* ⑤ 存档：写入 → 推云 → 列云 → 删云（云端=打桩的私有 gist） */
 out.steps.saveFlow = await ev(async () => {
