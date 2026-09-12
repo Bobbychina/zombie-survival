@@ -21,6 +21,10 @@ const ALLOW = {
   '/login/device/code': 'https://github.com/login/device/code',
 };
 
+/* 可选加固：只接受来自自己站点的跨域调用（浏览器跨域 POST/预检一定会带 Origin）。
+   Origin 缺失的请求（curl 自测）照样放行——这不是安全边界，只是防止别的网站顺手蹭你的中继。 */
+const ALLOW_ORIGIN = 'https://bobbychina.github.io';
+
 const CORS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Headers': 'content-type, accept',
@@ -31,7 +35,9 @@ const CORS = {
 export default {
   async fetch(req) {
     const url = new URL(req.url);
+    const origin = req.headers.get('origin') || '';
     if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: CORS });
+    if (origin && ALLOW_ORIGIN && origin !== ALLOW_ORIGIN) return json({ error: 'origin_not_allowed', origin }, 403);
     if (req.method !== 'POST') return json({ error: 'method_not_allowed' }, 405);
     const target = ALLOW[url.pathname];
     if (!target) return json({ error: 'path_not_allowed', path: url.pathname, allowed: Object.keys(ALLOW) }, 404);
