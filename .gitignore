@@ -30,3 +30,6 @@ docs/_m8_count.mjs
 docs/_cors_check*.json
 docs/_cors_out*.txt
 .playwright-cli/
+docs/_repos*.json
+docs/_commits.json
+docs/_tree*.json
