@@ -29,16 +29,57 @@
   };
   var listeners = [];
   var popup = null;
+  var INTEGRITY_FIELD = '__integrity';        // 只有取指纹时用，避免与游戏侧耦合
 
   /* ---------- 小工具 ---------- */
   function cfg() {
     var c = global.DSH_AUTH_CONFIG || {};
     return {
+      api: String(c.api || '').replace(/\/+$/, ''),          // 云账号后端（Cloudflare Worker）；留空 = 纯本机账号
       github: Object.assign({ clientId: '', scope: 'gist read:user' }, c.github || {}),
       microsoft: Object.assign({ clientId: '', tenant: 'common', scope: 'openid profile offline_access User.Read Files.ReadWrite.AppFolder' }, c.microsoft || {}),
       redirect: c.redirect || (location.origin + '/games/oauth-callback.html'),
     };
   }
+  var apiOk = null;                                        // /api/health 的缓存结果
+  function apiBase() { return cfg().api; }
+  /** 云后端可用吗（只探一次，失败也不再骚扰） */
+  async function apiAvailable() {
+    if (!apiBase()) return false;
+    if (apiOk !== null) return apiOk;
+    try {
+      var r = await fetch(apiBase() + '/api/health', { cache: 'no-store' });
+      var b = await r.json();
+      apiOk = !!(r.ok && b && b.ok);
+      if (apiOk && !b.kv) console.warn('[account] 云后端没绑 KV，账号无法注册/登录（见 tools/cf-worker.js 顶部步骤）');
+      return apiOk;
+    } catch (e) { apiOk = false; return false; }
+  }
+  /** 调云后端：统一错误话术，网络失败单独标出来（便于 UI 说"离线"） */
+  async function api(path, opt) {
+    opt = opt || {};
+    var tok = serverToken();
+    try {
+      var r = await fetch(apiBase() + path, {
+        method: opt.method || 'GET',
+        headers: Object.assign({ Accept: 'application/json' },
+          opt.body ? { 'Content-Type': 'application/json' } : {},
+          (opt.token || tok) ? { Authorization: 'Bearer ' + (opt.token || tok) } : {}),
+        body: opt.body ? JSON.stringify(opt.body) : undefined,
+      });
+      var text = await r.text();
+      var data = null; try { data = text ? JSON.parse(text) : null; } catch (e) { data = { raw: text }; }
+      if (!r.ok) return { ok: false, status: r.status, err: (data && (data.message || data.error)) || ('HTTP ' + r.status), offline: false };
+      return { ok: true, status: r.status, data: data };
+    } catch (e) {
+      return { ok: false, err: '连不上云后端（离线？）', offline: true };
+    }
+  }
+  function serverToken() {
+    var s = readJSON(K.session, null);
+    return s && s.token ? s.token : '';
+  }
+  var serverMode = () => !!serverToken();
   function nowISO() { return new Date().toISOString(); }
   function uid() {
     var b = crypto.getRandomValues(new Uint8Array(9));
@@ -63,6 +104,21 @@
     var bits = await crypto.subtle.deriveBits(
       { name: 'PBKDF2', salt: fromB64url(saltB64), iterations: iter || PBKDF2_ITER, hash: 'SHA-256' }, key, 256);
     return b64url(bits);
+  }
+  /** 云后端要的是 hex 形式（服务端只做一次 SHA256(pepper+verifier)，KDF 全在浏览器里跑） */
+  async function pbkdf2Hex(password, saltHex, iter) {
+    var key = await crypto.subtle.importKey('raw', enc(password), 'PBKDF2', false, ['deriveBits']);
+    var bits = await crypto.subtle.deriveBits(
+      { name: 'PBKDF2', salt: fromHex(saltHex), iterations: iter || PBKDF2_ITER, hash: 'SHA-256' }, key, 256);
+    return [...new Uint8Array(bits)].map(function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+  }
+  function fromHex(s) {
+    var out = new Uint8Array(s.length / 2);
+    for (var i = 0; i < out.length; i++) out[i] = parseInt(s.substr(i * 2, 2), 16);
+    return out;
+  }
+  function toHex(buf) {
+    return [...new Uint8Array(buf)].map(function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
   }
   /** 常数时间比较（防止按字符提前返回） */
   function safeEqual(a, b) {
@@ -100,12 +156,15 @@
         ? { login: v.login, name: v.name, avatar: v.avatar, boundAt: v.boundAt }
         : { name: v.name, email: v.email, oid: v.oid, boundAt: v.boundAt };
     });
-    return { uid: u.uid, name: u.name, email: u.email || '', createdAt: u.createdAt, providers: p,
-      hasPassword: !!u.hash, saveGames: Object.keys(u.games || {}) };
+    return { uid: u.uid, name: u.name, email: u.email || '', createdAt: u.createdAt, server: !!u.server,
+      providers: p, saveGames: Object.keys(u.games || {}), hasPassword: !!u.hash };
   }
 
-  var Account = {
+    var Account = {
     version: VERSION,
+    /** 云后端信息（UI 用它显示"服务器账号 / 本机账号"） */
+    serverInfo: function () { return { base: apiBase(), enabled: !!apiBase(), loggedIn: serverMode() }; },
+    serverAvailable: apiAvailable,
     /* ----- 注册 / 登录 / 会话 ----- */
     register: async function (opts) {
       var name = String((opts && opts.name) || '').trim();
@@ -117,35 +176,87 @@
       var lower = name.toLowerCase();
       var clash = Object.keys(db.users).some(function (k) { return db.users[k].name.toLowerCase() === lower; });
       if (clash) return { ok: false, err: '这个名字已经被注册了（换一个，或直接登录）' };
-      var salt = b64url(bytes(16));
-      var hash = await hashPassword(pass, salt, PBKDF2_ITER);
-      var u = { uid: uid(), name: name, email: String((opts && opts.email) || ''), salt: salt, hash: hash,
+      var salt = toHex(bytes(16));
+
+      /* ① 云后端优先：口令派生在本机做，只有 verifier 上传（服务端再叠一层 pepper 哈希） */
+      if (await apiAvailable()) {
+        var verifier = await pbkdf2Hex(pass, salt, PBKDF2_ITER);
+        var r = await api('/api/register', { method: 'POST', body: { name: name, email: String((opts && opts.email) || ''), verifier: verifier, salt: salt } });
+        if (!r.ok) return { ok: false, err: r.err };
+        /* 本地同时留一份"壳"：能记住头像/绑定，且断网时还能用本地口令登录 */
+        var lu = { uid: r.data.uid, name: r.data.name, email: r.data.email || '', salt: b64url(fromHex(salt)),
+          hash: await hashPassword(pass, b64url(fromHex(salt)), PBKDF2_ITER), iter: PBKDF2_ITER,
+          createdAt: r.data.createdAt || nowISO(), providers: {}, games: {}, server: true };
+        db.users[lu.uid] = lu;
+        var w = saveDB(db);
+        if (!w.ok) return { ok: false, err: w.err };
+        Account._setSession(lu.uid, { token: r.data.token, exp: r.data.exp });
+        emit();
+        return { ok: true, uid: lu.uid, user: publicUser(lu), server: true };
+      }
+
+      /* ② 没有云后端：老的本机账号 */
+      var saltB64 = b64url(bytes(16));
+      var hash = await hashPassword(pass, saltB64, PBKDF2_ITER);
+      var u = { uid: uid(), name: name, email: String((opts && opts.email) || ''), salt: saltB64, hash: hash,
         iter: PBKDF2_ITER, createdAt: nowISO(), providers: {}, games: {} };
       db.users[u.uid] = u;
-      var w = saveDB(db);
-      if (!w.ok) return { ok: false, err: w.err };
+      var w2 = saveDB(db);
+      if (!w2.ok) return { ok: false, err: w2.err };
       Account._setSession(u.uid);
       emit();
-      return { ok: true, uid: u.uid, user: publicUser(u) };
+      return { ok: true, uid: u.uid, user: publicUser(u), server: false };
     },
     login: async function (opts) {
-      var name = String((opts && opts.name) || '').trim().toLowerCase();
+      var name = String((opts && opts.name) || '').trim();
       var pass = String((opts && opts.password) || '');
       var db = loadDB();
       var u = Object.keys(db.users).map(function (k) { return db.users[k]; })
-        .filter(function (x) { return x.name.toLowerCase() === name; })[0];
+        .filter(function (x) { return x.name.toLowerCase() === name.toLowerCase(); })[0];
+      var isServerAccount = !!(u && u.server);
+
+      /* ① 云账号：先问服务端要盐 → 本机派生 verifier → 登录 */
+      if (apiBase() && (isServerAccount || !u) && await apiAvailable()) {
+        var sr = await api('/api/salt?name=' + encodeURIComponent(name));
+        var saltHex = sr.ok && sr.data && sr.data.salt ? sr.data.salt : null;
+        if (!saltHex && u && u.salt) saltHex = toHex(fromB64url(u.salt));
+        if (saltHex) {
+          var verifier = await pbkdf2Hex(pass, saltHex, PBKDF2_ITER);
+          var r = await api('/api/login', { method: 'POST', body: { name: name, verifier: verifier } });
+          if (!r.ok) {
+            if (!r.offline) return { ok: false, err: r.err };
+          } else {
+            if (!u) {   // 这台设备第一次登录：补一份本地壳
+              u = { uid: r.data.uid, name: r.data.name, email: r.data.email || '', salt: b64url(fromHex(saltHex)),
+                hash: await hashPassword(pass, b64url(fromHex(saltHex)), PBKDF2_ITER), iter: PBKDF2_ITER,
+                createdAt: r.data.createdAt || nowISO(), providers: {}, games: {}, server: true };
+              db.users[u.uid] = u;
+              saveDB(db);
+            }
+            Account._setSession(u.uid, { token: r.data.token, exp: r.data.exp });
+            emit();
+            return { ok: true, uid: u.uid, user: publicUser(u), server: true };
+          }
+        }
+      }
+
+      /* ② 本机账号（或断网时用本地口令兜底） */
       if (!u) return { ok: false, err: '没有这个账号（先注册）' };
       if (!u.hash) return { ok: false, err: '这个账号是用第三方登录建的，请用「' + Object.keys(u.providers || {}).join('/') + '」登录' };
       var h = await hashPassword(pass, u.salt, u.iter || PBKDF2_ITER);
       if (!safeEqual(h, u.hash)) return { ok: false, err: '密码不对' };
       Account._setSession(u.uid);
       emit();
-      return { ok: true, uid: u.uid, user: publicUser(u) };
+      return { ok: true, uid: u.uid, user: publicUser(u), server: false };
     },
-    logout: function () { removeKey(K.session); emit(); return { ok: true }; },
-    /** 会话：uid + 过期时间，存在 localStorage（同一台设备免登录） */
-    _setSession: function (u) {
-      writeJSON(K.session, { uid: u, exp: Date.now() + SESSION_DAYS * 86400000 });
+    logout: async function () {
+      /* 必须等这一次请求发完再清会话：否则服务端那份 token 还活着（探针里就是这么抓到的） */
+      if (serverMode()) { try { await api('/api/logout', { method: 'POST' }); } catch (e) { /* 离线也要能登出 */ } }
+      removeKey(K.session); emit(); return { ok: true };
+    },
+    /** 会话：uid + 过期时间（云账号会额外存服务端 token），同一台设备免登录 */
+    _setSession: function (u, extra) {
+      writeJSON(K.session, Object.assign({ uid: u, exp: Date.now() + SESSION_DAYS * 86400000 }, extra || {}));
     },
     currentUid: function () {
       var s = readJSON(K.session, null);
@@ -178,11 +289,16 @@
       saveDB(db);
       return { ok: true };
     },
-    /** 删账号 = 删本地记录 + 本地存档（云端 gist/OneDrive 里的文件需要用户自己去删） */
-    deleteAccount: function (confirmName) {
+    /** 删账号 = 删本地记录 + 本地存档（云后端账号顺带删服务端；gist/OneDrive 里的文件要用户自己删） */
+    deleteAccount: async function (confirmName) {
       var db = loadDB(), id = Account.currentUid(), u = db.users[id];
       if (!u) return { ok: false, err: '先登录' };
       if (String(confirmName || '').trim() !== u.name) return { ok: false, err: '名字不匹配' };
+      var serverNote = '';
+      if (u.server && serverMode()) {
+        var r = await api('/api/deleteAccount', { method: 'POST', body: { confirm: u.name } });
+        serverNote = r.ok ? '服务端账号已删除' : ('服务端删除失败：' + r.err);
+      }
       Object.keys(u.games || {}).forEach(function (g) {
         Account.slots(g).forEach(function (s) { Account.saveDelete(g, s.slot, true); });
         removeKey(K.manifest(id, g));
@@ -191,7 +307,7 @@
       saveDB(db);
       removeKey(K.session);
       emit();
-      return { ok: true };
+      return { ok: true, note: serverNote };
     },
 
     /* ----- 存档槽（本地，按账号隔离） ----- */
@@ -228,6 +344,12 @@
       /* 记一下"这个账号玩过哪些游戏"，删号时要能清干净 */
       var db = loadDB(), u = db.users[id];
       if (u) { u.games = u.games || {}; u.games[game] = true; saveDB(db); }
+      /* 云账号：顺手推到服务端（失败不阻塞本地存档，由 syncNow/下次上传补） */
+      if (serverMode() && !(opts && opts.noServer)) {
+        var digest = (data && data[INTEGRITY_FIELD] && data[INTEGRITY_FIELD].d) || '';
+        void api('/api/save', { method: 'PUT', body: { game: game, slot: slot, data: data, digest: digest } })
+          .then(function (r) { if (!r.ok && !r.offline) console.warn('[account] 服务端存档失败：' + r.err); });
+      }
       emit({ type: 'save', game: game, slot: slot });
       return { ok: true, updatedAt: rec.updatedAt, bytes: rec.bytes };
     },
@@ -421,12 +543,22 @@
     },
 
     /* ----- 云同步 ----- */
+    /** 这份账号现在能往哪同步：优先云后端，其次绑定的 GitHub/微软云盘 */
+    backend: function () {
+      var u = Account.current();
+      if (!u) return null;
+      if (serverMode()) return 'server';
+      if (u.providers.github) return 'github';
+      if (u.providers.microsoft) return 'microsoft';
+      return null;
+    },
     /** 把本地某游戏的槽位与云端对齐：谁新用谁；返回 {pulled, pushed, provider, err?} */
     syncNow: async function (game) {
       var u = Account.current();
       if (!u) return { ok: false, err: '先登录' };
-      var provider = u.providers.github ? 'github' : (u.providers.microsoft ? 'microsoft' : null);
-      if (!provider) return { ok: false, err: '还没绑定 GitHub 或微软账号，只能在本地存' };
+      var provider = Account.backend();
+      if (!provider) return { ok: false, err: '还没绑定云账号（也没连上云后端），只能在本地存' };
+      if (provider === 'server') return serverSync(game);
       var token = await Account._cloudToken(provider);
       if (!token) return { ok: false, err: '云令牌失效了，重新绑定一下' };
       var remote;
@@ -461,8 +593,9 @@
     /** 只上传 / 只下载（手动按钮用） */
     pushAll: async function (game) {
       var u = Account.current(); if (!u) return { ok: false, err: '先登录' };
-      var provider = u.providers.github ? 'github' : (u.providers.microsoft ? 'microsoft' : null);
+      var provider = Account.backend();
       if (!provider) return { ok: false, err: '还没绑定云账号' };
+      if (provider === 'server') return serverPushAll(game);
       var token = await Account._cloudToken(provider); if (!token) return { ok: false, err: '云令牌失效' };
       var slots = Account.slots(game), done = [];
       for (var i = 0; i < slots.length; i++) {
@@ -474,8 +607,9 @@
     },
     pullAll: async function (game) {
       var u = Account.current(); if (!u) return { ok: false, err: '先登录' };
-      var provider = u.providers.github ? 'github' : (u.providers.microsoft ? 'microsoft' : null);
+      var provider = Account.backend();
       if (!provider) return { ok: false, err: '还没绑定云账号' };
+      if (provider === 'server') return serverPullAll(game);
       var token = await Account._cloudToken(provider); if (!token) return { ok: false, err: '云令牌失效' };
       var remote = provider === 'github' ? await ghManifest(token, game) : await msManifest(token, game);
       var done = [];
@@ -487,8 +621,13 @@
     },
     cloudSummary: async function (game) {
       var u = Account.current(); if (!u) return { ok: false, err: '先登录' };
-      var provider = u.providers.github ? 'github' : (u.providers.microsoft ? 'microsoft' : null);
+      var provider = Account.backend();
       if (!provider) return { ok: false, err: '未绑定云账号' };
+      if (provider === 'server') {
+        var sr = await api('/api/saves?game=' + encodeURIComponent(game));
+        if (!sr.ok) return { ok: false, err: sr.err };
+        return { ok: true, provider: 'server', remote: (sr.data && sr.data.slots) || [] };
+      }
       var token = await Account._cloudToken(provider);
       if (!token) return { ok: false, err: '云令牌失效' };
       try {
@@ -496,11 +635,15 @@
         return { ok: true, provider: provider, remote: remote };
       } catch (e) { return { ok: false, err: e.message }; }
     },
-    /** 删掉云端某个槽位（GitHub：files[name]=null；Graph：DELETE 到条目路径） */
+    /** 删掉云端某个槽位（云后端 / GitHub / OneDrive 三条路） */
     cloudDelete: async function (game, slot) {
       var u = Account.current(); if (!u) return { ok: false, err: '先登录' };
-      var provider = u.providers.github ? 'github' : (u.providers.microsoft ? 'microsoft' : null);
+      var provider = Account.backend();
       if (!provider) return { ok: false, err: '未绑定云账号' };
+      if (provider === 'server') {
+        var r0 = await api('/api/save?game=' + encodeURIComponent(game) + '&slot=' + encodeURIComponent(slot), { method: 'DELETE' });
+        return { ok: r0.ok, err: r0.err };
+      }
       var token = await Account._cloudToken(provider);
       if (!token) return { ok: false, err: '云令牌失效' };
       if (provider === 'microsoft') {
@@ -639,6 +782,66 @@
   function ghTokenExtra(t) {
     if (!t || !t.refresh_token) return {};
     return { refresh: t.refresh_token, exp: Date.now() + (t.expires_in || 28800) * 1000 - 60000 };
+  }
+
+  /* ---------- 云后端（Cloudflare Worker）的存档同步 ----------
+     与 GitHub 那条路同样的语义：按 updatedAt 谁新用谁，最后写回本地镜像。 */
+  async function serverRemote(game) {
+    var r = await api('/api/saves?game=' + encodeURIComponent(game));
+    if (!r.ok) throw new Error(r.err);
+    return (r.data && r.data.slots) || [];
+  }
+  async function serverGet(game, slot) {
+    var r = await api('/api/save?game=' + encodeURIComponent(game) + '&slot=' + encodeURIComponent(slot));
+    return r.ok && r.data ? r.data.data : null;
+  }
+  async function serverPut(game, slot, data) {
+    var digest = (data && data[INTEGRITY_FIELD] && data[INTEGRITY_FIELD].d) || '';
+    var r = await api('/api/save', { method: 'PUT', body: { game: game, slot: slot, data: data, digest: digest } });
+    return r.ok;
+  }
+  async function serverSync(game) {
+    if (!serverMode()) return { ok: false, err: '云会话过期了，重新登录' };
+    var remote;
+    try { remote = await serverRemote(game); } catch (e) { return { ok: false, err: '云端读取失败：' + e.message }; }
+    var local = Account.slots(game), pulled = [], pushed = [];
+    var map = {};
+    local.forEach(function (s) { map[s.slot] = s; });
+    for (var i = 0; i < remote.length; i++) {
+      var rr = remote[i], l = map[rr.slot];
+      if (!l || String(rr.updatedAt) > String(l.updatedAt)) {
+        var data = await serverGet(game, rr.slot);
+        if (data) { Account.savePut(game, rr.slot, data, { cloud: { provider: 'server', at: nowISO() }, noServer: true }); pulled.push(rr.slot); }
+      }
+    }
+    var rest = Account.slots(game).filter(function (s) { return pulled.indexOf(s.slot) < 0; });
+    for (var j = 0; j < rest.length; j++) {
+      var s2 = rest[j];
+      var match = remote.filter(function (x) { return x.slot === s2.slot; })[0];
+      if (!match || String(s2.updatedAt) > String(match.updatedAt)) {
+        if (await serverPut(game, s2.slot, Account.saveGet(game, s2.slot))) pushed.push(s2.slot);
+      }
+    }
+    return { ok: true, provider: 'server', pulled: pulled, pushed: pushed };
+  }
+  async function serverPushAll(game) {
+    if (!serverMode()) return { ok: false, err: '云会话过期了，重新登录' };
+    var slots = Account.slots(game), done = [];
+    for (var i = 0; i < slots.length; i++) {
+      if (await serverPut(game, slots[i].slot, Account.saveGet(game, slots[i].slot))) done.push(slots[i].slot);
+    }
+    return { ok: true, provider: 'server', pushed: done };
+  }
+  async function serverPullAll(game) {
+    if (!serverMode()) return { ok: false, err: '云会话过期了，重新登录' };
+    var remote;
+    try { remote = await serverRemote(game); } catch (e) { return { ok: false, err: '云端读取失败：' + e.message }; }
+    var done = [];
+    for (var i = 0; i < remote.length; i++) {
+      var data = await serverGet(game, remote[i].slot);
+      if (data) { Account.savePut(game, remote[i].slot, data, { cloud: { provider: 'server', at: nowISO() }, noServer: true }); done.push(remote[i].slot); }
+    }
+    return { ok: true, provider: 'server', pulled: done };
   }
 
   /* ---------- GitHub 云盘（私有 Gist，一个账号一个 gist，里面按 <game>-<slot>.json 存） ---------- */

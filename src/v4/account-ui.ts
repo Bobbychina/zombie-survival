@@ -33,9 +33,15 @@ export function accountSummary(): string {
   const a = A();
   if (!a) return '账号库没加载（这版构建有问题，报告一下）';
   const u = a.current();
-  if (!u) return '未登录 —— 登录后存档可以跟着账号走（可绑定 GitHub / 微软账号）';
+  const srv = a.serverInfo?.();
+  const who = srv?.loggedIn === false && u?.server ? '云账号（后端离线，口令按本机兜底）' : (srv?.loggedIn ? '云账号' : '本机账号');
+  if (!u) {
+    return srv?.enabled
+      ? '未登录 —— 注册后账号与存档存在你自己的 Cloudflare 里（也可绑定 GitHub 存 Gist）'
+      : '未登录 —— 当前是本机模式（存档只在这台设备；配置云后端后可跨设备）';
+  }
   const info = a.saveInfo(GAME, SLOT);
-  return '已登录 ' + u.name + ' · ' + providerText(u) +
+  return '已登录 ' + u.name + '（' + who + '） · ' + providerText(u) +
     (info ? ' · 上次上传 ' + info.updatedAt.slice(0, 16).replace('T', ' ') : ' · 还没上传过存档');
 }
 
@@ -68,7 +74,8 @@ export function openPanel(): void {
 
 function loginHtml(): string {
   return '<p class="muted">账号只为了两件事：<b>让存档跟着你走</b>、<b>在别的电脑上接着玩</b>。' +
-    '注册不需要邮箱验证，密码只保存在本机（WebCrypto 加盐哈希），我们服务器上一份数据都没有。</p>' +
+    '口令在本机用 WebCrypto（PBKDF2-SHA256，21 万轮）派生，上传的只有派生值；' +
+    '云后端是你自己的 Cloudflare Worker，服务端再叠一层只有它知道的密钥哈希。</p>' +
     '<div class="row" style="margin-top:10px"><input id="acc-name" placeholder="用户名（2~24 字）" style="flex:1">' +
     '<input id="acc-pass" type="password" placeholder="密码（≥6 位）" style="flex:1"></div>' +
     '<div class="row" style="margin-top:8px"><input id="acc-mail" placeholder="邮箱（选填，只用来认账号）" style="flex:1"></div>' +
@@ -78,8 +85,16 @@ function loginHtml(): string {
 function loggedInHtml(u: NonNullable<ReturnType<typeof currentUser>>, a: NonNullable<ReturnType<typeof A>>): string {
   const g = u.providers.github, m = u.providers.microsoft;
   const info = a.saveInfo(GAME, SLOT);
+  const srv = a.serverInfo?.();
+  const backend = srv?.loggedIn ? 'server' : (g ? 'github' : (m ? 'microsoft' : null));
   let h = '<p class="muted">已登录：<b>' + esc(u.name) + '</b>' + (u.email ? '（' + esc(u.email) + '）' : '') +
-    ' · 注册于 ' + esc(u.createdAt.slice(0, 10)) + '</p>';
+    ' · 注册于 ' + esc(u.createdAt.slice(0, 10)) + ' · ' +
+    (u.server ? '☁️ 云账号' : '💻 本机账号') + '</p>';
+  h += '<div class="hint">存档去向：' +
+    (backend === 'server' ? '你自己的 Cloudflare（Worker + KV）'
+      : backend === 'github' ? 'GitHub 私有 Gist（你自己的账号下）'
+        : backend === 'microsoft' ? 'OneDrive 应用文件夹'
+          : '只在这台设备（浏览器本地）—— 想跨设备就注册云账号或绑定 GitHub') + '</div>';
   h += '<div class="sect-title" style="margin-top:12px">云账号绑定</div><div class="row">';
   h += g
     ? '<button class="btn ok" onclick="V4Account.unbind(\'github\')">GitHub @' + esc(g.login) + ' ✕</button>'

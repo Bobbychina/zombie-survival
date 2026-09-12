@@ -7,6 +7,7 @@ export interface AccountUser {
   name: string;
   email: string;
   createdAt: string;
+  server?: boolean;                    // true = 云账号（后端在 Cloudflare）
   providers: { github?: AccountProviderGitHub; microsoft?: AccountProviderMS };
   saveGames: string[];
 }
@@ -15,9 +16,14 @@ export interface AccountResult { ok: boolean; err?: string; uid?: string; user?:
 
 export interface DshAccount {
   version: string;
+  /** 云后端信息：enabled = 配了 api 地址；loggedIn = 当前会话带服务端 token */
+  serverInfo(): { base: string; enabled: boolean; loggedIn: boolean };
+  serverAvailable(): Promise<boolean>;
+  /** 当前同步去向：云后端 / github / microsoft / null */
+  backend(): 'server' | 'github' | 'microsoft' | null;
   register(o: { name: string; password: string; email?: string }): Promise<AccountResult>;
   login(o: { name: string; password: string }): Promise<AccountResult>;
-  logout(): AccountResult;
+  logout(): Promise<AccountResult>;
   current(): AccountUser | null;
   changePassword(oldPass: string, newPass: string): Promise<AccountResult>;
   deleteAccount(confirmName: string): AccountResult;
