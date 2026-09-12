@@ -114,6 +114,21 @@ node docs/_file_check.mjs                                       # file:// 直开
 - client_id 的注册步骤写在主页仓库的 `games/auth-config.js` 顶部（GitHub 约 3 分钟，填进去就生效）。
 - **安全边界**：这是"防同事手滑"级别的本地账号——持有浏览器 profile 的人可以直接读到存档与云令牌，别拿它当密码保险箱。
 
+### 想自己部一套云后端？（可选，免费、不用信用卡）
+
+云账号后端就是 `tools/cf-worker.js` 一个文件（零依赖），跑在 Cloudflare Workers 免费版上：
+
+```powershell
+cd tools
+npx wrangler login      # 浏览器点一次 Allow
+npx wrangler deploy     # 绑定/开关都写在 wrangler.toml 里，不用点面板
+```
+
+- 唯一依赖是 wrangler 本身（用 `npx` 跑，不需要装进 `package.json`）和一次交互式登录；`wrangler.toml` 里的 `account_id` / KV namespace id 都是**标识符不是凭据**，公开无风险。
+- 部署前要先有 KV 命名空间（`npx wrangler kv namespace create DSH_KV`，把返回的 id 填进 `wrangler.toml` 的 `[[kv_namespaces]]`）。
+- 两个 Secret 用 `npx wrangler secret put DSH_PEPPER` / `GH_CLIENT_SECRET` 写（或在面板 Variables and secrets 里加），`keep_vars = true` 保证它们不会被后续部署抹掉。
+- 部署完打开 `https://<你的>.workers.dev/api/health`，期望 `{"ok":true,"kv":true,"pepper":"custom"}`。
+
 ### 安全模型（M8.1 加固后）
 
 | 面 | 做法 |

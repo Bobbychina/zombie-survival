@@ -1,9 +1,14 @@
 # Cloudflare Worker 声明式配置：dsh-oauth-relay（账号/云存档 + GitHub OAuth 中继）
-# 用法：cd tools && npx wrangler deploy
+# 用法：cd tools && npx wrangler login && npx wrangler deploy
+# 全部内容都是「标识符」而非凭据：account_id / namespace id 没有 API Token 谁也动不了。
+# 唯一真依赖是 wrangler（用 npx 跑，不需要装进 package.json）和一次交互式登录。
 name = "dsh-oauth-relay"
 main = "cf-worker.js"
 compatibility_date = "2025-09-01"
-account_id = "52a13b49136fb7a37a74fc8093ee1897"
+
+# 账号不写死：wrangler 会取当前登录账号，fork 的人不用改文件就能部到自己账号下。
+# 本站线上用的是这个（多账号环境下取消注释或跑 CLOUDFLARE_ACCOUNT_ID=... npx wrangler deploy）：
+# account_id = "52a13b49136fb7a37a74fc8093ee1897"
 
 # 面板里手工加的变量/机密（DSH_PEPPER、GH_CLIENT_SECRET）在部署时保留，别被本次覆盖掉
 keep_vars = true
