@@ -270,35 +270,43 @@
       });
       var code = await Account._popup(url, 'github', pk.state);
       if (!code) return { ok: false, err: '授权被取消' };
-      /* 注意：GitHub 的 token 端点历史上不返回 CORS 头，浏览器可能拿不到响应（见 README 的实测记录）。
-         失败时会提示改用「设备码」或「令牌」两条路。 */
-      var res = await fetch('https://github.com/login/oauth/access_token', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ client_id: c.clientId, code: code, code_verifier: pk.verifier, redirect_uri: cfg().redirect }),
-      }).then(function (r) { return r.json(); }).catch(function (e) { return { error: 'cors', error_description: String(e.message) }; });
-      if (!res.access_token) return { ok: false, err: '换 token 失败：' + (res.error_description || res.error || '未知') + '（可改用设备码或令牌绑定）' };
-      return Account.bindGitHubToken(res.access_token, ghTokenExtra(res));
+      /* 换 token：先试 form（简单请求，不触发预检），再试 json。历史上这条接口不给 CORS 头，
+         但"预检没过"和"完全没开 CORS"是两回事——两种都试过才知道属于哪种。 */
+      var ex = await ghTokenWithFallback({ client_id: c.clientId, code: code, code_verifier: pk.verifier, redirect_uri: cfg().redirect });
+      if (!ex.data || !ex.data.access_token) {
+        return {
+          ok: false,
+          err: '换 token 失败：' + (ex.data ? (ex.data.error_description || ex.data.error || '未知') : '浏览器读不到 GitHub 的响应') +
+            '（尝试记录：' + ex.tried.join(' ｜ ') + '）',
+          tried: ex.tried,
+        };
+      }
+      return Account.bindGitHubToken(ex.data.access_token, ghTokenExtra(ex.data));
     },
-    /** GitHub 设备码流程：只需 client_id（OAuth App 里要勾选 Enable Device Flow） */
+    /** 通道诊断：用户点一下就出结论（纯 GET/POST 空跑，用假 code，不会产生任何令牌） */
+    diagnoseGitHub: probeGitHubChannel,
+    /** GitHub 设备码流程：只需 client_id（OAuth App 里要勾选 Enable Device Flow）
+     *  同样先用 form（不触发预检）再退到 json。 */
     bindGitHubDevice: async function (onCode) {
       var c = cfg().github;
       if (!c.clientId) return { ok: false, err: '还没配 GitHub client_id（见 /games/auth-config.js）' };
-      var r = await fetch('https://github.com/login/device/code', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-        body: JSON.stringify({ client_id: c.clientId, scope: c.scope }),
-      }).then(function (x) { return x.json(); }).catch(function (e) { return { error: String(e.message) }; });
-      if (!r.device_code) return { ok: false, err: '拿设备码失败：' + (r.error || '网络/CORS 受限') };
+      var dc = await ghTokenWithFallback({ client_id: c.clientId, scope: c.scope }, 'https://github.com/login/device/code');
+      var r = dc.data || {};
+      if (!r.device_code) return { ok: false, err: '拿设备码失败：' + (r.error || '网络/CORS 受限') + '（尝试记录：' + dc.tried.join(' ｜ ') + '）', tried: dc.tried };
       if (onCode) onCode({ user_code: r.user_code, verification_uri: r.verification_uri, expires_in: r.expires_in });
       var deadline = Date.now() + Math.min(r.expires_in || 900, 900) * 1000;
       while (Date.now() < deadline) {
         await new Promise(function (s) { setTimeout(s, (r.interval || 5) * 1000); });
-        var t = await fetch('https://github.com/login/oauth/access_token', {
-          method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-          body: JSON.stringify({ client_id: c.clientId, device_code: r.device_code, grant_type: 'urn:ietf:params:oauth:grant-type:device_code' }),
-        }).then(function (x) { return x.json(); }).catch(function (e) { return { error: String(e.message) }; });
-        if (t.access_token) return Account.bindGitHubToken(t.access_token, ghTokenExtra(t));
-        if (t.error && t.error !== 'authorization_pending' && t.error !== 'slow_down') return { ok: false, err: '设备码失败：' + (t.error_description || t.error) };
+        var t = await ghTokenWithFallback({
+          client_id: c.clientId, device_code: r.device_code,
+          grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        });
+        var tj = t.data || {};
+        if (tj.access_token) return Account.bindGitHubToken(tj.access_token, ghTokenExtra(tj));
+        if (tj.error && tj.error !== 'authorization_pending' && tj.error !== 'slow_down') {
+          return { ok: false, err: '设备码失败：' + (tj.error_description || tj.error) + '（' + t.tried.join(' ｜ ') + '）' };
+        }
+        if (!t.data) return { ok: false, err: '设备码轮询被挡：' + t.tried.join(' ｜ ') };
       }
       return { ok: false, err: '设备码超时（重新发起即可）' };
     },
@@ -542,6 +550,89 @@
   };
 
   function emit(ev) { listeners.forEach(function (fn) { try { fn(ev || {}); } catch (e) { console.warn(e); } }); }
+
+  /* ---------- GitHub 换 token：多策略 + 诊断 ----------
+     GitHub 的 /login/oauth/access_token 对"简单请求"（form-urlencoded，浏览器不发 OPTIONS 预检）
+     与 JSON 请求（先发 OPTIONS 预检）的待遇可能不同。所以按 form → json 的顺序都试一遍，
+     并把每一次的失败原因记下来——失败面板会把这份记录显示给用户，用来判断到底是
+     "没开 CORS" 还是"只是预检没过"，而不是笼统一句 Failed to fetch。 */
+  var GH_TOKEN_URL = 'https://github.com/login/oauth/access_token';
+  /** 配了中继（Cloudflare Worker，见 tools/oauth-relay-worker.js）就把这两个端点改成走中继 */
+  function ghUrl(url) {
+    var relay = String((cfg().github.relay) || '').replace(/\/+$/, '');
+    if (!relay) return url;
+    var map = {};
+    map[GH_TOKEN_URL] = relay + '/oauth/access_token';
+    map['https://github.com/login/device/code'] = relay + '/login/device/code';
+    return map[url] || url;
+  }
+  function ghCandidates(url) {
+    var direct = url, viaRelay = ghUrl(url);
+    return viaRelay === direct ? [direct] : [viaRelay, direct];    // 配了中继就优先走中继，中继挂了再试直连
+  }
+  async function ghPost(url, body, mode) {
+    var headers = { Accept: 'application/json' };
+    var payload;
+    if (mode === 'form') {
+      headers['Content-Type'] = 'application/x-www-form-urlencoded';
+      payload = new URLSearchParams(body).toString();
+    } else {
+      headers['Content-Type'] = 'application/json';
+      payload = JSON.stringify(body);
+    }
+    var r = await fetch(url, { method: 'POST', headers: headers, body: payload });
+    var text = await r.text();
+    var json = null;
+    try { json = JSON.parse(text); } catch (e) { json = { raw: String(text).slice(0, 120) }; }
+    return { status: r.status, ok: r.ok, json: json };
+  }
+  function why(e) {
+    if (!e) return '未知';
+    if (e.name === 'TypeError') return 'CORS/网络被挡(TypeError)';
+    return (e.name || 'Error') + ': ' + (e.message || '');
+  }
+  /** 依次用 form / json（并在配了中继时先走中继）POST；返回 {data, tried, mode} */
+  async function ghTokenWithFallback(body, url) {
+    var tried = [];
+    var targets = ghCandidates(url || GH_TOKEN_URL);
+    var modes = ['form', 'json'];
+    for (var t = 0; t < targets.length; t++) {
+      var label = targets.length > 1 && t === 0 ? 'relay' : 'direct';
+      for (var i = 0; i < modes.length; i++) {
+        try {
+          var res = await ghPost(targets[t], body, modes[i]);
+          if (res.json && (res.json.access_token || res.json.error || res.json.device_code)) {
+            tried.push(label + '/' + modes[i] + ' → HTTP ' + res.status + (res.json.error ? ' (' + res.json.error + ')' : ' ✓'));
+            return { data: res.json, tried: tried, mode: label + '/' + modes[i], status: res.status };
+          }
+          tried.push(label + '/' + modes[i] + ' → HTTP ' + res.status + ' 响应无法解析');
+        } catch (e) {
+          tried.push(label + '/' + modes[i] + ' → ' + why(e));
+        }
+      }
+    }
+    return { data: null, tried: tried };
+  }
+  /** 用假 code 空跑一遍，看浏览器到底能不能读到 GitHub 的响应（用户点一下就出结论） */
+  async function probeGitHubChannel() {
+    var c = cfg().github;
+    var rows = [];
+    var cases = [
+      { name: 'form 换 token（不触发预检）', run: function () { return ghPost(ghUrl(GH_TOKEN_URL), { client_id: c.clientId, code: 'diagnostic', code_verifier: 'v'.repeat(43), redirect_uri: cfg().redirect }, 'form'); } },
+      { name: 'json 换 token（触发预检）', run: function () { return ghPost(ghUrl(GH_TOKEN_URL), { client_id: c.clientId, code: 'diagnostic', code_verifier: 'v'.repeat(43), redirect_uri: cfg().redirect }, 'json'); } },
+      { name: 'form 申请设备码', run: function () { return ghPost(ghUrl('https://github.com/login/device/code'), { client_id: c.clientId, scope: c.scope }, 'form'); } },
+      { name: '读取 api.github.com/user', run: function () { return fetch('https://api.github.com/user', { headers: { Accept: 'application/vnd.github+json' } }).then(function (r) { return { status: r.status, ok: r.ok, json: { note: '匿名请求（401 也算跨域正常）' } }; }); } },
+    ];
+    for (var i = 0; i < cases.length; i++) {
+      try {
+        var r = await cases[i].run();
+        rows.push({ name: cases[i].name, ok: true, status: r.status, body: JSON.stringify(r.json).slice(0, 160) });
+      } catch (e) {
+        rows.push({ name: cases[i].name, ok: false, status: 0, body: why(e) });
+      }
+    }
+    return rows;
+  }
 
   /** GitHub 的 token 响应在「Expire user access tokens」开启时会多带 refresh_token / expires_in，
       这里把过期时间换算成本地时间戳存下来；没开就是空对象（长期令牌）。 */

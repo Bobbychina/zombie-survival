@@ -25,6 +25,7 @@ export interface DshAccount {
   bindGitHubOAuth(): Promise<AccountResult>;
   bindGitHubDevice(onCode?: (i: { user_code: string; verification_uri: string }) => void): Promise<AccountResult>;
   bindMicrosoft(): Promise<AccountResult>;
+  diagnoseGitHub(): Promise<{ name: string; ok: boolean; status: number; body: string }[]>;
   unbind(provider: 'github' | 'microsoft'): AccountResult;
   config(): { github: { clientId: string }; microsoft: { clientId: string } };
   slots(game: string): SaveSlot[];

@@ -6,7 +6,7 @@
   "description": "丧尸末日生存 v4.0 · 大世界 / 宝可梦式回合制",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit && vite build && node tools/postbuild.mjs",
+    "build": "tsc --noEmit && node --check src/account/account.js && vite build && node tools/postbuild.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",

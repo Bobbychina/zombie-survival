@@ -73,6 +73,7 @@ async function main() {
     bindGitHub: accountUi.bindGitHub, bindGitHubConfirm: accountUi.bindGitHubConfirm,
     bindGitHubToken: accountUi.bindGitHubToken,
     bindGitHubDevice: accountUi.bindGitHubDevice, bindMicrosoft: accountUi.bindMicrosoft, unbind: accountUi.unbind,
+    diagnose: accountUi.diagnose,
     push: accountUi.push, pull: accountUi.pull, sync: accountUi.sync, toggleAuto: accountUi.toggleAuto,
     exportAll: accountUi.exportAll, importAll: accountUi.importAll, doImport: accountUi.doImport,
     exportFile: accountUi.exportFile, importFile: accountUi.importFile, doImportFile: accountUi.doImportFile,

@@ -1,29 +1,28 @@
 {
  "site": "http://127.0.0.1:5180",
  "steps": {
-  "setup": {
-   "registered": true,
-   "panelOpen": true
-  },
-  "failPanel": {
+  "directBlocked": {
    "title": "🐙 一键授权被 GitHub 挡住了",
-   "mentionsCors": true,
-   "explainsNoToken": true,
-   "showsRawError": true,
-   "hasTokenInput": true,
-   "hasTokenPageButton": true,
-   "hasDeviceButton": true,
-   "hasFileAlternative": true
+   "bound": false,
+   "text": "原因：GitHub 的换 token 接口 login/oauth/access_token 不给浏览器跨域头，纯静态站读不到响应——这是 GitHub 的限制，跟你的操作无关。刚才那一步没有拿到任何令牌，你可以在 GitHub 设置里撤销那次授权。 原始错误：换 token 失败：浏览器读不到 GitHub 的响应（尝试记录：direct/form → CORS/网络被挡(TypeError) ｜ direct/json → CORS/网络被挡(TypeError)） 现在就能用：令牌绑定（2 步） 1. 点下面按钮 → GitHub 打开「新建令牌」页，权限已勾好 gist → 点 Generate token → 复制； 2. 粘到下面的框里点「绑定」。 🔗 打开 GitHub 令牌页 也可以点「用设备码试试」——同一条通道，十秒内就知道通不通。不想给权限就用「导出存档文件 / 从",
+   "hasDiagnoseBtn": true
   },
-  "failShot": "E:/Files/Games/ZombieSurvival/docs/_m8_shots/bind-fallback.png",
-  "tokenBind": {
+  "directBlockedShot": "E:/Files/Games/ZombieSurvival/docs/_m8_shots/bind-fallback.png",
+  "diagnose": {
+   "text": "⛔ form 换 token（不触发预检） → CORS/网络被挡(TypeError)\n⛔ json 换 token（触发预检） → CORS/网络被挡(TypeError)\n⛔ form 申请设备码 → CORS/网络被挡(TypeError)\n✅ 读取 api.github.com/user → HTTP 200 {\"note\":\"匿名请求（401 也算跨域正常）\"}\n把上面几行发给作者即可（不含任何令牌）。"
+  },
+  "withRelay": {
+   "title": "👤 账号与云存档",
    "bound": true,
    "login": "bobbychina32747",
-   "title": "👤 账号与云存档"
+   "text": "已登录 relayprobe · 注册于 2026-09-12 云账号绑定（存档同步靠它） GitHub @bobbychina32747 · 解绑 GitHub → 你自己账号下的私有 Gist，不经过我的服务器。🔒 这次授权要什么权限？先看这里 微软登录暂不提供：它要求在 Azure 注册应用，而个人微软账号走注册流程会被要求绑信用卡。GitHub 一条就能跨设备。 云端存档 云端还没有这个游戏的存档——去游戏里点「上传存档」。 云盘：GitHub Gist 账号操作 🔑 改密码 💾 导出存档文件 📂 从文件导入 ⬆️ 导出文本 🚪 退出登录",
+   "hasDiagnoseBtn": false
   },
-  "apiCalls": {
-   "user": 1,
-   "gists": 3
+  "counters": {
+   "relay": 1,
+   "directBlocked": 4,
+   "apiUser": 2,
+   "apiGists": 3
   },
   "cleanup": {
    "ok": true

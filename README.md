@@ -113,3 +113,18 @@ node docs/_file_check.mjs                                       # file:// 直开
 - 不想绑任何账号也能搬存档：账号面板里的 **💾 导出存档文件 / 📂 从文件导入**（下载一个 json，另一台电脑选文件导入）。
 - client_id 的注册步骤写在主页仓库的 `games/auth-config.js` 顶部（GitHub 约 3 分钟，填进去就生效）。
 - **安全边界**：这是"防同事手滑"级别的本地账号——持有浏览器 profile 的人可以直接读到存档与云令牌，别拿它当密码保险箱。
+
+### 想要"一键授权"？（可选，免费、不用信用卡，约 5 分钟）
+
+GitHub 的换 token 接口 `login/oauth/access_token` 不给浏览器跨域头，纯静态站拿不到响应——所以默认走"令牌绑定"（2 次点击）。要真正的"一键"，部署一个中继即可（只转发、不存任何东西、不需要 client secret）：
+
+```bash
+npx wrangler login                                                   # 浏览器授权（Cloudflare 账号邮箱注册即可）
+npx wrangler deploy tools/oauth-relay-worker.js --name dsh-oauth-relay
+# 把输出的 https://dsh-oauth-relay.<你的子域>.workers.dev 填进
+# 主页仓库 games/auth-config.js 的 github.relay
+```
+
+客户端三种情况都处理好了：**配了中继** → 中继优先、直连兜底；**没配** → 先试 form 简单请求（不触发预检）、再试 JSON；两条都失败才报错，并把每次尝试的原因写进错误里。失败面板里还有 **🔍 诊断连接**（空跑四种请求、不产生任何令牌），点一下就知道被哪一层挡住。
+
+> 提醒：`*.workers.dev` 在部分地区会被拦。部署完先在浏览器直接打开那个地址试试能不能通。

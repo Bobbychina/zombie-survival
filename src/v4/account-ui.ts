@@ -261,14 +261,31 @@ function oauthFailHelp(err: string): void {
       '<div class="row" style="margin-top:8px"><button class="btn" onclick="window.open(\'https://github.com/settings/tokens/new?scopes=gist&description=bobbychina.github.io%2Fgames%20%E4%BA%91%E5%AD%98%E6%A1%A3\',\'_blank\')">🔗 打开 GitHub 令牌页</button></div>' +
       '<input id="acc-gh-token" placeholder="粘贴令牌（ghp_… 或 github_pat_…）" style="width:100%;margin-top:8px">' +
       '<div class="sect-title" style="margin-top:12px">也可以试一次设备码</div>' +
-      '<div class="hint">设备码走的是同一条通道，很可能同样被挡；点一下十秒内就知道结果。' +
+      '<div class="hint">设备码走的是同一条通道，点一下就知道通不通。' +
       '要真正的"一键"，需要一个几十行的中继（Cloudflare Worker，免费不要卡）——需要的话告诉作者。</div>' +
       '<div class="hint">不想给任何权限也行：用「💾 导出存档文件 / 📂 从文件导入」照样换设备。</div>' +
+      '<div class="sect-title" style="margin-top:12px">查清楚到底被什么挡住（可选）</div>' +
+      '<div class="hint">点一下会空跑四种请求（用假 code，不会产生任何令牌），把结果贴给作者就能定位：是"没开 CORS"还是"只是预检没过"。</div>' +
+      '<div id="acc-diag"></div>' +
       '<div class="hint" id="acc-msg" style="margin-top:8px"></div>',
     footer: '<button class="btn ok" onclick="V4Account.bindGitHubToken()">绑定</button>' +
+      '<button class="btn ghost" onclick="V4Account.diagnose()">🔍 诊断连接</button>' +
       '<button class="btn ghost" onclick="V4Account.bindGitHubDevice()">用设备码试试</button>' +
       '<button class="btn" data-close>取消</button>',
   });
+}
+/** 诊断结果直接画进面板（复制给别人看很方便） */
+export async function diagnose(): Promise<void> {
+  const a = A(); if (!a) return;
+  const box = L.$('#acc-diag') as HTMLElement | null;
+  if (box) box.innerHTML = '<div class="hint">正在空跑四种请求…（约几秒）</div>';
+  const rows = await a.diagnoseGitHub();
+  const html = '<div class="hint mono" style="white-space:pre-wrap;line-height:1.7">' +
+    rows.map(r => (r.ok ? '✅ ' : '⛔ ') + esc(r.name) + ' → ' + (r.ok ? 'HTTP ' + r.status + ' ' + esc(r.body) : esc(r.body))).join('\n') +
+    '</div><div class="hint">把上面几行发给作者即可（不含任何令牌）。</div>';
+  if (box) box.innerHTML = html;
+  L.log('🔍 GitHub 通道诊断：' + rows.map(r => (r.ok ? '通' : '挡') + '=' + r.name.split(' ')[0]).join(' '), 'info');
+  console.log('[account] diagnose', rows);
 }
 export function unbind(provider: 'github' | 'microsoft'): void {
   A()?.unbind(provider);
