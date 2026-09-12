@@ -7,6 +7,7 @@
    设计取舍：游戏本体坚持"单文件 + 离线可玩"，所以账号面板里所有云操作都会在
    未登录/未绑定时给出明确文案，而不是把功能藏起来。 */
 import { L } from '../main';
+import { integritySummary, isTampered, onSaveWritten, stampInPlace, verifyForeign } from './integrity';
 
 export const GAME = 'zombie-survival';
 export const SLOT = 'main';                    // 主槽：一键上传/下载就是它
@@ -100,6 +101,8 @@ function loggedInHtml(u: NonNullable<ReturnType<typeof currentUser>>, a: NonNull
   h += '<div class="sect-title" style="margin-top:12px">本机存档（槽位 main）</div>';
   h += '<div class="hint">' + (info ? '本机 ' + esc(info.updatedAt.slice(0, 16).replace('T', ' ')) + ' · ' + Math.round(info.bytes / 1024) + ' KB'
     : '还没有上传过（点下面的「上传存档」把当前进度存进账号）') + '</div>';
+  // M8：存档完整性（指纹校验的结果直接摆在这里，别让玩家以为"改了没人知道"）
+  h += '<div class="hint">🔒 ' + esc(integritySummary()) + '</div>';
   h += '<div class="sect-title" style="margin-top:12px">账号操作</div><div class="row">' +
     '<button class="btn" onclick="V4Account.changePass()">🔑 改密码</button>' +
     '<button class="btn" onclick="V4Account.exportFile()">💾 导出存档文件</button>' +
@@ -326,6 +329,7 @@ async function pushAsync(): Promise<void> {
   const a = A(); if (!a) return;
   const u = a.current();
   if (!u) { toastMsg('先登录', '没登录时存档只在本机，登录后才能带账号走。', 'bad'); return; }
+  stampInPlace(L.S as Record<string, unknown>);          // 盖指纹：云端那份才能校验通过
   const r = a.savePut(GAME, SLOT, L.S);
   if (!r.ok) { toastMsg('存档失败', r.err ?? '', 'bad'); return; }
   const up = await a.pushAll(GAME);
@@ -362,9 +366,18 @@ export function toggleAuto(): void {
 }
 export const isAutoSync = () => autoSync;
 
-/** 把账号里的存档放回游戏（走 legacy 的 sanitize，坏档不放进来） */
+/** 把账号里的存档放回游戏（走 legacy 的 sanitize，坏档不放进来）
+ *  M8：放进来之前先验指纹——云端那份如果在 Gist 网页上被人手改过，这里要拦一下并问玩家 */
 export function applySave(data: unknown): boolean {
   try {
+    const v = verifyForeign(data);
+    if (v.tampered) {
+      const go = window.confirm('这份存档的指纹对不上（' + v.detail + '）。\n\n' +
+        '可能是你在 GitHub 网页上手动改过，或者同步坏了。\n' +
+        '点「确定」= 仍然载入（本档成就/排行不再计入）；点「取消」= 保留本机进度。');
+      if (!go) { toastMsg('已取消载入', '本机进度没动。', 'info'); return false; }
+      L.log('⚠️ 载入了一份被外部修改过的存档：' + v.detail, 'danger');
+    }
     const clean = L.sanitizeSave(data as never);
     if (!clean) return false;
     L.S = clean;
@@ -485,26 +498,21 @@ export function doDelete(): void {
   toastMsg('账号已注销', '本机存档也一起清掉了。', 'info');
 }
 
-/* ── 自动同步：包一层 legacy 的 autosave ── */
-export function wrapAutosave(): void {
-  const orig = L.autosave;
-  if (typeof orig !== 'function' || (orig as never as { __accWrapped?: boolean }).__accWrapped) return;
-  const wrapped = function (this: unknown, ...args: unknown[]) {
-    const r = (orig as (...a: unknown[]) => unknown).apply(this, args);
+/* ── 自动同步：订阅"存档真的落盘了"（不能包 legacy 的 autosave——它是一个 IIFE，
+      内部调用走的是闭包里的局部函数，改 window 属性拦不到；这个坑已经踩过一次） ── */
+export function subscribeAutoSync(): void {
+  onSaveWritten(() => {
     const a = A();
-    if (autoSync && a?.current()) {
-      if (autoTimer) clearTimeout(autoTimer);
-      autoTimer = setTimeout(() => {
-        try {
-          a.savePut(GAME, SLOT, L.S);
-          void a.pushAll(GAME).then(res => {
-            if (res.ok) L.log('☁️ 自动同步：存档已推到云端。', 'dim');
-          });
-        } catch (e) { console.warn('[v4] 自动同步失败', e); }
-      }, 8000);
-    }
-    return r;
-  };
-  (wrapped as never as { __accWrapped?: boolean }).__accWrapped = true;
-  L.autosave = wrapped as never;
+    if (!autoSync || !a?.current()) return;
+    if (autoTimer) clearTimeout(autoTimer);
+    autoTimer = setTimeout(() => {
+      try {
+        stampInPlace(L.S as Record<string, unknown>);      // 先盖指纹再上传，云端那份才校验得通过
+        a.savePut(GAME, SLOT, L.S);
+        void a.pushAll(GAME).then(res => {
+          if (res.ok) L.log('☁️ 自动同步：存档已推到云端。', 'dim');
+        });
+      } catch (e) { console.warn('[v4] 自动同步失败', e); }
+    }, 8000);
+  });
 }

@@ -26,7 +26,7 @@ export const V4: Record<string, unknown> = {};
 (window as any).V4 = V4;
 
 async function main() {
-  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi] = await Promise.all([
+  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi, integrity] = await Promise.all([
     import('./v4/worldgen'),
     import('./v4/pois'),
     import('./v4/combat'),
@@ -42,6 +42,7 @@ async function main() {
     import('./v4/gather'),
     import('./v4/water'),
     import('./v4/account-ui'),
+    import('./v4/integrity'),
   ]);
   Object.assign(V4, {
     worldgen: { generateWorld: worldgen.generateWorld, WORLD_W: worldgen.WORLD_W, WORLD_H: worldgen.WORLD_H },
@@ -80,7 +81,14 @@ async function main() {
     changePass: accountUi.changePass, doChangePass: accountUi.doChangePass, del: accountUi.del, doDelete: accountUi.doDelete,
   };
   (V4 as any).account = accountUi;
-  accountUi.wrapAutosave();
+  // 存档完整性（内联 onclick / 探针用）
+  (V4 as any).integrity = integrity;
+  (window as any).V4Integrity = {
+    summary: integrity.integritySummary, tampered: integrity.isTampered,
+    verdict: integrity.lastVerdictOf, verdictOf: integrity.verifyForeign,
+    preBootVerdict: () => preVerdict,
+  };
+  accountUi.subscribeAutoSync();
 
   // 接管战斗：legacy 的遭遇/守夜战/最终决战都会走到这里
   // 两条入口都要接：window.startCombat（内联 onclick / v4 自己调用）和 __v4StartCombat（legacy 内部直接调 startCombat）
@@ -131,7 +139,11 @@ async function main() {
   // 窗口尺寸变了要重算地图格子（fitMap 会按可用高度重新定格子边长）
   window.addEventListener('resize', () => mountWorld());
 
+  // M8：存档完整性——必须在 L.boot() 读档之前看原始 JSON（loadGame 会 sanitize，夹取之后就查不出越界了）
+  const preVerdict = integrity.inspectBeforeBoot();
+  integrity.installWriteHook();
   L.boot();
+  integrity.reportAfterBoot();
   mountWorld();
   L.log('🧪 v4 引擎已接管战斗：4 招式槽 / 速度出手 / 属性克制。', 'info');
   // file:// 直开时存档只落在本浏览器：给一句提示，免得换个浏览器以为存档丢了

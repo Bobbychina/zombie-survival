@@ -291,6 +291,19 @@ out.steps.gameFileExport = await (async () => {
     return { name: dl.suggestedFilename(), ok: true };
   } catch (e) { return { ok: false, err: e.message.slice(0, 60) }; }
 })();
+/* ⑦b 自动同步：接线改成"存档真的落盘了"事件之后，必须真的会推云
+   （根因记录：原来包 window.autosave 无效——legacy 是 IIFE，内部 28 处调用走的是闭包里的局部函数） */
+{
+  const before = JSON.parse(JSON.stringify(cloud));
+  await ev(() => { window.closeAllModals(); window.V4Account.toggleAuto(); window.closeAllModals(); window.saveGame(true); });
+  await page.waitForTimeout(9500);
+  out.steps.autoSync = {
+    cloudBefore: { patches: before.patches, files: Object.keys(before.files) },
+    cloudAfter: { patches: cloud.patches, files: Object.keys(cloud.files) },
+    pushed: cloud.patches > before.patches || Object.keys(cloud.files).length > Object.keys(before.files).length,
+  };
+}
+
 /* 游戏里点开账号面板截图 */
 await ev(() => { window.closeAllModals(); window.V4Account.open(); });
 await page.waitForTimeout(400);

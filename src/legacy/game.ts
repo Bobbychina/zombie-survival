@@ -295,6 +295,7 @@ const ZONE_SIL = {
 function newState(){
   return {
     v:VER, day:1, ap:9, apMax:9,   // v3.0：每天 9 点行动力 —— 远处一趟来回就要 6 点，出门必须算账
+    __integrity:null,               // M8：存档指纹（内容校验和），随存档一起进 localStorage / 云盘
     hp:100, hpMax:100, sta:100, staMax:100, hun:100, thi:100, infect:0,
     ammo:24, mat:12,
     inv:{ can:2, water:2, bandage:1, crowbar:1 },
