@@ -110,6 +110,25 @@ function cellHtml(b: Block, s: SaveWorld, frags: Record<string, 1>): string {
 let selectedRegion: string | null = null;      // 选中的区域（和"当前所在"分开：点错了不会把你开出去）
 let selectedNote = '';                         // 详情区的一句话提示（出发失败等）
 
+/* ── M17.2：大区地图的两种"上色图层" ──
+   评审 #3 原话："配色依然是灾难级的……红绿蓝黄交替，看久了让人眼瞎"。
+   地貌色对"这地方是什么"最有用，危险度色对"往哪跑"最有用，两个诉求打架——
+   所以给一个图层开关：地貌上色（默认）/ 危险度上色（绿→红单色渐变，一眼看出该往哪边躲）。 */
+export type RegionLayer = 'type' | 'danger';
+const LAYER_KEY = 'dsh.regionlayer';
+let regionLayer: RegionLayer = (() => {
+  try { return localStorage.getItem(LAYER_KEY) === 'danger' ? 'danger' : 'type'; } catch { return 'type'; }
+})();
+export const currentRegionLayer = (): RegionLayer => regionLayer;
+export function setRegionLayer(m: string): boolean {
+  const next: RegionLayer = m === 'danger' ? 'danger' : 'type';
+  if (next === regionLayer) return false;
+  regionLayer = next;
+  try { localStorage.setItem(LAYER_KEY, next); } catch { /* 隐私模式：记不住就算了 */ }
+  try { mountWorldPanel(); } catch (e) { console.warn('[v4] 切换图层失败', e); }
+  return true;
+}
+
 /** 大区行程报价（车况/油/行动力都算进去） */
 function regionTripFor(s: SaveWorld, to: string) {
   return planRegionTrip({
@@ -160,6 +179,13 @@ const dangerLegend = () =>
     '<span class="lg"><i class="rnum d' + t + '">' + t + '</i>危险 ' + t + ' · ' + dangerLabel(t) + '</span>'
   ).join('') + '</div>';
 
+/** 图层切换（地貌 / 危险度）——两个诉求打架时，给玩家一个开关而不是替他决定 */
+function layerTabs(): string {
+  const tab = (id: RegionLayer, label: string) =>
+    '<button class="wmtab' + (regionLayer === id ? ' on' : '') + '" onclick="V4World.regionLayer(\'' + id + '\')">' + label + '</button>';
+  return '<div class="wmtabs rlayers">' + tab('type', '🎨 地貌上色') + tab('danger', '🔥 危险度上色') + '</div>';
+}
+
 /** 选中区域的详情：干什么用、能弄到什么、开过去要多少油、去不了是什么原因 */
 function renderRegionDetail(s: SaveWorld, here: RegionDef, sel: RegionDef, trip: ReturnType<typeof regionTripFor>): string {
   const seen = sel.id === here.id || !!s.seenRegions[sel.id];
@@ -197,10 +223,15 @@ export function renderRegionPanel(s: SaveWorld): string {
 
   let h = '<div class="rcur">📍 当前在 <b>' + esc(here.name) + '</b> · ' + typeLabel(here.type) +
     ' · ' + dangerLabel(here.tier) + '　<span class="badge">已到过 ' + seenN + '/' + REGIONS.length + '</span></div>';
-  h += '<div class="hint">格子的<b>颜色是地貌</b>（工业区、农田、林地…），角上<b>数字是危险度</b>：离余烬越远越危险。' +
+  h += layerTabs();
+  h += '<div class="hint">' + (regionLayer === 'danger'
+    ? '现在是<b>危险度上色</b>：绿=安全、红=九死一生（越红越别去）。想认"哪片是工业区/农田"就切回地貌上色。'
+    : '格子的<b>颜色是地貌</b>（工业区、农田、林地…）、<b>数字是危险度</b>：离余烬越远越危险。' +
+      '想只看"该往哪跑"就切到危险度上色。') +
     '点一格看详情，再点「出发」才动身——地图上会亮出整条路线。</div>';
 
-  h += '<div class="rgrid">';
+  const dangerMode = regionLayer === 'danger';
+  h += '<div class="rgrid' + (dangerMode ? ' rl-danger' : '') + '">';
   for (const row of metaGrid()) {
     for (const def of row) {
       if (!def) { h += '<div class="rcell2 none"></div>'; continue; }
@@ -210,7 +241,8 @@ export function renderRegionPanel(s: SaveWorld): string {
         (sel && sel.id === def.id ? ' sel' : '') + (onPath[def.id] ? ' onpath' : '') + (seen ? '' : ' unseen');
       const tip = def.name + ' · ' + typeLabel(def.type) + ' · 危险 ' + def.tier + '：' + def.desc +
         (seen ? '' : '（你还没去过这一带，物资是按地貌推的）');
-      h += '<div class="' + cls + '" style="background:' + typeColor(def.type) + ';--dc:' + dangerColor(def.tier) + '"' +
+      const bg = dangerMode ? dangerColor(def.tier) : typeColor(def.type);
+      h += '<div class="' + cls + '" style="background:' + bg + ';--dc:' + dangerColor(def.tier) + '"' +
         ' title="' + esc(tip) + '" role="button" tabindex="0" onclick="V4World.pickRegion(\'' + def.id + '\')">' +
         '<i class="rnum d' + def.tier + '">' + def.tier + '</i>' +
         '<b class="rnm">' + esc(def.short) + '</b>' +
@@ -220,7 +252,7 @@ export function renderRegionPanel(s: SaveWorld): string {
   }
   h += '</div>';
 
-  h += typeLegend();
+  if (!dangerMode) h += typeLegend();
   h += dangerLegend();
 
   if (sel && trip) h += renderRegionDetail(s, here, sel, trip);
@@ -657,6 +689,8 @@ function runTrip(target: { x: number; y: number }, t: Trip) {
 export const V4World = {
   /** M16：本地地图 / 大区地图切换（内联 onclick：V4World.mapMode('region')） */
   mapMode(m: string) { return setMapMode(m); },
+  /** M17.2：大区地图上色图层（地貌 / 危险度） */
+  regionLayer(m: string) { return setRegionLayer(m); },
   /** C10：点格子 = 先出路线预览（第一次），同一个目标再点一次才出发（手机 tap 等价路径） */
   click(x: number, y: number) {
     const s = sw(), w = worldOf(s.seed, s.region);

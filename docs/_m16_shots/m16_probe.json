@@ -77,9 +77,17 @@
       {
         "t": "🌐 大区地图 12×12",
         "on": true
+      },
+      {
+        "t": "🎨 地貌上色",
+        "on": true
+      },
+      {
+        "t": "🔥 危险度上色",
+        "on": false
       }
     ],
-    "cardH": 875,
+    "cardH": 907,
     "viewH": 926,
     "title": "🌐 大区地图 12×12 ",
     "hasCrossHint": true,
@@ -97,9 +105,17 @@
       {
         "t": "🌐 大区地图 12×12",
         "on": true
+      },
+      {
+        "t": "🎨 地貌上色",
+        "on": true
+      },
+      {
+        "t": "🔥 危险度上色",
+        "on": false
       }
     ],
-    "cardH": 875,
+    "cardH": 907,
     "viewH": 926,
     "title": "🌐 大区地图 12×12 ",
     "hasCrossHint": true,
@@ -120,7 +136,7 @@
   },
   "hop": {
     "id": "r4-5",
-    "name": "北街坊 4 号"
+    "name": "北居民区 4 号"
   },
   "metaRegions": 144
 }

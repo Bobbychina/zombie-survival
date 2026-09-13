@@ -130,12 +130,17 @@ describe('M17 危险度辐射梯度（评审 #2 的核心）', () => {
     for (const r of T) if (r.dist <= 1) expect(r.tier, r.name).toBe(1);
   });
 
-  it('危险度不是"随机跳"，相邻两格最多差 1（军管区可以再多 1）', () => {
-    for (const r of T) {
-      for (const nb of neighborsOf(r.id)) {
-        const slack = r.type === 'military' || nb.type === 'military' ? 2 : 1;
-        expect(Math.abs(nb.tier - r.tier), r.name + ' 危险 ' + r.tier + ' vs ' + nb.name + ' 危险 ' + nb.tier)
-          .toBeLessThanOrEqual(slack);
+  it('危险度不是"随机跳"，相邻两格最多差 1（没有任何例外，军管区也一样）', () => {
+    /* M17.2：上一版给军管区额外 +1，于是它旁边会出现"4 挨着 2"的断崖
+       （评审 #3：「平民在林地砍柴，一扭头就是重兵把守的哨塔」）。
+       现在危险度是纯粹的"离主城圈数"函数 → 相邻差必然 ≤1。 */
+    for (const seed of ['ember-01', 'regions-test', 'mig-test', 'same-seed']) {
+      const list = buildRegions(seed);
+      for (const r of list) {
+        for (const nb of list.filter(x => x.id !== r.id && Math.max(Math.abs(x.col - r.col), Math.abs(x.row - r.row)) === 1)) {
+          expect(Math.abs(nb.tier - r.tier), seed + '：' + r.name + ' 危险 ' + r.tier + ' 挨着 ' + nb.name + ' 危险 ' + nb.tier)
+            .toBeLessThanOrEqual(1);
+        }
       }
     }
   });
@@ -234,7 +239,7 @@ describe('M17.1 城市逻辑（评审 #2：约束规则）', () => {
     }
   });
 
-  it('短名不是"把全名截一半"：一律 1 字方位 + 2 字地貌，且大部分不重样', () => {
+  it('短名不是"把全名截一半"：一律 1 字方位 + 2 字地貌，且几乎不重样', () => {
     for (const seed of SEEDS) {
       const list = buildRegions(seed);
       for (const r of list) {
@@ -243,8 +248,17 @@ describe('M17.1 城市逻辑（评审 #2：约束规则）', () => {
         expect('北南东西中', r.name + ' 短名没有方位字：' + r.short).toContain(r.short[0]);
         expect(REGION_SHORT_WORD[r.type], r.name + ' 短名是半截词：' + r.short).toContain(r.short.slice(1));
       }
-      // 144 格里至少 100 个短名不重样（全重样 = 用户说的"全是北西"）
-      expect(new Set(list.map(r => r.short)).size, seed + ' 的短名重复太多').toBeGreaterThanOrEqual(100);
+      /* 评审 #3：「第 1 行和第 3 行的北林区、第 3 和第 4 行的北山道，依然重复命名」。
+         M17.2 把每种类型的地貌词加到 14 个，并按"先避开 2 格内重名"挑词 →
+         相邻两格绝不重名，同名块也被推到远处。100% 不重样做不到（方位字受几何限制：
+         北半边只剩"北"这一个前缀，143 格共用 5×14 个组合），所以门槛定在 130/144。 */
+      const uniq = new Set(list.map(r => r.short)).size;
+      expect(uniq, seed + ' 的短名重复太多（' + uniq + '/144）').toBeGreaterThanOrEqual(130);
+      for (const r of list) {
+        for (const nb of list.filter(x => x.id !== r.id && Math.max(Math.abs(x.col - r.col), Math.abs(x.row - r.row)) === 1)) {
+          expect(nb.short, seed + '：' + r.short + ' 旁边又是一格 ' + nb.short).not.toBe(r.short);
+        }
+      }
     }
   });
 });

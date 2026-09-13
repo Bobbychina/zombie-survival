@@ -115,10 +115,10 @@
 .v4world .wlegend .sw{width:9px;height:9px;border-radius:2px;display:inline-block;border:1px solid rgba(255,255,255,.12)}
 .v4world .wpoi{margin-top:6px}
 .v4world .trail{font-size:11px;color:var(--dim);line-height:1.7;font-family:var(--mono,monospace)}
-/* 地表配色：和元地图的 TYPE_INFO 同一套（M17.1 提高了对比度——原来九种颜色挤在同一个暗灰区间，
-   144 格铺开就是"色块马赛克"，评审说"看着像光敏性癫痫"） */
-.b-city{background:#55607f}.b-suburb{background:#38564c}.b-industrial{background:#6b4a2c}.b-forest{background:#2f5a36}
-.b-farm{background:#6d6a2e}.b-water{background:#1f4a76}.b-ruins{background:#5b4a5e}.b-military{background:#6d3336}.b-highway{background:#2e3238}
+/* 地表配色：和元地图的 TYPE_INFO 同一套（M17.1 拉开色相、M17.2 降一点饱和度——
+   评审说"高饱和色块看久了眼瞎"，但九种地貌还是得能分辨；只想看危险度就切"危险度上色"图层） */
+.b-city{background:#53596c}.b-suburb{background:#3b4f47}.b-industrial{background:#654733}.b-forest{background:#35513b}
+.b-farm{background:#666337}.b-water{background:#27486c}.b-ruins{background:#57485a}.b-military{background:#66363a}.b-highway{background:#2e3238}
 
 /* ── M16：地图视图切换（本地 24×24 ⇄ 大区 3×3）──
    两张图合成一块、默认只显示一张 —— 这就是"不占空间"的来源。
@@ -138,12 +138,15 @@
    所以改成"小色块"：颜色看地貌、数字看危险、名字给 2~3 字缩写，点开才有详情。 */
 .v4world .rcur{font-size:12.5px;color:var(--ink);margin:2px 0 4px}
 .v4world .rgrid{display:grid;grid-template-columns:repeat(12,1fr);gap:3px;margin:8px 0 6px;max-width:520px}
-.v4world .rcell2{position:relative;aspect-ratio:1/1;min-height:33px;border:1px solid rgba(255,255,255,.10);
-  border-radius:4px;display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden}
+/* 数字和名字都**放在格子里面**（上下两行）：上一版把数字绝对定位到右上角，
+   结果两位评审都把"右边那格的数字"读成了这一格的（视觉上数字贴着格线，归属不清）。 */
+.v4world .rcell2{position:relative;aspect-ratio:1/1;min-height:34px;border:1px solid rgba(255,255,255,.10);
+  border-radius:4px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;
+  cursor:pointer;overflow:hidden}
 .v4world .rcell2 .rnm{font-size:10.5px;font-weight:400;color:var(--bone);text-shadow:0 1px 2px rgba(0,0,0,.85);
-  pointer-events:none}
-.v4world .rcell2 .rnum{position:absolute;top:0;right:2px;font-size:9px;line-height:1.4;font-style:normal;
-  font-family:var(--mono,monospace);opacity:.95;pointer-events:none;text-shadow:0 1px 2px rgba(0,0,0,.9)}
+  pointer-events:none;line-height:1.1}
+.v4world .rcell2 .rnum{font-size:9px;line-height:1.1;font-style:normal;font-family:var(--mono,monospace);
+  padding:0 3px;border-radius:6px;background:rgba(6,8,11,.62);pointer-events:none}
 .v4world .rcell2 .rpin{position:absolute;left:1px;bottom:3px;font-size:9px;font-style:normal;pointer-events:none}
 /* 底边条 = 危险度（绿→红）。底色管"是什么地貌"，底边管"多危险"——两个维度互不抢戏，
    整张图一眼就能看出危险度是**从中心往外涨**的（评审 #2 要的效果）。 */
@@ -159,8 +162,15 @@
 .v4world .rnum.d1{color:#78c98a}.v4world .rnum.d2{color:#c6d06a}.v4world .rnum.d3{color:#e0b45c}
 .v4world .rnum.d4{color:#e08a5c}.v4world .rnum.d5{color:#ef6f6f}
 .v4world .rlg{margin:2px 0 4px}
-.v4world .rlg .rnum{position:static;font-size:10px;width:10px;text-align:center}
+.v4world .rlg .rnum{font-size:10px;width:12px;text-align:center}
 .v4world .rlegend{font-size:10px}
+.v4world .rlayers{margin:6px 0 2px}
+.v4world .rlayers .wmtab{font-size:11.5px;min-height:28px}
+/* 危险度图层：格子底色换成单色梯度（绿→红），名字让位、数字放大——"该往哪跑"一眼可见 */
+.v4world .rgrid.rl-danger .rcell2{background-image:linear-gradient(rgba(0,0,0,.18),rgba(0,0,0,.18))}
+.v4world .rgrid.rl-danger .rcell2 .rnm{display:none}
+.v4world .rgrid.rl-danger .rcell2 .rnum{font-size:11px;background:rgba(6,8,11,.55)}
+.v4world .rgrid.rl-danger .rcell2.unseen{opacity:.8}
 .v4world .rdetail{margin:8px 0 4px;padding:8px 10px;border:1px solid var(--line);border-left:3px solid var(--accent);
   border-radius:5px;background:#0b0e12}
 .v4world .rdetail.empty{border-left-color:var(--line);color:var(--dim);font-size:11.5px;line-height:1.7}

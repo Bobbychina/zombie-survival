@@ -46,47 +46,47 @@ export const MAX_HOPS = 4;
 
 export const TYPE_INFO: Record<RegionType, { label: string; color: string; biomeBias: string; icon: string; resources: string[]; desc: string[] }> = {
   core: {
-    label: '城市核心', color: '#55607f', biomeBias: 'city', icon: '🏙️',
+    label: '城市核心', color: '#53596c', biomeBias: 'city', icon: '🏙️',
     resources: ['超市', '医院', '警局', '写字楼'],
     desc: ['高楼和商铺挤在一起的旧市中心，物资最全，也最挤。', '商业街的橱窗还亮着应急灯，玻璃后面全是人影。'],
   },
   residential: {
-    label: '居民区', color: '#3f4a63', biomeBias: 'city', icon: '🏢',
+    label: '居民区', color: '#3d4557', biomeBias: 'city', icon: '🏢',
     resources: ['公寓', '学校', '诊所', '布料'],
     desc: ['成片的居民楼与学校，药品、布料、罐头都藏在楼道里。', '阳台上晾着没人收的衣服，风一吹像有人在招手。'],
   },
   suburb: {
-    label: '城郊', color: '#38564c', biomeBias: 'transit', icon: '🏘️',
+    label: '城郊', color: '#3b4f47', biomeBias: 'transit', icon: '🏘️',
     resources: ['超市', '加油站', '修车铺'],
     desc: ['城市边缘的住宅与沿街小店，是出城前最后一块补给带。', '路灯下停着一排没开走的车，钥匙都还在。'],
   },
   industry: {
-    label: '工业区', color: '#6b4a2c', biomeBias: 'industrial', icon: '🏭',
+    label: '工业区', color: '#654733', biomeBias: 'industrial', icon: '🏭',
     resources: ['物流园', '建材', '燃料', '汽修'],
     desc: ['厂房、仓库、物流园连成一片，材料与燃料最多，毒气也最多。', '厂区广播还在循环一段没人听的疏散通知。'],
   },
   military: {
-    label: '军事管制', color: '#6d3336', biomeBias: 'military', icon: '🪖',
+    label: '军事管制', color: '#66363a', biomeBias: 'military', icon: '🪖',
     resources: ['军械', '弹药', '防化装备'],
     desc: ['铁丝网、哨塔和成排的装甲残骸。越线者按感染者处理。', '路障上的字还没被雨水冲掉：「越线者按感染者处理」。'],
   },
   farm: {
-    label: '农田', color: '#6d6a2e', biomeBias: 'farm', icon: '🌾',
+    label: '农田', color: '#666337', biomeBias: 'farm', icon: '🌾',
     resources: ['粮食', '种子', '柴油'],
     desc: ['成片的农田和谷仓——种子、粮食、柴油，还有守田的人。', '田埂上插着一排木牌，每块都写着同一个日期：爆发那天。'],
   },
   forest: {
-    label: '林地山区', color: '#2f5a36', biomeBias: 'forest', icon: '⛰️',
+    label: '林地山区', color: '#35513b', biomeBias: 'forest', icon: '⛰️',
     resources: ['木材', '草药', '野味'],
     desc: ['林场、隧道和采石场。木头管够，活人比丧尸更值得提防。', '伐木道边的树被砍了一整排，切口还是新的。'],
   },
   water: {
-    label: '水域港区', color: '#1f4a76', biomeBias: 'water', icon: '🌊',
+    label: '水域港区', color: '#27486c', biomeBias: 'water', icon: '🌊',
     resources: ['渔获', '净化片', '潜水点'],
     desc: ['码头、滩涂和被潮水泡过的仓库，水产丰富，水里也不干净。', '防波堤上有人用油漆刷了三个字：「别上船」。'],
   },
   ruins: {
-    label: '废墟', color: '#5b4a5e', biomeBias: 'ruins', icon: '🏚️',
+    label: '废墟', color: '#57485a', biomeBias: 'ruins', icon: '🏚️',
     resources: ['拆解材料', '拾荒者据点'],
     desc: ['塌了一半的旧街区，钢筋和木料遍地，也是最容易迷路的地方。', '楼板塌成斜坡，下面压着别人的半辆车。'],
   },
@@ -108,15 +108,15 @@ const SUFFIX: Record<RegionType, string[]> = {
    上一版是"把全名截前 3 个字"，截出来的是「北西废」「北西日」这种半截词——用户截图里的评审
    骂得对（"听起来像在骂人"）。短名单独维护一张表，就不会再截断到一半。 */
 const SHORT_WORD: Record<RegionType, string[]> = {
-  core: ['市中', '老城', '商街', '广场', '中央', '商埠', '钟楼', '旧署'],
-  residential: ['居民', '新村', '学区', '街坊', '公寓', '里弄', '宿舍', '家园'],
-  suburb: ['城郊', '近郊', '环城', '开发', '新区', '外围', '城乡', '驿道'],
-  industry: ['厂区', '化工', '物流', '工业', '仓储', '机修', '冶炼', '建材'],
-  military: ['靶场', '营地', '哨卡', '军管', '封锁', '禁区', '哨塔', '屯兵'],
-  farm: ['农场', '粮仓', '农垦', '田庄', '果园', '牧点', '大棚', '菜地'],
-  forest: ['林场', '山区', '采石', '林岭', '山道', '松岭', '矿口', '林区'],
-  water: ['港区', '码头', '滩涂', '水库', '渔港', '船坞', '堤岸', '滩头'],
-  ruins: ['遗址', '废址', '棚户', '旧街', '危楼', '塌区', '空城', '残垣'],
+  core: ['市中', '老城', '商街', '广场', '中央', '商埠', '钟楼', '旧署', '十字', '牌楼', '市集', '城隍', '骑楼', '大戏'],
+  residential: ['居民', '新村', '学区', '街坊', '公寓', '里弄', '宿舍', '家园', '楼群', '胡同', '住宅', '坊巷', '单元', '天井'],
+  suburb: ['城郊', '近郊', '环城', '开发', '新区', '外围', '城乡', '驿道', '匝口', '道口', '集散', '城乡', '货场', '站前'],
+  industry: ['厂区', '化工', '物流', '工业', '仓储', '机修', '冶炼', '建材', '铸造', '纸厂', '油库', '钢构', '装配', '窑厂'],
+  military: ['靶场', '营地', '哨卡', '军管', '封锁', '禁区', '哨塔', '屯兵', '工事', '雷达', '仓场', '检查', '驻地', '军械'],
+  farm: ['农场', '粮仓', '农垦', '田庄', '果园', '牧点', '大棚', '菜地', '猪场', '渔塘', '苗圃', '晒场', '油坊', '桑田'],
+  forest: ['林场', '山区', '采石', '林岭', '山道', '松岭', '矿口', '林区', '杉岭', '崖口', '伐区', '山坳', '峡口', '林海'],
+  water: ['港区', '码头', '滩涂', '水库', '渔港', '船坞', '堤岸', '滩头', '渡口', '闸口', '海湾', '栈桥', '沙洲', '溢洪'],
+  ruins: ['遗址', '废址', '棚户', '旧街', '危楼', '塌区', '空城', '残垣', '断桥', '焦土', '瓦砾', '塌楼', '无名', '灰区'],
 };
 /** 方位词：按该区域相对主城的方位挑（地图像真地名，而不是"区域 7"） */
 const dirWord = (dx: number, dy: number): string => {
@@ -194,6 +194,8 @@ export function buildRegions(seed: string): RegionDef[] {
 
   const N = REGION_COLS * REGION_ROWS;
   const type: (RegionType | null)[] = new Array(N).fill(null);
+  /** 短名去重用的"同名格子在哪"（M17.2：优先避开 2 格以内的重名，其次才看全图用量） */
+  const placedShort: Record<string, { c: number; r: number }[]> = {};
 
   /* ① 海岸与山角：先钉死，后面的平滑不许动它们 */
   const fixed = new Array<boolean>(N).fill(false);
@@ -382,23 +384,26 @@ export function buildRegions(seed: string): RegionDef[] {
       const info = TYPE_INFO[t];
       const dir = dirWord(dx, dy);
       /* 危险度：**严格按离主城的距离辐射递增**——主城与紧邻的一圈都是安全区（新手村），
-         之后按圈数均匀铺满 1~5；只有军管区额外 +1（那里真的不该去）。 */
-      const tier = isHome ? 1
-        : Math.max(1, Math.min(5, (dist <= 1 ? 1 : 1 + Math.round((dist / maxDist) * 4)) + (t === 'military' ? 1 : 0)));
+         之后按圈数均匀铺满 1~5。M17.2 起**没有任何地形加成**：上一版给军管区 +1，
+         结果它旁边一格能出现"4 挨着 2"的断崖（评审 #3 抓到的"平民砍柴一扭头就是哨塔"）。
+         军管的可怕改为由区域内部的生成主题承担（军事 POI 更多、格子更危险）。 */
+      const tier = isHome || dist <= 1 ? 1 : Math.max(1, Math.min(5, 1 + Math.round((dist / maxDist) * 4)));
       const key = dir + SUFFIX[t][Math.floor(rng() * SUFFIX[t].length)];
       used[key] = (used[key] ?? 0) + 1;
       const name = isHome ? '余烬市区' : key + (used[key] > 1 ? ' ' + used[key] + ' 号' : '');
       /* 短名 = 1 字方位 + 2 字地貌。地图形状已经告诉你"在北边"，所以短名要尽量**不重样**：
-         每种类型有 8 个地貌词，挑"当前用得最少"的那个（同分随机），
-         这样 144 格里很少出现两个一模一样的短名。 */
+         每种类型有 14 个地貌词，先挑"2 格以内没有重名"的，再挑"全图用得最少"的。
+         （纯按全图用量挑仍会让同名的两块挨在一起——评审 #3 就是说这个。） */
       const dir1 = dir.slice(0, 1);
-      let short = dir1 + SHORT_WORD[t][0], bestUse = Infinity;
+      let short = dir1 + SHORT_WORD[t][0], bestScore = -Infinity;
       for (const w of SHORT_WORD[t]) {
         const cand = dir1 + w;
-        const use = usedShort[cand] ?? 0;
-        if (use < bestUse || (use === bestUse && rng() < 0.4)) { short = cand; bestUse = use; }
+        const near = (placedShort[cand] ?? []).some(p => Math.max(Math.abs(p.c - c), Math.abs(p.r - r)) <= 2);
+        const score = (near ? -1000 : 0) - (usedShort[cand] ?? 0) * 10 + rng();
+        if (score > bestScore) { short = cand; bestScore = score; }
       }
       usedShort[short] = (usedShort[short] ?? 0) + 1;
+      (placedShort[short] = placedShort[short] ?? []).push({ c, r });
       const desc = info.desc[Math.floor(rng() * info.desc.length)];
 
       out.push({

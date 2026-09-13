@@ -99,6 +99,32 @@ ok('标题写明 144 个区域 + 已到过计数', /144 个区域/.test(A.badge)
 const colors = new Set(A.cells.map(c => c.bg))
 ok('按地貌类型上色：至少 6 种地表色同时在图上', colors.size >= 6, `distinct=${colors.size}`)
 
+/* M17.2：图层切换（评审 #3："红绿蓝黄交替看久了让人眼瞎"）——危险度图层只该剩 5 种梯度色 */
+const clickedDanger = await ev(`(() => {
+  const b = [...document.querySelectorAll('#v4world .rlayers .wmtab')].find(x => /危险度/.test(x.textContent||''));
+  if (b) b.click();
+  return !!b;
+})()`)
+await sleep(600)
+const D2 = JSON.parse(await ev(dump))
+const dColors = new Set(D2.cells.map(c => c.bg))
+/* computed style 给的是 rgb()，所以把期望的十六进制换成同样的写法再比 */
+const hex2rgb = (h) => `rgb(${parseInt(h.slice(1, 3), 16)},${parseInt(h.slice(3, 5), 16)},${parseInt(h.slice(5, 7), 16)})`   // computed style 不带空格
+const want = ['#78c98a', '#c6d06a', '#e0b45c', '#e08a5c', '#ef6f6f'].map(hex2rgb)
+ok('能切到「危险度上色」图层：底色收敛成 5 种梯度色（绿→红）',
+  clickedDanger === true && dColors.size === 5 && want.every(h => dColors.has(h)),
+  `危险度图层色数=${dColors.size} [${[...dColors].join(' ')}] want=[${want.join(' ')}]`)
+ok('危险度图层里地貌图例让位（不再同时堆两套图例）', D2.legends.length === 1 && /九死一生/.test(D2.legends[0]), `图例行=${D2.legends.length}`)
+await shot('m17-danger-layer')
+const backToType = await ev(`(() => { const b = [...document.querySelectorAll('#v4world .rlayers .wmtab')].find(x => /地貌/.test(x.textContent||'')); if (b) b.click(); return 1; })()`)
+void backToType
+await sleep(600)
+const A2 = JSON.parse(await ev(dump))
+ok('切回地貌图层恢复正常（9 色 + 两套图例）',
+  new Set(A2.cells.map(c => c.bg)).size >= 6 && A2.legends.length === 2,
+  `色数=${new Set(A2.cells.map(c => c.bg)).size} 图例=${A2.legends.length}`)
+A.cells = A2.cells; A.grid = A2.grid; A.legends = A2.legends      // 后面的检查用切回来的地貌图层
+
 const tiers = A.cells.map(c => c.tier)
 ok('每格都标了危险度 1~5，且五个档位都出现（梯度铺满）',
   tiers.every(t => t >= 1 && t <= 5) && new Set(tiers).size === 5, `tiers=${[...new Set(tiers)].sort().join(',')}`)
