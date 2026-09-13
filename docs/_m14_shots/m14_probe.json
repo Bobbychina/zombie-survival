@@ -120,7 +120,7 @@
     "hasBoardTitle": true,
     "hasStoryTitle": true,
     "hasAccept": 3,
-    "budget": 18,
+    "budget": 21,
     "day": 1,
     "region": "ember",
     "chapter": 0,
@@ -177,13 +177,31 @@
       "choices": {}
     }
   },
+  "choice": {
+    "btnCount": 2,
+    "matBefore": 38,
+    "chapterAfter": 1,
+    "choice": "keep",
+    "intro": "那本册子还贴在你胸口，硬邦邦的。编号指向第 9 分局的证据室——你没打算告诉任何人你要去那儿。",
+    "storyLog": [
+      {
+        "ch": 1,
+        "text": "你把册子缝进内袋。从今天起，这件事只"
+      },
+      {
+        "ch": 1,
+        "text": "档案室里没有人，只有一排排被翻空的柜"
+      }
+    ],
+    "logLines": 0
+  },
   "far": {
     "day": 6,
     "contractsDay": 6,
     "hasCar": false,
-    "farTitle": "东郊的一趟",
-    "farRegion": "dongjiao",
-    "farMetric": "rzone:dongjiao:*",
+    "farTitle": "江北的托运",
+    "farRegion": "jiangbei",
+    "farMetric": "rzone:jiangbei:*",
     "boardKeys": [
       "story:6",
       "far:6",

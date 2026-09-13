@@ -290,6 +290,6 @@ await shot('m14-final')
 
 const pass = checks.filter(c => c[1]).length
 console.log(`\n结果: ${pass}/${checks.length} 通过`)
-await fs.writeFile(`${outDir}/m13_probe.json`, JSON.stringify({ checks, errs: pageErrs, tab: T, accept: A, settle: ST, story: SR, far: FR, farDone: FD, day: DR, misc: M }, null, 2))
+await fs.writeFile(`${outDir}/m14_probe.json`, JSON.stringify({ checks, errs: pageErrs, tab: T, accept: A, settle: ST, story: SR, choice: CR, far: FR, farDone: FD, day: DR, misc: M }, null, 2))
 ws.close()
 process.exit(pass === checks.length ? 0 : 1)
