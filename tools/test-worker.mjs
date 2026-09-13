@@ -301,7 +301,30 @@ let token1 = '', uid1 = '';
   ok('非法密钥包裹格式 → 400', badWrap.status === 400, String(badWrap.status));
 }
 
-/* 14. 密钥不外泄：任何接口的响应体里都不应该出现 pepper / GH secret / 令牌原文 */
+/* 14. 访问计数：只认白名单 Origin、写 Analytics Engine、没绑 AE 时静默降级 */
+{
+  const writes = [];
+  const e = { ...env, DSH_KV: memoryKV(), DSH_PEPPER: env.DSH_PEPPER, AE: { writeDataPoint: (p) => writes.push(p) } };
+  const good = await handle(req('POST', '/api/hit', { body: { p: '/games/', r: 'github.com', w: 1280, l: 'zh-CN' } }), e);
+  const gb = await j(good);
+  ok('白名单 Origin 计数 → 200 ok:true', good.status === 200 && gb.ok === true, JSON.stringify(gb));
+  ok('写进了 Analytics Engine（blobs=页面/来源/语言）', writes.length === 1 && writes[0].blobs[0] === '/games/' && writes[0].blobs[1] === 'github.com' && writes[0].blobs[2] === 'zh-CN', JSON.stringify(writes));
+  ok('计数点里不含任何 IP / Cookie 字段', JSON.stringify(writes[0]).indexOf('ip') === -1 && JSON.stringify(writes[0]).indexOf('cookie') === -1, JSON.stringify(writes[0]).slice(0, 120));
+
+  const evil = await handle(req('POST', '/api/hit', { body: { p: '/spam' }, origin: 'https://evil.example' }), e);
+  ok('陌生 Origin 计数 → 403（不给外站刷）', evil.status === 403, String(evil.status));
+  ok('被拒的请求没有写进 AE', writes.length === 1, 'writes=' + writes.length);
+
+  const noAe = await handle(req('POST', '/api/hit', { body: { p: '/x' } }), { ...env, DSH_KV: memoryKV() });
+  const nb = await j(noAe);
+  ok('没绑 AE 时静默降级（200 + no_analytics_engine，不报错）', noAe.status === 200 && nb.ok === false && nb.reason === 'no_analytics_engine', JSON.stringify(nb));
+
+  const longBody = await handle(req('POST', '/api/hit', { body: { p: 'x'.repeat(500), r: 'y'.repeat(500), l: 'z'.repeat(90), w: 99999 } }), e);
+  ok('超长字段被截断（p≤120 / r≤80 / l≤16）', longBody.status === 200 && writes[1].blobs[0].length === 120 && writes[1].blobs[1].length === 80 && writes[1].blobs[2].length === 16,
+    JSON.stringify(writes[1].blobs.map(x => x.length)));
+}
+
+/* 15. 密钥不外泄：任何接口的响应体里都不应该出现 pepper / GH secret / 令牌原文 */
 {
   const e = { ...env, DSH_KV: memoryKV(), DSH_PEPPER: 'PEPPER-CANARY-abc123', GH_CLIENT_SECRET: 'GHSECRET-CANARY-xyz789' };
   const t = (await j(await handle(req('POST', '/api/register', { body: { name: 'leaktest', verifier: VER, salt: SALT } }), e))).token;
