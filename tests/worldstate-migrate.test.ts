@@ -6,16 +6,21 @@ import { describe, expect, it } from 'vitest';
 import {
   WORLD_VER, defaultSaveWorld, ensureSaveWorld, takeWorldMigration, worldOf, switchRegion, planTrip,
 } from '../src/v4/worldstate';
-import { HOME_REGION, REGIONS, regionSeed } from '../src/v4/regions-core';
+import { HOME_REGION, REGIONS, regionSeed, setActiveRegions } from '../src/v4/regions-core';
 import { bkey } from '../src/v4/worldgen';
 import { fragSpots } from '../src/v4/quest4';
 
-/** 造一份"老版本世界存档"：地形进度齐全 + 人物进度也在 */
+/** 造一份"老版本世界存档"：地形进度齐全 + 人物进度也在。
+    M17：元地图按种子生成，所以先对齐 seed 再取 HOME_REGION（它是活绑定，会跟着变）。 */
 const oldSave = (over: Record<string, unknown> = {}) => {
+  const seed = 'mig-test';
+  setActiveRegions(seed);
+  const HOME = HOME_REGION;
+  const other = REGIONS.find(r => r.id !== HOME && r.type !== 'water')!.id;
   const sw: any = {
-    v: 1, seed: 'mig-test', region: HOME_REGION, regions: { dongjiao: { visited: { '1,1': 1 } } },
-    seenRegions: { [HOME_REGION]: 1, dongjiao: 1 }, regionVisits: { [HOME_REGION]: 3, dongjiao: 2 },
-    regionZones: { dongjiao: { lumber: 2 } },
+    v: 1, seed, region: HOME, regions: { [other]: { visited: { '1,1': 1 } } },
+    seenRegions: { [HOME]: 1, [other]: 1 }, regionVisits: { [HOME]: 3, [other]: 2 },
+    regionZones: { [other]: { lumber: 2 } },
     cur: { x: 3, y: 3 },
     visited: { '4,4': 1, '5,5': 1 }, firstPoi: { '4,4': 1 }, left: { '4,4': 0 }, stock: { '4,4': 2 },
     frag: { '4,4': 1 }, forage: { '4,4': { left: 1, day: 3 } }, salvage: { '4,4': { left: 1 } },
@@ -27,17 +32,17 @@ const oldSave = (over: Record<string, unknown> = {}) => {
     ...over,
   };
   const S: any = {
-    seed: 'mig-test', day: 33, mat: 250, hp: 71, world: sw,
+    seed, day: 33, mat: 250, hp: 71, world: sw,
     inv: [{ id: 'bandage', n: 3 }], ach: ['a_cure'], quest: { stage: 4 }, flags: { won: true },
     contracts: { day: 33 }, story: { chapter: 3 },
   };
-  return { S, sw };
+  return { S, sw, HOME, other };
 };
 
 describe('M15.1 地图重画迁移', () => {
   it('老档（没有 wv）→ 清地形进度、保人物进度，并回到本区入口', () => {
     takeWorldMigration();                       // 清掉上一条测试留下的标记
-    const { S, sw } = oldSave();
+    const { S, HOME } = oldSave();
     const out = ensureSaveWorld(S);
     expect(out.wv).toBe(WORLD_VER);
     // 地形相关：全清
@@ -49,8 +54,13 @@ describe('M15.1 地图重画迁移', () => {
     expect(out.chop).toEqual({});
     expect(out.forage).toEqual({});
     expect(out.regions).toEqual({});
-    expect(out.regionVisits).toEqual({ [HOME_REGION]: 1 });
+    expect(out.regionVisits).toEqual({ [HOME]: 1 });
     expect(out.regionZones).toEqual({});
+    expect(out.intel).toBe(false);
+    expect(out.evac).toBeNull();
+    expect(out.trail).toEqual([]);
+    expect(out.steps).toBe(0);
+    expect(out.region).toBe(HOME);              // M17：老区域 id 不存在 → 落到本种子生成的主城
     expect(out.intel).toBe(false);
     expect(out.evac).toBeNull();
     expect(out.trail).toEqual([]);
@@ -102,13 +112,13 @@ describe('M15.1 地图重画迁移', () => {
   });
 
   it('迁移后跨区依旧可用（区域表不在世界存档里）', () => {
-    const { S } = oldSave();
+    const { S, HOME, other } = oldSave();
     const out = ensureSaveWorld(S);
-    const r = switchRegion(S, out, 'dongjiao');
+    const r = switchRegion(S, out, other);        // M17：相邻区由种子生成，不能再写死区名
     expect(r.ok).toBe(true);
-    expect(out.region).toBe('dongjiao');
-    expect(out.regionVisits.dongjiao).toBe(1);
-    const back = switchRegion(S, out, HOME_REGION);
+    expect(out.region).toBe(other);
+    expect(out.regionVisits[other]).toBe(1);
+    const back = switchRegion(S, out, HOME);
     expect(back.ok).toBe(true);
   });
 });

@@ -323,19 +323,64 @@ export function generateWorld(seed: string, opts: GenOpts = {}): WorldState {
     const r = at(Math.round(home.x + (military.x - home.x) * t), Math.round(home.y + (military.y - home.y) * t));
     if (r && r.b.zone !== 'water' && rng() < 0.6) setRoad(r.b.x, r.b.y, true);
   }
-  /* 过河桥：车不能下水，所以被水切断的地方必须补桥，否则"开车去实验室"会变成死路 */
+  /* 过河桥：车不能下水，所以被水切断的地方必须补桥。
+     先按"家→实验室 / 家→市中心 / 家→军营"的直线铺一遍，再**验证一次连通性**：
+     河流/湖可能不在直线上却把地图切成两块（实测出现过"开车到不了实验室"），
+     那就找两岸最近的相邻格子架桥；循环几次保证公路一定通到底。 */
+  const bridge = (r: Raw | null) => {
+    if (!r || r.b.zone !== 'water') return;
+    r.b.biome = 'highway'; r.b.zone = 'open'; r.b.road = true;
+  };
   const crossWater = (from: { x: number; y: number }, to: { x: number; y: number }) => {
     const n = Math.max(Math.abs(to.x - from.x), Math.abs(to.y - from.y));
     for (let i = 1; i < n; i++) {
       const t = i / n;
-      const x = Math.round(from.x + (to.x - from.x) * t), y = Math.round(from.y + (to.y - from.y) * t);
-      const r = at(x, y);
-      if (r && r.b.zone === 'water') { r.b.biome = 'highway'; r.b.zone = 'open'; r.b.road = true; }
+      bridge(at(Math.round(from.x + (to.x - from.x) * t), Math.round(from.y + (to.y - from.y) * t)));
     }
   };
   crossWater(home, lab);
   crossWater(home, center);
   crossWater(home, military);
+  /** 从家出发，只能走陆地块，能到达哪些格子 */
+  const landReach = (): Set<string> => {
+    const seen = new Set<string>([bkey(home.x, home.y)]);
+    const q: [number, number][] = [[home.x, home.y]];
+    while (q.length) {
+      const [x, y] = q.shift()!;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as [number, number][]) {
+        const nb = at(x + dx, y + dy);
+        if (!nb || nb.b.biome === 'water') continue;
+        const k = bkey(nb.b.x, nb.b.y);
+        if (seen.has(k)) continue;
+        seen.add(k); q.push([nb.b.x, nb.b.y]);
+      }
+    }
+    return seen;
+  };
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const reach = landReach();
+    if (reach.has(bkey(lab.x, lab.y))) break;
+    let done = false;
+    for (const r of raws) {
+      if (done) break;
+      if (!reach.has(bkey(r.b.x, r.b.y))) continue;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as [number, number][]) {
+        const nb = at(r.b.x + dx, r.b.y + dy);
+        if (!nb || nb.b.biome !== 'water') continue;
+        const far = at(nb.b.x + dx, nb.b.y + dy);
+        if (far && far.b.biome !== 'water' && !reach.has(bkey(far.b.x, far.b.y))) { bridge(nb); done = true; break; }
+      }
+    }
+    if (!done) {
+      /* 兜底：沿家→实验室直线把所有水格打穿（宁可多一座桥，也不能让车开不到终点） */
+      const n = Math.max(Math.abs(lab.x - home.x), Math.abs(lab.y - home.y));
+      for (let i = 0; i <= n; i++) for (const d of [0, 1, -1]) {
+        const t = i / n;
+        bridge(at(Math.round(home.x + (lab.x - home.x) * t) + d, Math.round(home.y + (lab.y - home.y) * t) + d));
+      }
+      break;
+    }
+  }
 
   /* ── 4) 危险度：人多的地方丧尸多（核心区最危险），工业/军事次之 ── */
   for (const r of raws) {

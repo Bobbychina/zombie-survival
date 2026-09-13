@@ -9,7 +9,8 @@ import {
   type SaveWorld, type Trip,
 } from './worldstate';
 import {
-  HOME_REGION, REGIONS, dangerLabel, metaGrid, planRegionTrip, regionById, regionName,
+  META_COLS, META_ROWS, MAX_HOPS, REGIONS, REGION_TYPES as TYPES, TYPE_INFO, dangerColor, dangerLabel, homeRegion,
+  metaGrid, planRegionTrip, regionById, regionName, typeColor, typeLabel, type RegionDef,
 } from './regions-core';
 import { poiLeft, searchPoi } from './search';
 import { pendingFragKeys, takeFragment } from './fragments';
@@ -97,7 +98,19 @@ function cellHtml(b: Block, s: SaveWorld, frags: Record<string, 1>): string {
 }
 
 /** 地图块（宽屏时单独占一列：标题 + 状态行 + 24×24 格 + 预览/悬停/图例） */
-/* ── M12 区域面板：3×3 元地图。格子之间（区域内部）随便走，跨区必须开车 ── */
+/* ── M17 大区面板：12×12 = 144 格的元地图，按**地貌类型**上色 ──
+   为什么推倒重做（用户反馈 + 一份外部评审）：
+     · 3×3 只有 9 格，"大世界"名不副实；9 个地名是手写的 → 地理逻辑互相打架
+     · 危险度看不出梯度，格子上也没有"这地方是什么、能弄到什么"的暗示
+   现在的做法：
+     · 格子底色 = 区域类型（工业区/农田/林地…），一眼看出哪片是什么
+     · 右上角数字 = 危险度 1~5（离余烬越远越危险），配一条危险图例
+     · 点一格先**选中**（不动身）：下面出详情（类型/危险/距离/物资/途经路线/出发按钮）
+     · 选中会点亮整条行车路线，去不了就直说为什么、怎么办 */
+let selectedRegion: string | null = null;      // 选中的区域（和"当前所在"分开：点错了不会把你开出去）
+let selectedNote = '';                         // 详情区的一句话提示（出发失败等）
+
+/** 大区行程报价（车况/油/行动力都算进去） */
 function regionTripFor(s: SaveWorld, to: string) {
   return planRegionTrip({
     hasVehicle: !!s.veh && s.veh.hp > 0,
@@ -131,45 +144,102 @@ function mapTabs(): string {
   const tab = (id: MapMode, label: string, badge: string) =>
     '<button class="wmtab' + (mapMode === id ? ' on' : '') + '" onclick="V4World.mapMode(\'' + id + '\')">' + label +
     ' <span class="mbadge">' + badge + '</span></button>';
-  return '<div class="wmtabs">' + tab('local', '🗺️ 本地地图', '24×24') + tab('region', '🌐 大区地图', '3×3') + '</div>';
+  return '<div class="wmtabs">' + tab('local', '🗺️ 本地地图', '24×24') +
+    tab('region', '🌐 大区地图', META_COLS + '×' + META_ROWS) + '</div>';
+}
+
+/** 类型色图例（和格子底色同一套颜色） */
+const typeLegend = () =>
+  '<div class="wlegend rlg">' + TYPES.map(t =>
+    '<span class="lg"><i class="sw" style="background:' + TYPE_INFO[t].color + '"></i>' + TYPE_INFO[t].label + '</span>'
+  ).join('') + '</div>';
+
+/** 危险度图例：数字 + 颜色 + 人话（评审说"余烬没标危险、看不出梯度"） */
+const dangerLegend = () =>
+  '<div class="wlegend rlg">' + [1, 2, 3, 4, 5].map(t =>
+    '<span class="lg"><i class="rnum d' + t + '">' + t + '</i>危险 ' + t + ' · ' + dangerLabel(t) + '</span>'
+  ).join('') + '</div>';
+
+/** 选中区域的详情：干什么用、能弄到什么、开过去要多少油、去不了是什么原因 */
+function renderRegionDetail(s: SaveWorld, here: RegionDef, sel: RegionDef, trip: ReturnType<typeof regionTripFor>): string {
+  const seen = sel.id === here.id || !!s.seenRegions[sel.id];
+  const visits = s.regionVisits[sel.id] ?? 0;
+  let h = '<div class="rdetail">';
+  h += '<div class="rdhd">' + sel.icon + ' <b>' + esc(sel.name) + '</b>' +
+    '<span class="tag">' + typeLabel(sel.type) + '</span>' +
+    '<span class="tag">危险 ' + sel.tier + ' · ' + dangerLabel(sel.tier) + '</span>' +
+    '<span class="tag">离余烬 ' + sel.dist + ' 格</span>' +
+    (seen ? '<span class="tag ok">已到过' + (visits > 1 ? ' ' + visits + ' 次' : '') + '</span>' : '<span class="tag">还没去过</span>') +
+    '<button class="btn xs rclose" onclick="V4World.clearPick()" title="取消选中">✕</button>' +
+    '</div>';
+  h += '<div class="hint">' + esc(sel.desc) + '</div>';
+  h += '<div class="rtags">这儿能弄到：' + sel.resources.map(r => '<span class="tag">' + esc(r) + '</span>').join('') + '</div>';
+  if (trip.ok) {
+    const via = trip.path.slice(0, -1).map(id => regionName(id));
+    h += '<div class="rgo ok">🧭 开过去 <b>' + trip.hops + ' 格</b> · ⚡' + trip.ap + ' · ⛽' + trip.fuel +
+      '<button class="btn primary" onclick="V4World.travelRegion(\'' + sel.id + '\')">出发</button>' +
+      (via.length ? '<div class="hint">途经：' + esc(via.join(' → ')) + '</div>' : '') + '</div>';
+  } else {
+    h += '<div class="rgo bad">⛔ ' + esc(trip.why || '去不了') +
+      (trip.hint ? '<div class="hint">' + esc(trip.hint) + '</div>' : '') + '</div>';
+  }
+  if (selectedNote) h += '<div class="hint">' + esc(selectedNote) + '</div>';
+  return h + '</div>';
 }
 
 export function renderRegionPanel(s: SaveWorld): string {
-  const here = regionById(s.region) ?? regionById(HOME_REGION)!;
-  let h = '<div class="sect-title" style="margin-top:10px">🗺️ 区域 ' +
-    '<span class="badge">' + esc(here.name) + ' · ' + dangerLabel(here.tier) + '</span>' +
-    '<span class="badge">已到过 ' + Object.keys(s.seenRegions).length + '/' + REGIONS.length + '</span></div>';
-  h += '<div class="hint">' + esc(here.desc) + '</div>';
+  const here = regionById(s.region) ?? homeRegion();
+  const sel = selectedRegion && selectedRegion !== here.id ? regionById(selectedRegion) : null;
+  const trip = sel ? regionTripFor(s, sel.id) : null;
+  const onPath: Record<string, 1> = {};
+  if (trip) for (const id of trip.path) onPath[id] = 1;
+  const seenN = Object.keys(s.seenRegions).length;
+
+  let h = '<div class="rcur">📍 当前在 <b>' + esc(here.name) + '</b> · ' + typeLabel(here.type) +
+    ' · ' + dangerLabel(here.tier) + '　<span class="badge">已到过 ' + seenN + '/' + REGIONS.length + '</span></div>';
+  h += '<div class="hint">格子的<b>颜色是地貌</b>（工业区、农田、林地…），角上<b>数字是危险度</b>：离余烬越远越危险。' +
+    '点一格看详情，再点「出发」才动身——地图上会亮出整条路线。</div>';
+
   h += '<div class="rgrid">';
   for (const row of metaGrid()) {
     for (const def of row) {
-      if (!def) { h += '<div class="rcell none"></div>'; continue; }
+      if (!def) { h += '<div class="rcell2 none"></div>'; continue; }
       const isHere = def.id === here.id;
       const seen = isHere || !!s.seenRegions[def.id];
-      const trip = isHere ? null : regionTripFor(s, def.id);
-      const cls = 'rcell' + (isHere ? ' here' : trip && trip.ok ? ' go' : ' no');
-      const click = trip && trip.ok ? ' onclick="V4World.travelRegion(\'' + def.id + '\')"' : '';
-      /* 区域名一律显示（地理常识，玩家得知道自己在往哪开）；**描述**才是到了才解锁的 */
-      const title = def.name + (seen ? '：' + def.desc : '（没去过）');
-      h += '<div class="' + cls + '"' + click + ' title="' + esc(title) + '">' +
-        '<div class="ricon">' + (isHere ? '📍' : def.icon) + '</div>' +
-        '<div class="rname">' + esc(def.short) + '</div>' +
-        '<div class="rmeta">' + (isHere ? '当前所在' : trip && trip.ok ? '⚡' + trip.ap + ' ⛽' + trip.fuel : '危险 ' + def.tier) + '</div>' +
+      const cls = 'rcell2 d' + def.tier + (isHere ? ' here' : '') + (def.homeBase ? ' home' : '') +
+        (sel && sel.id === def.id ? ' sel' : '') + (onPath[def.id] ? ' onpath' : '') + (seen ? '' : ' unseen');
+      const tip = def.name + ' · ' + typeLabel(def.type) + ' · 危险 ' + def.tier + '：' + def.desc +
+        (seen ? '' : '（你还没去过这一带，物资是按地貌推的）');
+      h += '<div class="' + cls + '" style="background:' + typeColor(def.type) + ';--dc:' + dangerColor(def.tier) + '"' +
+        ' title="' + esc(tip) + '" role="button" tabindex="0" onclick="V4World.pickRegion(\'' + def.id + '\')">' +
+        '<i class="rnum d' + def.tier + '">' + def.tier + '</i>' +
+        '<b class="rnm">' + esc(def.short) + '</b>' +
+        (isHere ? '<i class="rpin">📍</i>' : '') +
         '</div>';
     }
   }
   h += '</div>';
-  const near = metaGrid().flat().filter((d): d is NonNullable<typeof d> => !!d && d.id !== here.id && regionTripFor(s, d.id).ok);
+
+  h += typeLegend();
+  h += dangerLegend();
+
+  if (sel && trip) h += renderRegionDetail(s, here, sel, trip);
+  else h += '<div class="rdetail empty">👆 点任意一格：显示那一带的地名、地貌、危险度、能弄到的物资，' +
+    '以及开过去要花多少油和行动力。</div>';
+
+  /* 去不了的原因在详情里已经逐条给了，这里只说"整体状态"，不重复念。
+     只在"切比雪夫距离 ≤ MAX_HOPS"的格子里算（更远的必然超跳数，不必跑 BFS） */
+  const near = REGIONS.filter(d => d.id !== here.id && d.dist <= MAX_HOPS && regionTripFor(s, d.id).ok).length;
   if (!s.veh) {
-    h += '<div class="hint">🚗 <b>没有载具</b>：同一区域里的格子随便走，但要跨到别的区域（地图上相邻那一格）得开车——' +
-      '汽车修理厂 / 物流园里有能修的车，先弄辆车再说。</div>';
-  } else if (!near.length) {
-    h += '<div class="hint">车在门口，但油/行动力不够跨区：<b>油 ' + s.veh.fuel + '</b> · <b>行动力 ' + L.S.ap + '/' + apMaxOf(s.debt) + '</b>——' +
-      '加油站和物流园能抽油，行动力回安全屋睡一觉。</div>';
+    h += '<div class="hint">🚗 <b>没有载具</b>：区域里面的格子随便走，跨区得开车——' +
+      '汽车修理厂 / 物流园里有能修的车，先弄辆车再说。「本地地图」看区域内部（哪条街、哪栋楼）。</div>';
+  } else if (!near) {
+    h += '<div class="hint">车在门口，但油/行动力不够开到任何一格：<b>油 ' + s.veh.fuel + '</b> · <b>行动力 ' +
+      L.S.ap + '/' + apMaxOf(s.debt) + '</b>——加油站和物流园能抽油，行动力回安全屋睡一觉。</div>';
   } else {
-    h += '<div class="hint">车已就绪：点上面任何一个亮着的区域即可出发（跨区消耗行动力与燃油，车况也会磨损）。</div>';
+    h += '<div class="hint">车已就绪：现在有 <b>' + near + '</b> 个区域开得到（一箱油 + 一天体力最多 ' + MAX_HOPS +
+      ' 格，再远得中途落脚）。「本地地图」看区域内部的格子。</div>';
   }
-  h += '<div class="hint">🔎 区域里面的格子（哪条街、哪栋楼）切到「本地地图」看。</div>';
   return h;
 }
 
@@ -182,7 +252,9 @@ export function renderMapPanel(): string {
   const frags = pendingFragKeys();
 
   let h = '<div class="sect-title">' + (mapMode === 'region' ? '🌐 大区地图' : '🗺️ 本地地图') +
-    ' <span class="badge">' + (mapMode === 'region' ? '3×3 区域 · 跨区要开车' : '区块 (' + b.x + ',' + b.y + ') · 1km²') + '</span>' +
+    ' <span class="badge">' + (mapMode === 'region'
+      ? META_COLS + '×' + META_ROWS + ' · ' + REGIONS.length + ' 个区域 · 跨区要开车'
+      : '区块 (' + b.x + ',' + b.y + ') · 1km²') + '</span>' +
     '<span class="badge">走过 ' + s.steps + ' 个区块</span></div>';
   h += mapTabs();
   h += '<div class="whead">' +
@@ -196,15 +268,17 @@ export function renderMapPanel(): string {
       (isBloodMoonDay(L.S.day) ? '　🩸 血月' : '') + '</div>' +
   '</div>';
 
-  /* 大区视图：只有 3×3 那张图 + 跨区说明；本地视图：格子地图 + 预览/悬停 + 图例。
+  /* 大区视图：只铺 12×12 那张元地图 + 选中详情；本地视图：格子地图 + 预览/悬停 + 图例。
      两张图不再同时铺开——这是"不占空间"的关键。 */
   if (mapMode === 'region') {
     h += renderRegionPanel(s);
     h += '<details class="wlegend-box"><summary>图例与说明</summary><div class="wlegend">' +
       '<span class="lg"><i class="sw ic">📍</i>当前所在</span>' +
-      '<span class="lg"><i class="sw go-sw"></i>能开车过去（框色变绿）</span>' +
-      '<span class="lg"><i class="sw no-sw"></i>去不了（没车 / 油或行动力不够）</span>' +
-      '<span class="hint">区域名一直可见（地理常识）；每个区域的描述要亲自去过才解锁。跨区消耗行动力与燃油，车况也会掉。</span>' +
+      '<span class="lg"><i class="sw sel-sw"></i>选中的目标（路线会亮出来）</span>' +
+      '<span class="lg"><i class="sw path-sw"></i>行车路线（含途经区域）</span>' +
+      '<span class="lg"><i class="sw un-sw"></i>灰掉 = 还没去过（描述是按地貌推的）</span>' +
+      '<span class="hint">地名一直可见（地理常识），但每个区域第一次进去会有一段现场叙事。「余烬市区」是你醒来的地方，' +
+      '越往外越危险；一箱油 + 一天体力最多开 4 格，再远得中途落脚。</span>' +
       '</div></details>';
     return h;
   }
@@ -643,12 +717,41 @@ export const V4World = {
     };
   },
 
+  /** M17：点一格 = 选中它（不动身）——详情里再按「出发」，避免手滑把自己开出去 */
+  pickRegion(id: string) {
+    const s = sw();
+    selectedNote = '';
+    /* 点"当前所在"那格 = 取消选中（不然没有取消的出口；详情里也有一个 × ） */
+    selectedRegion = id === s.region ? null : id;
+    L.render();
+  },
+
+  /** 取消选中（详情面板右上角的 ×） */
+  clearPick() { selectedRegion = null; selectedNote = ''; L.render(); },
+
+  /** M17 只读快照：大区元地图本身（探针/自检用，不给任何写能力） */
+  meta() {
+    return {
+      cols: META_COLS, rows: META_ROWS, home: homeRegion().id,
+      regions: REGIONS.map(r => ({
+        id: r.id, name: r.name, short: r.short, type: r.type, tier: r.tier,
+        col: r.col, row: r.row, dist: r.dist, resources: r.resources,
+      })),
+    };
+  },
+
+  /** M17 只读：某个区域的行车报价（含途经路线），探针用它挑"多跳目标"来验收 */
+  trip(id: string) { return regionTripFor(sw(), id); },
+
   /** M12 跨区域：先判定（没车/没油/行动力不够都给理由），通过才扣成本再换图 */
   travelRegion(id: string) {
     const S = L.S, s = sw();
     const trip = regionTripFor(s, id);
     if (!trip.ok) {
+      selectedRegion = id;
+      selectedNote = '出发失败：' + (trip.why || '') + (trip.hint ? '　' + trip.hint : '');
       L.toast('去不了 ' + regionName(id), (trip.why || '') + (trip.hint ? '　' + trip.hint : ''), 'bad');
+      L.render();
       return;
     }
     const fuelCost = trip.fuel, apCost = trip.ap;
@@ -665,6 +768,7 @@ export const V4World = {
     if (r.firstEnter) L.log('📖 ' + r.firstEnter, 'dim');
     if (s.veh && s.veh.hp <= 0) L.log('🔧 车在半路就开始冒烟了——得找地方修车，不然回不去。', 'danger');
     preview = null;
+    selectedRegion = null; selectedNote = '';        // 落地了就别继续高亮"上一个目标"
     L.render();
   },
 

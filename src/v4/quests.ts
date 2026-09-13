@@ -15,7 +15,7 @@ import {
   emptyStory, ensureStory, introOf, nextObjective, objMetricLabel, storyTick, type StoryState,
 } from './story-core';
 import { ensureSaveWorld, worldOf, type SaveWorld } from './worldstate';
-import { HOME_REGION, REGIONS, regionName } from './regions-core';
+import { HOME_REGION, REGIONS, regionById, regionName } from './regions-core';
 
 const S = () => L.S as any;
 const sw = (): SaveWorld => ensureSaveWorld(S());
@@ -176,7 +176,7 @@ export function storyHtml(): string {
   } else {
     h += '<h3>第 ' + cur.no + ' 章 · ' + cur.title + ' <span class="sub">' + cur.sub + '</span></h3>' +
       '<p class="v4story-intro">' + introOf(cur, sy) + '</p>';
-    h += '<div class="hint">📍 ' + chapterRegionHint(v, sw().region, hasVehicle()) + '</div>';
+    h += '<div class="hint">📍 ' + chapterRegionHint(v, (regionById(sw().region)?.type ?? '') as any, hasVehicle()) + '</div>';
     for (const o of v.objs) {
       h += '<div class="v4obj' + (o.done ? ' ok' : '') + '">' +
         '<div class="row"><span class="nm">' + (o.done ? '✅ ' : '◇ ') + o.def.text + '</span><span class="spacer"></span>' +

@@ -128,25 +128,59 @@
 .v4world .wmtab.on{background:#121a22;border-color:var(--accent);color:var(--bone);box-shadow:inset 0 0 0 1px rgba(92,200,255,.2)}
 .v4world .wmtab .mbadge{font-size:10.5px;color:var(--dim);border:1px solid var(--line);border-radius:3px;padding:0 3px}
 .v4world .wmtab.on .mbadge{color:var(--accent);border-color:#2c4a5e}
-.wlegend .go-sw{background:#3f7d4f;border-color:#2f5c46}
+.wlegend .go-sw{background:#3f7d4f;border-color:#2f5c46}     /* 保留：其他地方仍在用（能去/去不了） */
 .wlegend .no-sw{background:#15171c;border-color:#262a33}
 
-/* ── M12 区域元地图（3×3）：当前所在 / 能开车去 / 去不了 三态一眼分清 ── */
-.v4world .rgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:8px 0;max-width:560px}
-.v4world .rcell{border:1px solid var(--line);border-radius:6px;padding:6px 4px;text-align:center;background:#0d1015;
-  display:flex;flex-direction:column;gap:2px;align-items:center;min-height:74px;justify-content:center}
-.v4world .rcell .ricon{font-size:16px;line-height:1}
-.v4world .rcell .rname{font-size:12px;color:var(--ink)}
-.v4world .rcell .rmeta{font-size:10px;color:var(--dim)}
-.v4world .rcell.here{border-color:var(--accent);background:#121a22;box-shadow:inset 0 0 0 1px rgba(92,200,255,.25)}
-.v4world .rcell.go{cursor:pointer;border-color:#3f7d4f}
-.v4world .rcell.go:hover{background:#141c16;border-color:var(--green)}
-.v4world .rcell.no{opacity:.5}
-.v4world .rcell.none{border-style:dashed;opacity:.15}
+/* ── M17 大区元地图（12×12 = 144 格）：底色 = 地貌类型，角上数字 = 危险度 ──
+   旧版是 3×3 的大卡片（一格一个图标+名字），放到 144 格上会撑爆版面，
+   所以改成"小色块"：颜色看地貌、数字看危险、名字给 2~3 字缩写，点开才有详情。 */
+.v4world .rcur{font-size:12.5px;color:var(--ink);margin:2px 0 4px}
+.v4world .rgrid{display:grid;grid-template-columns:repeat(12,1fr);gap:3px;margin:8px 0 6px;max-width:480px}
+.v4world .rcell2{position:relative;aspect-ratio:1/1;min-height:30px;border:1px solid rgba(255,255,255,.10);
+  border-radius:4px;display:flex;align-items:center;justify-content:center;cursor:pointer;overflow:hidden}
+.v4world .rcell2 .rnm{font-size:10px;font-weight:400;color:var(--bone);text-shadow:0 1px 2px rgba(0,0,0,.85);
+  letter-spacing:-.5px;pointer-events:none}
+.v4world .rcell2 .rnum{position:absolute;top:0;right:2px;font-size:8.5px;line-height:1.35;font-style:normal;
+  font-family:var(--mono,monospace);opacity:.95;pointer-events:none}
+.v4world .rcell2 .rpin{position:absolute;left:1px;bottom:3px;font-size:9px;font-style:normal;pointer-events:none}
+/* 底边条 = 危险度（绿→红）。底色管"是什么地貌"，底边管"多危险"——两个维度互不抢戏，
+   整张图一眼就能看出危险度是**从中心往外涨**的（评审 #2 要的效果）。 */
+.v4world .rcell2::after{content:'';position:absolute;left:0;right:0;bottom:0;height:3px;background:var(--dc,#555)}
+.v4world .rcell2:hover{border-color:var(--accent);filter:brightness(1.25)}
+.v4world .rcell2.unseen{opacity:.62}                                  /* 没去过：灰一点，但地貌与危险梯度仍看得见 */
+.v4world .rcell2.here{border-color:#e9e5db;box-shadow:inset 0 0 0 1px #e9e5db}
+.v4world .rcell2.home{box-shadow:0 0 0 1px #d9a24a,0 0 9px rgba(217,162,74,.5)}   /* 余烬：家会发光 */
+.v4world .rcell2.sel{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
+.v4world .rcell2.onpath{box-shadow:inset 0 0 0 2px rgba(92,200,255,.75)}
+.v4world .rcell2.none{background:#0b0e12;border-style:dashed;opacity:.2;cursor:default}
+/* 危险度：数字与底色都用同一套梯度色（绿→黄→红），角落与中心一眼分得开 */
+.v4world .rnum.d1{color:#78c98a}.v4world .rnum.d2{color:#c6d06a}.v4world .rnum.d3{color:#e0b45c}
+.v4world .rnum.d4{color:#e08a5c}.v4world .rnum.d5{color:#ef6f6f}
+.v4world .rlg{margin:2px 0 4px}
+.v4world .rlg .rnum{position:static;font-size:10px;width:10px;text-align:center}
+.v4world .rlegend{font-size:10px}
+.v4world .rdetail{margin:8px 0 4px;padding:8px 10px;border:1px solid var(--line);border-left:3px solid var(--accent);
+  border-radius:5px;background:#0b0e12}
+.v4world .rdetail.empty{border-left-color:var(--line);color:var(--dim);font-size:11.5px;line-height:1.7}
+.v4world .rdetail .rdhd{font-size:13px;color:var(--bone);display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:4px}
+.v4world .rdetail .rdhd .tag{font-size:10.5px}
+.v4world .rdetail .rdhd .rclose{margin-left:auto;padding:0 6px;min-height:20px;font-size:11px;line-height:1}
+.v4world .rdetail .rtags{font-size:11px;color:var(--dim);margin:4px 0}
+.v4world .rdetail .rtags .tag{margin-right:4px}
+.v4world .rdetail .rgo{margin-top:6px;font-size:12.5px;color:var(--ink);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.v4world .rdetail .rgo.ok{color:var(--green)}
+.v4world .rdetail .rgo.bad{color:var(--danger,#e06c6c)}
+.v4world .rdetail .rgo .hint{flex-basis:100%}
+.wlegend .sel-sw{background:transparent;border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+.wlegend .un-sw{background:#3a3f47;border-color:#252a31;opacity:.5}
+.v4world .rgridwrap{overflow-x:auto}
 @media (max-width:560px){
-  .v4world .rcell{min-height:70px;padding:8px 2px}
-  .v4world .rcell .rname{font-size:12.5px}
-  .v4world .rcell .rmeta{font-size:11px}
+  /* 手机上 12 列只剩 ~26px 一格，2~3 字的地名会被切掉一半——干脆只留"颜色 + 危险数字"，
+     地貌靠下面的图例认，地名点开详情看（比切一半的字干净） */
+  .v4world .rgrid{gap:2px;max-width:100%}
+  .v4world .rcell2{min-height:24px}
+  .v4world .rcell2 .rnm{display:none}
+  .v4world .rcell2 .rnum{font-size:8.5px}
 }
 
 /* ── M13 任务页：大故事（章节）+ 委托（接单板） ──

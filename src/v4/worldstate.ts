@@ -3,7 +3,7 @@
    - 旅行规划 = 寻路 + 行动力/燃油核算；遭遇判定也在这里，UI 只负责展示与落地副作用。 */
 import { generateWorld, bkey, blockAt, revealAround, WORLD_W, WORLD_H } from './worldgen';
 import { fragSpots } from './quest4';
-import { HOME_REGION, regionById, regionSeed } from './regions-core';
+import { HOME_REGION, regionById, regionSeed, setActiveRegions } from './regions-core';
 import type { Block, WorldState } from '../types';
 export interface VehState { fuel: number; hp: number }
 
@@ -59,8 +59,8 @@ export interface SaveWorld extends RegionProgress {
 
 let cache: { key: string; w: WorldState } | null = null;
 /** 地形生成器版本：**改了 worldgen 的产出就 +1**（BETA 阶段允许地图重画）。
-    v1 = M12 的噪声撒点；v2 = M15 的土地利用分区生成。 */
-export const WORLD_VER = 2;
+    v1 = M12 的噪声撒点；v2 = M15 的土地利用分区生成；v3 = M17 元地图改成 12×12 程序化区域。 */
+export const WORLD_VER = 3;
 /** 这一局是否刚刚做过"地图重画"迁移（main.ts 读一次，用来给玩家一句说明） */
 let migrated = false;
 export const takeWorldMigration = (): boolean => { const m = migrated; migrated = false; return m; };
@@ -72,8 +72,11 @@ let replays = 0;
 export const replayCount = () => replays;
 
 /** 世界对象按 "种子+区域" 缓存：同一存档在同一区域反复 render 不重复生成。
-    第二参数是**必填**的——不给区域就默认主城是个很容易埋的坑（会拿着别人的地图算坐标）。 */
+    第二参数是**必填**的——不给区域就默认主城是个很容易埋的坑（会拿着别人的地图算坐标）。
+    M17：元地图本身也是按种子生成的，所以这里是"对齐当前种子"的唯一咽喉点
+    （所有拿世界/区域的地方都会经过 worldOf 或 ensureSaveWorld）。 */
 export function worldOf(seed: string, region: string): WorldState {
+  setActiveRegions(seed);
   const key = seed + '::' + region;
   if (!cache || cache.key !== key) cache = { key, w: buildRegionWorld(seed, region) };
   return cache.w;
@@ -104,6 +107,7 @@ export function markVisited(w: WorldState, sw: SaveWorld, x: number, y: number):
 }
 
 export function defaultSaveWorld(seed: string): SaveWorld {
+  setActiveRegions(seed);                             // M17：先按种子定好元地图，HOME_REGION 才有意义
   const w = worldOf(seed, HOME_REGION);
   const sw: SaveWorld = {
     v: 1, wv: WORLD_VER, seed, region: HOME_REGION, regions: {}, seenRegions: { [HOME_REGION]: 1 }, regionVisits: { [HOME_REGION]: 1 }, regionZones: {},
@@ -170,6 +174,8 @@ export function ensureSaveWorld(S: any): SaveWorld {
     if (S) S.world = sw;
     return sw;
   }
+  /* M17：元地图是按种子生成的 —— 先对齐当前种子的区域表，后面所有 regionById / HOME_REGION 才正确 */
+  if (typeof sw.seed === 'string' && sw.seed) setActiveRegions(sw.seed);
   const w0 = worldOf(sw.seed, typeof sw.region === 'string' && regionById(sw.region) ? sw.region : HOME_REGION);
   /* M15.1：地图重画。地形生成器版本对不上（老档没有 wv，或 worldgen 改过）→
      把**地形相关的进度**全部清掉，只保留人物进度（天/血/背包/材料/据点/成就/任务/剧情）。

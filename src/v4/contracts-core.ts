@@ -9,14 +9,17 @@
  *     否则开车过去再开回来就完成了，跨区委托会退化成"跑腿费"。
  *   · 赏金预算：同一天刷出来的委托，材料奖励总和不超过 `20 + 2×天数`（防止委托变成无限材料机）
  */
-import { REGIONS, regionName } from './regions-core';
+import { MAX_HOPS, REGIONS, regionName, regionPath, type RegionType, typeLabel } from './regions-core';
 import { foeName, poiName } from './labels';
 
 export type Metric =
   | 'kills' | 'deep' | 'hordes' | 'nights'
   | `killBy:${string}` | `zone:${string}` | `region:${string}`
   /** M14：在某个区域里搜刮（`rzone:<区域>:<poiId|*>`，`*` = 该区域任意地点） */
-  | `rzone:${string}`;
+  | `rzone:${string}`
+  /** M17：到访过某种**类型**的区域（`rtype:industry`）——元地图改成程序化生成后，
+      剧情/委托不能再写死"去江北"，只能写"去一片工业区" */
+  | `rtype:${RegionType}`;
 
 export interface ContractReward { mat?: number; item?: string; n?: number }
 
@@ -105,6 +108,12 @@ export function metricNow(metric: Metric, snap: Snap): number {
   if (kind === 'killBy') return snap.killBy[key] ?? 0;
   if (kind === 'zone') return snap.zones[key] ?? 0;
   if (kind === 'region') return snap.regions[key] ?? 0;
+  if (kind === 'rtype') {
+    /* 该类型的所有区域里，到访次数之和（去过的算 1 次以上） */
+    let sum = 0;
+    for (const r of REGIONS) if (r.type === key) sum += (snap.regions[r.id] ?? 0);
+    return sum;
+  }
   if (kind === 'rzone') {
     const p = parseRzone(key);
     if (!p) return 0;
@@ -125,6 +134,7 @@ export function metricLabel(metric: Metric): string {
   if (kind === 'killBy') return '击杀 ' + foeName(key);
   if (kind === 'zone') return '搜刮 ' + poiName(key);
   if (kind === 'region') return '前往 ' + regionName(key);
+  if (kind === 'rtype') return '到访' + typeLabel(key as RegionType) + '（任意一处）';
   if (kind === 'rzone') {
     const p = parseRzone(key);
     if (!p) return metric;
@@ -159,30 +169,55 @@ const LOCAL: Tpl[] = [
 ];
 /** 跨区委托：目标在别的区域，必须有车才跑得动（M12 区域门槛）。
  *  判定 = `rzone:<区域>:*`（在那个区域里搜刮 N 次）。为什么不指具体 POI：
- *  各区域地形是种子生成的，"江北一定有化工厂"这种假设会让委托永远做不完；
- *  为什么不是"到访一次"：开车过去立刻回来就完成了，跨区委托会退化成跑腿费。 */
-const FAR: { region: string; title: string; desc: string; days: number; need: number; mat: number; item?: string; n?: number; tier: number; from: string }[] = [
-  { region: 'dongjiao', title: '东郊的一趟', desc: '东郊农场带的人捎话过来：开车过去，在那边翻两处地方，把货带回来。', days: 4, need: 2, mat: 12, item: 'seed_veg', n: 3, tier: 2, from: '东郊捎话的人' },
-  { region: 'kuajiang', title: '跨江的桥面', desc: '跨江新区的桥面还算完整——车能过，靠两条腿走过去太远。那边至少翻两处。', days: 4, need: 2, mat: 13, item: 'tape', n: 4, tier: 2, from: '跑桥面这条线的人' },
-  { region: 'laocheng', title: '老城的旧图', desc: '老城遗址下面埋着旧管网图，值不少材料。开车去，别贪黑，翻三处再回来。', days: 4, need: 3, mat: 15, item: 'data', n: 2, tier: 3, from: '一个收旧图的老头' },
-  { region: 'jiangbei', title: '江北的托运', desc: '江北工业区有批材料等人去拉——走路不现实，得开车。到了那边翻三处。', days: 4, need: 3, mat: 16, item: 'chip', n: 2, tier: 3, from: '江东的货主' },
-  { region: 'xishan', title: '西山的木料', desc: '西山山区的木料堆在路边没人管：有车，就是你的。翻两处就够装一车。', days: 4, need: 2, mat: 14, item: 'wood', n: 6, tier: 3, from: '据点管建材的' },
-  { region: 'binhai', title: '滨海的渔获', desc: '滨海新区的水产仓库还锁着，钥匙在跑这条线的人手里。在那边翻三处。', days: 5, need: 3, mat: 18, item: 'fish', n: 4, tier: 3, from: '跑海货的' },
-  { region: 'nangang', title: '南港的集装箱', desc: '南港码头堆着没人认领的集装箱。开车去，翻三处，装得下多少算多少。', days: 5, need: 3, mat: 20, item: 'metal', n: 6, tier: 3, from: '码头上的人' },
-  { region: 'beiling', title: '北岭的通行证', desc: '没人敢去北岭。开价的人只说了一句："你开车去，别走路，在那边翻两处。"', days: 5, need: 2, mat: 24, item: 'keycard', n: 1, tier: 3, from: '不露面的人' },
+ *  各区域地形是种子生成的，"那片工业区一定有化工厂"这种假设会让委托永远做不完；
+ *  为什么不是"到访一次"：开车过去立刻回来就完成了，跨区委托会退化成跑腿费。
+ *  M17：元地图是程序化生成的（12×12），所以这里改成**按区域类型挑目标**——
+ *  模板里写"要一片工业区/农田/港区"，实际挑哪个区由当前世界的区域表决定。 */
+const FAR: { want: RegionType; title: string; desc: string; days: number; need: number; mat: number; item?: string; n?: number; tier: number; from: string }[] = [
+  { want: 'farm', title: '跑一趟农田', desc: '城外农场带的人捎话过来：开车过去，在那边翻两处地方，把货带回来。', days: 4, need: 2, mat: 12, item: 'seed_veg', n: 3, tier: 2, from: '捎话的农夫' },
+  { want: 'suburb', title: '城郊的托运', desc: '城郊仓库区有批材料等人去拉——靠两条腿走过去太远，得有车。那边至少翻两处。', days: 4, need: 2, mat: 13, item: 'tape', n: 4, tier: 2, from: '跑这条线的人' },
+  { want: 'ruins', title: '废墟里的旧图', desc: '塌掉的旧街区下面埋着旧管网图，值不少材料。开车去，别贪黑，翻三处再回来。', days: 4, need: 3, mat: 15, item: 'data', n: 2, tier: 3, from: '一个收旧图的老头' },
+  { want: 'industry', title: '工业区的托运', desc: '工业区有批材料等人去拉——走路不现实，得开车。到了那边翻三处。', days: 4, need: 3, mat: 16, item: 'chip', n: 2, tier: 3, from: '收货的货主' },
+  { want: 'forest', title: '山里的木料', desc: '林区的木料堆在路边没人管：有车，就是你的。翻两处就够装一车。', days: 4, need: 2, mat: 14, item: 'wood', n: 6, tier: 3, from: '据点管建材的' },
+  { want: 'water', title: '港区的渔获', desc: '港区的水产仓库还锁着，钥匙在跑这条线的人手里。在那边翻三处。', days: 5, need: 3, mat: 18, item: 'fish', n: 4, tier: 3, from: '跑海货的' },
+  { want: 'industry', title: '集装箱码头', desc: '码头堆着没人认领的集装箱。开车去，翻三处，装得下多少算多少。', days: 5, need: 3, mat: 20, item: 'metal', n: 6, tier: 3, from: '码头上的人' },
+  { want: 'military', title: '军管区的通行证', desc: '没人敢去军管区。开价的人只说了一句："你开车去，别走路，在那边翻两处。"', days: 5, need: 2, mat: 24, item: 'keycard', n: 1, tier: 3, from: '不露面的人' },
+  { want: 'residential', title: '居民区的清单', desc: '居民楼里还有没人带走的东西。开车过去，翻两处，把清单上的凑齐。', days: 4, need: 2, mat: 11, item: 'choco', n: 3, tier: 2, from: '营地管账的' },
 ];
-const FAR_POI_FALLBACK: Record<string, string[]> = {
-  jiangbei: ['waterworks', 'tunnel', 'depot'], dongjiao: ['farm', 'sawmill'],
-  laocheng: ['ruins', 'apartment'], beiling: ['military', 'outpost'],
-  kuajiang: ['construction', 'warehouse'], binhai: ['sunken', 'garage'],
-  xishan: ['lumber', 'tunnel'], nangang: ['depot', 'warehouse'],
-};
 
 export interface RollOpts {
   /** 当前区域里有没有这个 POI（跨区以后地形是种子生成的，本地委托不能指向不存在的地方） */
   hasPoi?: (poi: string) => boolean;
   /** 玩家当前所在区域：不给本站发"跨区"委托 */
   region?: string;
+}
+
+/** M17：按类型挑一个"真能开车去"的目标区域。
+ *  两条硬约束（都是实测踩出来的）：
+ *   ① 别再发"一趟开不到"的委托——车一箱油 + 一天体力最多 MAX_HOPS 格，超了玩家接了就完不成；
+ *   ② 同类型里挑最近的几个随机一个，避免每天都发同一处。
+ *  实在没有一趟能到的（例如军管区只在深山角落），退化成"最近的那个"（玩家可以中途落脚，两天跑完）。 */
+function pickFarRegion(want: RegionType, curId: string | undefined, rng: () => number) {
+  const cur = curId ? REGIONS.find(r => r.id === curId) : null;
+  const hops = (id: string) => cur ? (regionPath(cur.id, id)?.length ?? 99) - 1 : 0;
+  const pool = REGIONS
+    .filter(r => r.type === want && r.id !== curId && !r.homeBase && r.type !== 'water')
+    .map(r => ({ r, d: cur ? Math.max(Math.abs(r.col - cur.col), Math.abs(r.row - cur.row)) : r.dist, h: hops(r.id) }))
+    .sort((a, b) => a.d - b.d);
+  if (!pool.length) return null;
+  const inOneTrip = pool.filter(x => x.h <= MAX_HOPS);
+  const cands = (inOneTrip.length ? inOneTrip : pool).slice(0, 4);
+  return cands[Math.floor(rng() * cands.length)].r;
+}
+
+/** 目标区在当前区的哪个方向（文案用："往东北"） */
+function directionWord(target: { col: number; row: number }, curId: string | undefined): string {
+  const cur = curId ? REGIONS.find(r => r.id === curId) : null;
+  if (!cur) return '外面';
+  const dx = target.col - cur.col, dy = target.row - cur.row;
+  const ns = dy < 0 ? '北' : dy > 0 ? '南' : '';
+  const ew = dx < 0 ? '西' : dx > 0 ? '东' : '';
+  return (ns + ew) || '隔壁';
 }
 
 /** 刷委托板：每天固定 3 张（挂主线的 1 张 + 跨区 1 张（第 3 天起）+ 本地若干），受赏金预算约束 */
@@ -223,14 +258,20 @@ export function rollOffers(day: number, rng: () => number, mainStage = 0, opts: 
         都不满足就退一步取最便宜的那张，至少板子上还有跨区委托。 */
   if (day >= 3) {
     const start = Math.floor(rng() * FAR.length);
-    const order = FAR.map((_, i) => FAR[(start + i) % FAR.length]).filter(f => f.region !== cur);
-    const fits = order.find(f => spent + f.mat + 6 <= budget);
-    const chosen = fits || order.slice().sort((a, b) => a.mat - b.mat)[0];
+    const order = FAR.map((_, i) => FAR[(start + i) % FAR.length]);
+    /* 先把模板映射成"这个世界里真实存在的目标区域"：按类型挑，挑最近的几个之一（别发一张
+       要横穿整张元地图的委托——一箱油跑不到）。 */
+    const targets = order
+      .map(f => ({ f, region: pickFarRegion(f.want, cur, rng) }))
+      .filter((x): x is { f: typeof FAR[number]; region: NonNullable<ReturnType<typeof pickFarRegion>> } => !!x.region);
+    const fits = targets.find(x => spent + x.f.mat + 6 <= budget);
+    const chosen = fits ?? targets.slice().sort((a, b) => a.f.mat - b.f.mat)[0];
     if (chosen) {
+      const { f, region } = chosen;
       push({
-        id: 'far:' + chosen.region, title: chosen.title, desc: chosen.desc + '（得开车过去：' + regionName(chosen.region) + '）',
-        metric: ('rzone:' + chosen.region + ':*') as Metric, need: chosen.need, days: chosen.days, from: chosen.from,
-        reward: { mat: chosen.mat, item: chosen.item, n: chosen.n }, region: chosen.region, tier: chosen.tier,
+        id: 'far:' + region.id, title: f.title, desc: f.desc + '（得开车过去：' + region.name + '，往' + directionWord(region, cur) + '）',
+        metric: ('rzone:' + region.id + ':*') as Metric, need: f.need, days: f.days, from: f.from,
+        reward: { mat: f.mat, item: f.item, n: f.n }, region: region.id, tier: f.tier,
       }, 'far:' + day);
     }
   }

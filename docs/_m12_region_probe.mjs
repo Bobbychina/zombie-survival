@@ -48,57 +48,48 @@ async function openRegion() {
 }
 
 await openRegion()
+/* M17：大区地图从写死的 3×3 变成按种子生成的 12×12，区域 id 也是生成的——
+   探针不能再写死 'dongjiao'/'ember'，一律用 V4World.meta() 里的真实区域。 */
+const meta = JSON.parse(await ev(`JSON.stringify(V4World.meta())`))
+const homeId = meta.home
 const panel = await ev(`(() => {
-  const cells = [...document.querySelectorAll('.rcell')];
+  const cells = [...document.querySelectorAll('#v4world .rcell2')];
   const t = document.body.innerText;
   return JSON.stringify({
     cells: cells.length,
     here: cells.filter(c => c.className.includes('here')).length,
-    go: cells.filter(c => c.className.includes('go')).length,
-    no: cells.filter(c => c.className.includes('no')).length,
-    hasRegionTitle: /区域/.test(t), hasHome: /余烬/.test(t), noCarHint: /没有载具/.test(t),
+    hasRegionTitle: /当前在/.test(t), hasHome: /余烬/.test(t), noCarHint: /没有载具/.test(t),
   });
 })()`)
 console.log('  区域面板: ' + panel)
 const p = JSON.parse(panel)
-ok('3×3 共 9 个区域格子都渲染出来了', p.cells === 9, 'cells=' + p.cells)
-ok('当前区域标为 here，其余按能不能去分色', p.here === 1 && p.go + p.no === 8, JSON.stringify(p))
+ok('12×12 = 144 个区域格子都渲染出来了', p.cells === 144, 'cells=' + p.cells)
+ok('当前区域标为 here（有且只有一个）', p.here === 1, JSON.stringify(p))
 ok('面板显示当前区域名与"没车"提示', p.hasRegionTitle && p.hasHome && p.noCarHint, JSON.stringify(p))
 
-// 没车时点相邻区域 → 应该被拦（toast 给出理由），区域不变
-const blocked = await ev(`(() => {
-  const before = window.DSHWorldRegion ? '' : '';
-  const goCell = [...document.querySelectorAll('.rcell')].find(c => c.className.includes('go'));
-  const before2 = document.body.innerText.match(/区块 \\((\\d+),(\\d+)\\)/)?.[0] || '';
-  if (goCell) goCell.click();                       // 没车时 go 类不该存在，这里点一下防意外
-  V4World.travelRegion('dongjiao');                 // 直接调（玩家点格子走的就是它）
-  return JSON.stringify({ before: before2, toast: (document.querySelector('.toast, #toast') || {}).textContent || '' });
+// 没车时点相邻区域 → 应该被拦（详情给出理由），区域不变
+await ev(`(() => {
+  V4World.travelRegion('${meta.regions.find(r => r.dist === 1).id}');   // 玩家点「出发」走的就是它
+  return 1;
 })()`)
-await sleep(600)
-const regionAfter = await ev(`(() => {
-  const t = document.body.innerText;
-  const m = t.match(/区域\\s*(\\S+?)\\s*·/);
-  return JSON.stringify({ region: m ? m[1] : '', hint: /没有载具/.test(t) });
-})()`)
-console.log('  没车尝试跨区: ' + blocked + ' | 之后: ' + regionAfter)
-ok('没车时跨区被拦住（仍在原区域）', /余烬/.test(regionAfter), regionAfter)
+await sleep(800)
+const blocked = String(await ev(`(document.querySelector('#v4world .rdetail') || {}).textContent || ''`))
+const regionAfter = JSON.parse(await ev(`JSON.stringify(V4World.snapshot())`))
+console.log('  没车尝试跨区: ' + blocked)
+ok('没车时跨区被拦住（仍在原区域）', regionAfter.region === homeId, 'region=' + regionAfter.region)
+ok('被拦住时详情里给出原因（不是干瞪眼）', /靠两条腿|走不到|没有载具|⛔/.test(String(blocked)), String(blocked).replace(/\s+/g, ' ').slice(0, 90))
 
-// 给车：全走真实玩法 —— ① 传到本区载具点 ② 搜一下触发存档 ③ 补足修车材料（12 材料 + 2 汽油）④ 点「修车」
-const grant = await ev(`(async () => {
-  const snap = V4World.snapshot();
-  const w = V4.worldgen.generateWorld(snap.seed + '::' + snap.region);
-  let spot = null;
-  for (const k in w.blocks) {
-    const b = w.blocks[k];
-    if (b.poi && V4.POIS[b.poi] && V4.POIS[b.poi].feat === 'vehicle') { spot = b; break; }
-  }
+// 给车：全走真实玩法 —— ① 传到本区修车点 ② 搜一下触发存档 ③ 补足修车材料（12 材料 + 2 汽油）④ 点「修车」
+/* M17 注意：找点必须用 DEV.gotoPoi（内部走 worldOf，带主题偏置）；
+   直接调 V4.worldgen.generateWorld(seed::region) 拿到的是另一张图，传过去会站在空地上。 */
+const grant = await ev(`(() => {
+  const spot = DEV.gotoPoi({ feat: 'vehicle' });
   if (!spot) return JSON.stringify({ ok: false, why: '本区没有载具点' });
-  V4World.teleport(spot.x, spot.y);
   V4World.search(0);                          // 搜一下：顺手让游戏把存档写下来
-  await new Promise(r => setTimeout(r, 400));
   return JSON.stringify({ ok: true, poi: spot.poi, at: [spot.x, spot.y], hasSave: !!localStorage.getItem('zombie_survival_save_v2') });
 })()`)
 console.log('  传送到载具点: ' + grant)
+await sleep(500)
 
 // 补材料（改存档 = 模拟玩家攒够了），再重载
 const stocked = await ev(`(() => {
@@ -125,32 +116,47 @@ ok('在载具点花材料修出了车（有油有车况）', !!f1.veh && f1.veh.
 
 await ev(`(() => { const b = [...document.querySelectorAll('.tab, button')].find(e => /探索/.test(e.textContent||'')); if (b) b.click(); })()`)
 await sleep(800)
-const withCar = await ev(`(() => {
-  const cells = [...document.querySelectorAll('.rcell')];
-  return JSON.stringify({ go: cells.filter(c => c.className.includes('go')).length, no: cells.filter(c => c.className.includes('no')).length });
-})()`)
-console.log('  有车后面板: ' + withCar)
-ok('有车后相邻区域变成可点（8 个 go）', /"go":8/.test(withCar), withCar)
+await openRegion()
+/* 有车后：挑一个 1 跳就到的邻区（M17 的元地图上"东郊"这种写死名字已经不存在） */
+const hopTarget = JSON.parse(await ev(`JSON.stringify((() => {
+  for (const r of V4World.meta().regions) {
+    if (r.dist !== 1) continue;
+    const t = V4World.trip(r.id);
+    if (t.ok && t.hops === 1) return { id: r.id, name: r.name, trip: t };
+  }
+  return null;
+})())`))
+ok('有车后至少有一个"1 跳可达"的相邻区域', !!hopTarget, hopTarget ? hopTarget.name : 'none')
 
 const beforeSnap = JSON.parse(await ev(`JSON.stringify(V4World.snapshot())`))
-await ev(`(() => { const c = [...document.querySelectorAll('.rcell.go')].find(e => /东郊/.test(e.title||'')); if (c) c.click(); })()`)
+await ev(`(() => { V4World.pickRegion('${hopTarget.id}'); return 1; })()`)
+await sleep(500)
+const detail = String(await ev(`(document.querySelector('#v4world .rdetail') || {}).textContent || ''`))
+ok('点格子只选中：详情给出 ⚡/⛽ 报价与「出发」按钮（不动身）',
+  /⚡\d/.test(detail) && /⛽\d/.test(detail) && JSON.parse(await ev(`JSON.stringify(V4World.snapshot())`)).region === beforeSnap.region,
+  detail.replace(/\s+/g, ' ').slice(0, 90))
+await ev(`(() => { V4World.travelRegion('${hopTarget.id}'); return 1; })()`)
 await sleep(1500)
 const afterSnap = JSON.parse(await ev(`JSON.stringify(V4World.snapshot())`))
-console.log('  点格子跨区: ' + JSON.stringify(afterSnap))
-ok('点区域格子真的跨到了东郊', afterSnap.region === 'dongjiao', 'region=' + afterSnap.region)
-ok('跨区扣油 2 点、磨损车况 4%', !!afterSnap.veh && afterSnap.veh.fuel === beforeSnap.veh.fuel - 2 && afterSnap.veh.hp === beforeSnap.veh.hp - 4,
+console.log('  点格子跨区: ' + JSON.stringify({ region: afterSnap.region, veh: afterSnap.veh, ap: afterSnap.ap }))
+ok('点「出发」真的跨到了目标区域', afterSnap.region === hopTarget.id, 'region=' + afterSnap.region + ' want=' + hopTarget.id)
+ok('跨区扣油 ' + hopTarget.trip.fuel + ' 点、磨损车况 4%',
+  !!afterSnap.veh && afterSnap.veh.fuel === beforeSnap.veh.fuel - hopTarget.trip.fuel && afterSnap.veh.hp === beforeSnap.veh.hp - 4,
   'fuel ' + beforeSnap.veh.fuel + '→' + afterSnap.veh.fuel + ' · hp ' + beforeSnap.veh.hp + '→' + afterSnap.veh.hp)
-ok('跨区扣行动力 3 点', afterSnap.ap === beforeSnap.ap - 3, 'ap ' + beforeSnap.ap + '→' + afterSnap.ap)
+ok('跨区扣行动力 ' + hopTarget.trip.ap + ' 点', afterSnap.ap === beforeSnap.ap - hopTarget.trip.ap, 'ap ' + beforeSnap.ap + '→' + afterSnap.ap)
 ok('已到过区域变成 2 个', afterSnap.seenRegions.length === 2, JSON.stringify(afterSnap.seenRegions))
 
 const shot = await send('Page.captureScreenshot', { format: 'png' })
 await fs.writeFile(outDir + '/m12-region-panel.png', Buffer.from(shot.result.data, 'base64'))
 
-await ev(`(() => { const c = [...document.querySelectorAll('.rcell.go')].find(e => /余烬/.test(e.title||'')); if (c) c.click(); })()`)
+/* 跨回主城：主城在元地图正中央，1~2 跳。这里测的是"跨区链路通不通"，
+   所以先把油/车况/行动力补满（不然会因为油不够而拦住，那是另一条被测过的分支）。 */
+await ev(`(() => { const s = DEV.state(); if (s.world.veh) { s.world.veh.fuel = 12; s.world.veh.hp = 100; } s.ap = 9; return 1; })()`)
+await ev(`(() => { V4World.travelRegion('${homeId}'); return 1; })()`)
 await sleep(1500)
 const backSnap = JSON.parse(await ev(`JSON.stringify(V4World.snapshot())`))
 console.log('  跨回主城: ' + JSON.stringify(backSnap))
-ok('能跨回主城', backSnap.region === 'ember', 'region=' + backSnap.region)
+ok('能跨回主城', backSnap.region === homeId, 'region=' + backSnap.region)
 ok('两个区域各留一份进度（冻结 1 份，当前区进度还在）', backSnap.frozenRegions.length === 1 && backSnap.visitedKeys > 0,
   'frozen=' + backSnap.frozenRegions.length + ' visited=' + backSnap.visitedKeys)
 console.log('\nconsole 错误: ' + (errs.length ? JSON.stringify(errs.slice(0, 3)) : '无'))

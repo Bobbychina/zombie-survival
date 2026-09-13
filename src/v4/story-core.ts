@@ -9,7 +9,7 @@
  *   · 指标只用不会因为换地图而失效的：区域到访(region:) / 击杀 / 深搜 / 尸潮 / 过夜 / 常见 POI
  */
 import { metricLabel, metricNow, type ContractReward, type Metric, type Snap } from './contracts-core';
-import { regionName } from './regions-core';
+import { typeColor, typeLabel, type RegionType } from './regions-core';
 
 export interface StoryObj { id: string; text: string; metric: Metric; need: number; hint: string }
 
@@ -30,7 +30,9 @@ export interface ChapterDef {
   no: number;                    // 1 起
   title: string;
   sub: string;                   // 一行副标题（UI 里跟标题同一行）
-  region: string;                // 主要发生地（跨区章会提示要开车）
+  /** M17：主要发生地的**类型**。元地图是程序化生成的（12×12），
+      所以剧情只能说"去一片工业区"，不能写死"去江北"。 */
+  regionType: RegionType;
   stage: number;                 // 需要 legacy 主线推进到这一阶段
   gate: string;                  // 这道门槛的人话说明（'' = 没有门槛）
   intro: string;                 // 开场叙事
@@ -57,7 +59,7 @@ export const emptyStory = (): StoryState => ({ chapter: 0, done: [], log: [], ch
 
 export const STORY: ChapterDef[] = [
   {
-    id: 'ch1', no: 1, title: '余烬', sub: '第 1 章 · 你醒得比城市晚', region: 'ember', stage: 0, gate: '',
+    id: 'ch1', no: 1, title: '余烬', sub: '第 1 章 · 你醒得比城市晚', regionType: 'core', stage: 0, gate: '',
     intro: '你在安全屋的地板上醒来，嘴里全是铁锈味。窗外没有车声，没有人声，只有很远的地方传来一声像门轴的声音——拖得很长。桌上有一张被水泡过的值班表，最上面一行写着：圣玛丽医院，三楼，档案室。',
     objs: [
       { id: 'ch1a', text: '摸进圣玛丽医院的档案室', metric: 'zone:hospital', need: 1, hint: '地图上找 🏥 医院（市区/郊区都有）' },
@@ -74,7 +76,7 @@ export const STORY: ChapterDef[] = [
     },
   },
   {
-    id: 'ch2', no: 2, title: '枪与秩序', sub: '第 2 章 · 有人比丧尸更早来过', region: 'ember', stage: 1, gate: '主线：弄到一把枪（搜第 9 分局）',
+    id: 'ch2', no: 2, title: '枪与秩序', sub: '第 2 章 · 有人比丧尸更早来过', regionType: 'core', stage: 1, gate: '主线：弄到一把枪（搜第 9 分局）',
     intro: '册子上的编号指向第 9 分局的证据室。警察不会把枪留在原地——但抢在所有人之前到的人，总会漏掉点什么。',
     introBy: {
       keep: '那本册子还贴在你胸口，硬邦邦的。编号指向第 9 分局的证据室——你没打算告诉任何人你要去那儿。',
@@ -88,7 +90,7 @@ export const STORY: ChapterDef[] = [
     reward: { mat: 22, item: 'ammo', n: 18 },
   },
   {
-    id: 'ch3', no: 3, title: '铁壳', sub: '第 3 章 · 门禁卡不长在门上', region: 'ember', stage: 2, gate: '主线：凑齐 3 片门禁卡',
+    id: 'ch3', no: 3, title: '铁壳', sub: '第 3 章 · 门禁卡不长在门上', regionType: 'core', stage: 2, gate: '主线：凑齐 3 片门禁卡',
     intro: '箭头尽头是一张贴在电箱上的手写通知：方舟实验室每层都要刷生物识别芯片，而芯片现在挂在那些穿装甲的东西身上。写通知的人签了名——「陈」，后面被划掉了。',
     objs: [
       { id: 'ch3a', text: '从装甲丧尸身上取下 2 片门禁卡', metric: 'killBy:armored', need: 2, hint: '装甲丧尸在市区/工业区/军事区一带' },
@@ -105,25 +107,25 @@ export const STORY: ChapterDef[] = [
     },
   },
   {
-    id: 'ch4', no: 4, title: '过江', sub: '第 4 章 · 车是这条路上唯一的货币', region: 'jiangbei', stage: 3, gate: '主线：备好防毒面具与防化服',
+    id: 'ch4', no: 4, title: '过江', sub: '第 4 章 · 车是这条路上唯一的货币', regionType: 'industry', stage: 3, gate: '主线：备好防毒面具与防化服',
     intro: '桥面还在，护栏塌了一半，中间停着一排没人再开的车。你要去江北工业区的中试厂——那里也许还有没被水泡过的药剂，也许只有更多穿装甲的东西。',
     introBy: {
       own: '地图上那个坐标是你自己从工牌背面读出来的，没有第二个人知道。桥面还在，护栏塌了一半——你要一个人过江。',
       hand: '收货人给的坐标比工牌上多了一行小字：中试厂，冷库，夜里别开灯。桥面还在，护栏塌了一半。',
     },
     objs: [
-      { id: 'ch4a', text: '开车过江，踏上江北工业区', metric: 'region:jiangbei', need: 1, hint: '探索页 → 区域面板 → 江北工业区（要车、要油）' },
-      { id: 'ch4b', text: '在江北撑过 3 个夜晚', metric: 'nights', need: 3, hint: '睡觉就会推进一天（任何地方都算）' },
+      { id: 'ch4a', text: '开车去一片工业区', metric: 'rtype:industry', need: 1, hint: '地图面板 → 大区地图 → 找棕色的工业区（要车、要油）' },
+      { id: 'ch4b', text: '在那边撑过 3 个夜晚', metric: 'nights', need: 3, hint: '睡觉就会推进一天（任何地方都算）' },
     ],
     outro: '中试厂的冷库里还亮着一盏应急灯，冰柜里整整齐齐码着三十七支安瓿，标签上是同一个批号。取走它们的人没有回来——地上有一双被拖走的鞋印，一直延伸到卷帘门外。',
     reward: { mat: 32, item: 'chem', n: 3 },
   },
   {
-    id: 'ch5', no: 5, title: '海边的电台', sub: '第 5 章 · 有人在喊，但喊的不是救援', region: 'binhai', stage: 4, gate: '主线：在据点架设无线电',
+    id: 'ch5', no: 5, title: '海边的电台', sub: '第 5 章 · 有人在喊，但喊的不是救援', regionType: 'water', stage: 4, gate: '主线：在据点架设无线电',
     intro: '安瓿上的批号对应一批只发往滨海新区的货。要说清楚这批药是怎么来的，得先找到当年那个广播电台——如果它还在发报，那就有人在守着它。',
     objs: [
-      { id: 'ch5a', text: '到滨海新区走一趟', metric: 'region:binhai', need: 1, hint: '区域面板 → 滨海新区（跨区要开车）' },
-      { id: 'ch5b', text: '去南港码头看看集装箱', metric: 'region:nangang', need: 1, hint: '区域面板 → 南港码头（危险 5，带够弹药）' },
+      { id: 'ch5a', text: '到港区/水边的区域走一趟', metric: 'rtype:water', need: 1, hint: '大区地图 → 找蓝色的港区/水域（跨区要开车）' },
+      { id: 'ch5b', text: '再去一趟危险 4 以上的外圈区域', metric: 'rtype:ruins', need: 1, hint: '大区地图 → 外圈灰紫色的废墟带（危险 4~5，带够弹药）' },
       { id: 'ch5c', text: '守一次夜，撑过一次尸潮', metric: 'hordes', need: 1, hint: '晚上待在据点，撑过夜袭' },
     ],
     outro: '电台的电子管还热着。录音带里是一个女人的声音，报着位置、报着人数，一遍又一遍：「实验室第六层以下没有通风。如果有人听到——别下去。」',
@@ -137,7 +139,7 @@ export const STORY: ChapterDef[] = [
     },
   },
   {
-    id: 'ch6', no: 6, title: '下到第六层', sub: '第 6 章 · 结局在那盏灯下面', region: 'ember', stage: 5, gate: '主线：坐标已确认（可以下实验室了）',
+    id: 'ch6', no: 6, title: '下到第六层', sub: '第 6 章 · 结局在那盏灯下面', regionType: 'core', stage: 5, gate: '主线：坐标已确认（可以下实验室了）',
     intro: '无线电架起来了，坐标锁在市中心地铁枢纽下方。录音带里那句"别下去"你已经听了七遍。这次带够了弹和药，也带够了别人的名字。',
     introBy: {
       tape: '录音带还在你包里，磁带被体温捂得发软。那句话你听了七遍，也想过七遍——这次下去，没人会知道结果，除非你自己带回来。',
@@ -291,14 +293,17 @@ export function chapterLine(v: ChapterView): string {
   return '第 ' + v.def.no + ' 章 · ' + v.def.title + '（' + done + '/' + total + ' 目标）';
 }
 
-/** 章节主要发生地的提示：跨区章要开车 */
-export function chapterRegionHint(v: ChapterView, curRegion: string, hasVehicle: boolean): string {
-  const def = v.def;
-  if (def.region === curRegion) return '发生地：' + regionName(def.region) + '（你在这儿）';
+/** 章节主要发生地的提示：M17 起按**类型**说（"去一片工业区"），并告诉玩家怎么在大区地图上找 */
+export function chapterRegionHint(v: ChapterView, curType: RegionType | '', hasVehicle: boolean): string {
+  const want = typeLabel(v.def.regionType);
+  if (v.def.regionType === curType) return '发生地：' + want + '（你脚下就是这种地方）';
   return hasVehicle
-    ? '发生地：' + regionName(def.region) + '（跨区，开车过去）'
-    : '发生地：' + regionName(def.region) + '（跨区——先弄辆车，走路到不了）';
+    ? '发生地：' + want + '（得开车过去——在大区地图上找这种颜色的格子）'
+    : '发生地：' + want + '（跨区——先弄辆车，走路到不了）';
 }
+
+/** 章节发生地的颜色（大区地图上找同色格子用） */
+export const chapterColor = (v: ChapterView): string => typeColor(v.def.regionType);
 
 /** 目标指标的人话名字（UI 里显示"判定依据"用，避免玩家猜） */
 export const objMetricLabel = (o: StoryObj): string => metricLabel(o.metric) + ' ×' + o.need;

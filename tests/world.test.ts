@@ -9,7 +9,7 @@ import {
 } from '../src/v4/worldstate';
 import { foesFor, pickLoot, rollSearchKind, searchWeights } from '../src/v4/search-core';
 import { POIS } from '../src/v4/pois';
-import { HOME_REGION } from '../src/v4/regions-core';
+import { HOME_REGION, REGIONS, regionById } from '../src/v4/regions-core';
 
 const seq = (...xs: number[]) => { let i = 0; return () => xs[Math.min(i++, xs.length - 1)]; };
 const w = worldOf('test-seed-1', HOME_REGION);
@@ -216,37 +216,42 @@ describe('M12 多区域大世界', () => {
     const S: any = { seed: 'multi-1', world: null };
     const sw = defaultSaveWorld('multi-1');
     S.world = sw;
+    /* M17：邻居和"最外圈"都要从**这个世界真实的区域表**里取（元地图是程序化生成的） */
+    const neighbor = REGIONS.find(r => r.id !== HOME_REGION && r.type !== 'water'
+      && Math.max(Math.abs(r.col - regionById(HOME_REGION)!.col), Math.abs(r.row - regionById(HOME_REGION)!.row)) === 1)!;
     const wHome = worldOf(sw.seed, HOME_REGION);
     markVisited(wHome, sw, wHome.home.x, wHome.home.y);
     sw.visited['5,5'] = 1;                       // 主城里踩过的一格
 
-    const r1 = switchRegion(S, sw, 'dongjiao');
+    const r1 = switchRegion(S, sw, neighbor.id);
     expect(r1.ok).toBe(true);
-    expect(sw.region).toBe('dongjiao');
+    expect(sw.region).toBe(neighbor.id);
     expect(sw.visited['5,5']).toBeUndefined();   // 换区后顶层 map 是这个区域的（空）
     expect(r1.firstEnter).toBeTruthy();          // 首次进入给叙事钩子
-    const wNew = worldOf(sw.seed, 'dongjiao');
+    const wNew = worldOf(sw.seed, neighbor.id);
     expect(sw.cur).toEqual({ x: wNew.home.x, y: wNew.home.y });
-    expect(sw.seenRegions.dongjiao).toBe(1);
+    expect(sw.seenRegions[neighbor.id]).toBe(1);
     expect(sw.regions[HOME_REGION].visited['5,5']).toBe(1);   // 主城进度被冻住了
 
-    sw.visited['2,2'] = 1;                       // 在东郊踩一格
+    sw.visited['2,2'] = 1;                       // 在新区域踩一格
     const r2 = switchRegion(S, sw, HOME_REGION);
     expect(r2.ok).toBe(true);
     expect(sw.visited['5,5']).toBe(1);           // 回主城：老进度还在
-    expect(sw.visited['2,2']).toBeUndefined();   // 东郊的进度留在东郊
-    expect(sw.regions.dongjiao.visited['2,2']).toBe(1);
+    expect(sw.visited['2,2']).toBeUndefined();   // 那边的进度留在那边
+    expect(sw.regions[neighbor.id].visited['2,2']).toBe(1);
     expect(r2.firstEnter).toBeUndefined();       // 不是第一次来主城
   });
 
-  it('每个区域的 24×24 世界不一样（同一存档、不同区域）', () => {
+  it('每个区域的 24×24 世界不一样（同一存档、不同区域），且危险度按区域层级上浮', () => {
     const a = worldOf('multi-2', HOME_REGION);
-    const b = worldOf('multi-2', 'beiling');
+    const outer = REGIONS.filter(r => r.type !== 'water').sort((x, y) => y.tier - x.tier)[0];
+    const b = worldOf('multi-2', outer.id);
     const aTerra = Object.keys(a.blocks).map(k => a.blocks[k].biome).join('');
     const bTerra = Object.keys(b.blocks).map(k => b.blocks[k].biome).join('');
     expect(aTerra).not.toBe(bTerra);
-    // 外圈危险度整体更高（tier 5 vs tier 1）
+    // 外圈（危险层级更高）的整体危险度更高
     const avg = (w: typeof a) => Object.keys(w.blocks).reduce((s, k) => s + w.blocks[k].danger, 0) / Object.keys(w.blocks).length;
+    expect(outer.tier).toBeGreaterThan(1);
     expect(avg(b)).toBeGreaterThan(avg(a));
   });
 

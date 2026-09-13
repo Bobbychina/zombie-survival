@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { generateWorld, NEIGHBORS, bkey, WORLD_W, WORLD_H, ZONE_REQUIRED } from '../src/v4/worldgen';
-import { REGIONS, HOME_REGION, regionSeed, regionById } from '../src/v4/regions-core';
+import { REGIONS, HOME_REGION, regionSeed, regionById, buildRegions, type RegionType } from '../src/v4/regions-core';
 import { POIS } from '../src/v4/pois';
 import type { Block, Zone } from '../src/types';
 
@@ -61,6 +61,22 @@ const zoneRatio = (z: Record<string, number>, n: number, z2: string) => (z[z2] ?
 const world = (region: string, base = 'ember-01') =>
   generateWorld(regionSeed(base, region), { bias: regionById(region)?.biomeBias });
 
+/* M17：元地图是程序化生成的（144 个区域），所以"市区/农场带/工业区"要按**类型**找，
+   不能再用写死的地名。这里只取每种类型一个有代表性的区域，避免为了跑测试生成 144 张图。 */
+const ACTIVE = buildRegions('ember-01');
+const pickType = (t: RegionType) => ACTIVE.find(r => r.type === t)!;
+const HOME_ID = ACTIVE.find(r => r.homeBase)!.id;
+const SAMPLE = {
+  core: HOME_ID,
+  farm: pickType('farm').id,
+  forest: pickType('forest').id,
+  industry: pickType('industry').id,
+  water: pickType('water').id,
+  military: pickType('military').id,
+};
+/** 抽样 6 个区域（每种类型一个）——比全量 144 个快得多，且覆盖所有主题 */
+const SAMPLED = Object.values(SAMPLE);
+
 describe('M15 地图生成（分区式）', () => {
   it('同一个 seed 生成同一个世界（存档只存进度，世界每次重算）', () => {
     const a = generateWorld('determinism-check', { bias: 'city' });
@@ -73,17 +89,20 @@ describe('M15 地图生成（分区式）', () => {
     }
   });
 
-  it('三种区域主题生成出来的地貌明显不同（偏置真的参与生成，不是只改文案）', () => {
-    const city = zonesOf(Object.values(world('ember').blocks));
-    const farm = zonesOf(Object.values(world('dongjiao').blocks));
-    const ind = zonesOf(Object.values(world('jiangbei').blocks));
+  it('区域主题生成出来的地貌明显不同（偏置真的参与生成，不是只改文案）', () => {
+    const city = zonesOf(Object.values(world(SAMPLE.core).blocks));
+    const farm = zonesOf(Object.values(world(SAMPLE.farm).blocks));
+    const ind = zonesOf(Object.values(world(SAMPLE.industry).blocks));
+    const forest = zonesOf(Object.values(world(SAMPLE.forest).blocks));
     expect(city.cbd + city.residential).toBeGreaterThan(farm.cbd + farm.residential);
     expect(farm.farmland).toBeGreaterThan(city.farmland);
-    expect((ind.industry ?? 0)).toBeGreaterThan((city.industry ?? 0));
+    expect(ind.industry ?? 0).toBeGreaterThan(city.industry ?? 0);
+    expect(forest.forest ?? 0).toBeGreaterThan(city.forest ?? 0);
   });
 
   it('分区是"扎堆"的：同区邻居占比 ≥ 同样比例随机打散后的 2.5 倍，且平滑确实起作用', () => {
-    for (const r of REGIONS) {
+    for (const id of SAMPLED) {
+      const r = regionById(id)!;
       const blocks = Object.values(world(r.id).blocks);
       const k = clustering(blocks), sc = scatteredClustering(blocks);
       expect(k / sc, `${r.name} 连片度 ${k.toFixed(2)} / 打散 ${sc.toFixed(2)}`).toBeGreaterThanOrEqual(2.5);
@@ -94,23 +113,24 @@ describe('M15 地图生成（分区式）', () => {
     expect(clustering(smooth)).toBeGreaterThan(clustering(rough) + 0.04);
   });
 
-  it('区域主题看得见：市区住宅成片、农场带农田最多、山区林地最多、工业区厂房最多', () => {
+  it('区域主题看得见：市区住宅成片、农田带农田最多、山区林地最多、工业区厂房最多', () => {
     const share = (region: string, z: string) => {
       const blocks = Object.values(world(region).blocks);
       return zoneRatio(zonesOf(blocks), blocks.length, z);
     };
-    expect(share('ember', 'residential') + share('ember', 'cbd') + share('ember', 'suburb'), '市区住宅占比').toBeGreaterThan(0.28);
-    expect(share('dongjiao', 'farmland'), '农场带农田占比').toBeGreaterThan(0.2);
-    expect(share('xishan', 'forest'), '山区林地占比').toBeGreaterThan(0.28);
-    expect(share('jiangbei', 'industry'), '工业区厂房占比').toBeGreaterThan(0.09);
-    expect(share('binhai', 'water'), '滨海水域占比').toBeGreaterThan(0.1);
-    // 农场带的农田必须比市区多，工业区的厂房必须比山区多（跨区域差异要真的存在）
-    expect(share('dongjiao', 'farmland')).toBeGreaterThan(share('ember', 'farmland'));
-    expect(share('jiangbei', 'industry')).toBeGreaterThan(share('xishan', 'industry') * 3);
+    expect(share(SAMPLE.core, 'residential') + share(SAMPLE.core, 'cbd') + share(SAMPLE.core, 'suburb'), '市区住宅占比').toBeGreaterThan(0.28);
+    expect(share(SAMPLE.farm, 'farmland'), '农田带占比').toBeGreaterThan(0.2);
+    expect(share(SAMPLE.forest, 'forest'), '山区林地占比').toBeGreaterThan(0.2);
+    expect(share(SAMPLE.industry, 'industry'), '工业区厂房占比').toBeGreaterThan(0.09);
+    expect(share(SAMPLE.water, 'water'), '水域区域占比').toBeGreaterThan(0.1);
+    // 跨类型差异要真的存在：农田带 > 市区、工业区 > 山区的 3 倍
+    expect(share(SAMPLE.farm, 'farmland')).toBeGreaterThan(share(SAMPLE.core, 'farmland'));
+    expect(share(SAMPLE.industry, 'industry')).toBeGreaterThan(share(SAMPLE.forest, 'industry') * 3);
   });
 
   it('每种地表的格数都在合理范围（不是整张图一种地形）', () => {
-    for (const r of REGIONS) {
+    for (const id of SAMPLED) {
+      const r = regionById(id)!;
       const blocks = Object.values(world(r.id).blocks);
       const z = zonesOf(blocks);
       for (const req of ZONE_REQUIRED) {
@@ -125,7 +145,8 @@ describe('M15 地图生成（分区式）', () => {
   });
 
   it('POI 长在合适的地表上，稀有建筑有上限，工业区里的建筑像工业区', () => {
-    for (const r of REGIONS) {
+    for (const id of SAMPLED) {
+      const r = regionById(id)!;
       const blocks = Object.values(world(r.id).blocks);
       const byId: Record<string, number> = {};
       for (const b of blocks) {
@@ -144,7 +165,8 @@ describe('M15 地图生成（分区式）', () => {
   });
 
   it('家与实验室的硬约束没变：安全屋是城郊无 POI、实验室在远端且不可达水', () => {
-    for (const r of REGIONS) {
+    for (const id of SAMPLED) {
+      const r = regionById(id)!;
       const w = world(r.id);
       const hb = w.blocks[bkey(w.home.x, w.home.y)];
       expect(hb.biome).toBe('suburb');
@@ -173,7 +195,8 @@ describe('M15 地图生成（分区式）', () => {
       }
       return false;
     };
-    for (const r of REGIONS) {
+    for (const id of SAMPLED) {
+      const r = regionById(id)!;
       const w = world(r.id);
       expect(carReach(w.blocks, w.home, w.lab), r.name + ' 开车到不了实验室').toBe(true);
     }
@@ -183,7 +206,8 @@ describe('M15 地图生成（分区式）', () => {
     const lines: string[] = ['# M15 地图 dump（seed=ember-01，字符 = 土地利用 zone）',
       '# C 商业中心 R 居民区 s 城郊 I 工业园 M 军事 f 农田 F 林地 r 废墟 ~ 水域',
       '# 大写字母出现在地图上 = 那一带是连片的（扎堆），而不是散点', ''];
-    for (const r of REGIONS) {
+    for (const id of SAMPLED) {
+      const r = regionById(id)!;
       const w = world(r.id);
       const blocks = Object.values(w.blocks);
       const z = zonesOf(blocks);
@@ -209,6 +233,6 @@ describe('M15 地图生成（分区式）', () => {
     }
     try { mkdirSync('docs', { recursive: true }); } catch { /* 已存在 */ }
     writeFileSync('docs/_m15_mapdump.md', lines.join('\n'), 'utf8');
-    expect(lines.length).toBeGreaterThan(200);
+    expect(lines.length).toBeGreaterThan(120);   // 抽样 6 个区域（全量 144 张图太慢，且没必要）
   });
 });

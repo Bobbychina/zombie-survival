@@ -66,7 +66,8 @@ console.log('  任务页: ' + tab)
 const T = JSON.parse(tab)
 ok('大故事面板渲染（章节标题 + 目标行）', T.story === 1 && T.objs >= 2 && /第 1 章/.test(T.storyTitle), JSON.stringify(T))
 ok('委托板渲染 3 张，且每张都有"接受"按钮', T.board === 3 && T.hasAccept === 3, 'board=' + T.board + ' accept=' + T.hasAccept)
-ok('章节数与所在区域正确（新档 = 第 1 章 / 余烬市区）', T.chapter === 0 && T.region === 'ember' && T.chapterTitle === '余烬', JSON.stringify(T))
+ok('章节数与所在区域正确（新档 = 第 1 章 / 主城"余烬市区"）',
+  T.chapter === 0 && T.region === JSON.parse(await ev(`JSON.stringify(V4World.meta().home)`)) && T.chapterTitle === '余烬', JSON.stringify(T))
 await shot('m14-quest-tab')
 
 // ── 2) 接单：从板上移出、占坑、写日志 ──
@@ -189,7 +190,10 @@ ok('没车时接跨区委托被拦下（返回 false，不占坑）', AB.returne
 
 const farDone = await ev(`(() => {
   const S = DEV.state();
-  S.world.veh = { fuel: 8, hp: 100 };                       // 给一辆车
+  /* M17：跨区委托改成"按类型挑一个一趟开得到的区域"（≤4 格），
+     所以这里要按"出门前睡满 + 加满油"给条件：不然 4 格路（8 行动力/8 油）会被行程判定拦住。 */
+  S.world.veh = { fuel: 12, hp: 100 };
+  S.ap = 9;
   V4Quest.newDay();
   const sum = V4Quest.summary();
   const i = sum.board.findIndex(o => o.region);

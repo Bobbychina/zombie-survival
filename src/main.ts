@@ -219,13 +219,16 @@ function runDevHook(
       const b = worldState.worldOf(s.seed, s.region).blocks[x + ',' + y];
       return b ? { x: b.x, y: b.y, biome: b.biome, zone: b.zone, road: !!b.road, poi: b.poi, name: b.name, danger: b.danger } : null;
     },
-    /** 在当前区域找一格"能搜刮的 POI"（跳过实验室和沉没基地），并把人挪过去 */
-    gotoPoi: (opts: { zone?: string; skipWater?: boolean } = {}) => {
+    /** 在当前区域找一格"能搜刮的 POI"（跳过实验室和沉没基地），并把人挪过去。
+     *  `feat` 用来指定玩法类型（探针要"修车点"就走 feat:'vehicle'）——注意必须走 worldOf，
+     *  直接调 generateWorld 拿到的是**没有主题偏置**的另一张图（M15 起同一 seed 会生成不同的 POI）。 */
+    gotoPoi: (opts: { zone?: string; feat?: string; skipWater?: boolean } = {}) => {
       const s = worldState.ensureSaveWorld(L.S);
       const w = worldState.worldOf(s.seed, s.region);
       const cands = Object.keys(w.blocks).map(k => w.blocks[k])
         .filter(b => b.poi && b.poi !== 'lab' && b.poi !== 'sunken' && b.biome !== 'water')
         .filter(b => !opts.zone || b.zone === opts.zone)
+        .filter(b => !opts.feat || ((V4 as any).POIS[b.poi!] && (V4 as any).POIS[b.poi!].feat === opts.feat))
         .sort((a, b) => (Math.max(Math.abs(a.x - s.cur.x), Math.abs(a.y - s.cur.y))) - (Math.max(Math.abs(b.x - s.cur.x), Math.abs(b.y - s.cur.y))));
       const best = cands[0];
       if (!best) return null;

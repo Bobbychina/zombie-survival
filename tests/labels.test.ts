@@ -5,7 +5,8 @@ import { describe, expect, it } from 'vitest';
 import { KILL_ZH, ZONE_ZH, foeName, poiName } from '../src/v4/labels';
 import { POIS } from '../src/v4/pois';
 import { STORY } from '../src/v4/story-core';
-import { metricLabel, rollOffers } from '../src/v4/contracts-core';
+import { metricLabel, rollOffers, type Metric } from '../src/v4/contracts-core';
+import { HOME_REGION, regionById } from '../src/v4/regions-core';
 import { zombieTable } from './legacy-tables';
 
 describe('判定文案', () => {
@@ -29,7 +30,8 @@ describe('判定文案', () => {
     expect(metricLabel('zone:pharmacy')).toBe('搜刮 药房');
     expect(metricLabel('killBy:hound')).toBe('击杀 变异猎犬');
     expect(metricLabel('killBy:tyrant')).toBe('击杀 暴君');
-    expect(metricLabel('region:jiangbei')).toBe('前往 江北工业区');
+    const home = regionById(HOME_REGION)!;
+    expect(metricLabel(('region:' + HOME_REGION) as Metric)).toBe('前往 ' + home.name);   // M17：区域是种子生成的
     expect(metricLabel('kills')).toBe('击杀丧尸');
   });
 

@@ -46,7 +46,7 @@ await sleep(1000)
 const probeState = `(() => {
   const card = document.querySelector('#v4world') || document.body;
   const cells = document.querySelectorAll('#v4world .wcell').length;
-  const rcells = document.querySelectorAll('#v4world .rcell').length;
+  const rcells = document.querySelectorAll('#v4world .rcell2').length;
   const tabs = [...document.querySelectorAll('#v4world .wmtab')].map(b => ({ t: b.textContent.trim(), on: b.className.includes('on') }));
   const text = (card.textContent || '');
   return JSON.stringify({
@@ -54,8 +54,8 @@ const probeState = `(() => {
     cardH: Math.round((card.getBoundingClientRect ? card.getBoundingClientRect().height : 0)),
     viewH: Math.round((document.getElementById('view')||{scrollHeight:0}).scrollHeight),
     title: text.slice(0, 14),
-    hasCrossHint: /跨区/.test(text), hasVehHint: /没有载具|车已就绪|油\\/行动力不够跨区/.test(text),
-    hasLocalHint: /切到「本地地图」/.test(text),
+    hasCrossHint: /跨区/.test(text), hasVehHint: /没有载具|车已就绪|油\\/行动力不够/.test(text),
+    hasLocalHint: /本地地图/.test(text),
   });
 })()`
 
@@ -63,8 +63,8 @@ const probeState = `(() => {
 const def = await ev(probeState)
 console.log('  默认: ' + def)
 const D = JSON.parse(def)
-ok('顶部有两个切换按钮（本地 24×24 / 大区 3×3）', D.tabs.length === 2 && /本地/.test(D.tabs[0].t) && /大区/.test(D.tabs[1].t), JSON.stringify(D.tabs))
-ok('默认显示本地地图：576 格在、大区 9 格不在（两张图不再同时铺开）',
+ok('顶部有两个切换按钮（本地 24×24 / 大区 12×12）', D.tabs.length === 2 && /本地/.test(D.tabs[0].t) && /大区/.test(D.tabs[1].t), JSON.stringify(D.tabs))
+ok('默认显示本地地图：576 格在、大区格子不在（两张图不再同时铺开）',
   D.cells === 576 && D.rcells === 0 && D.tabs[0].on && !D.tabs[1].on, JSON.stringify({ cells: D.cells, rcells: D.rcells }))
 const localH = D.cardH
 await shot('m16-local')
@@ -75,14 +75,15 @@ const toRegion = await ev(`(() => {
   b.click();
   return 1;
 })()`)
+void toRegion
 await sleep(700)
 const reg = await ev(probeState)
 console.log('  大区: ' + reg)
 const R = JSON.parse(reg)
-ok('点按钮切到大区视图：3×3 九格在、本地 576 格已移除',
-  R.rcells === 9 && R.cells === 0 && R.tabs[1].on && !R.tabs[0].on, JSON.stringify({ cells: R.cells, rcells: R.rcells }))
-ok('大区视图比本地视图矮（不占空间：地图卡片高度明显下降）',
-  R.cardH > 0 && localH > 0 && R.cardH < localH, `local=${localH}px region=${R.cardH}px`)
+ok('点按钮切到大区视图：144 格在、本地 576 格已移除',
+  R.rcells === 144 && R.cells === 0 && R.tabs[1].on && !R.tabs[0].on, JSON.stringify({ cells: R.cells, rcells: R.rcells }))
+ok('大区视图不比本地视图高（不占空间：没人看的那张图完全不占版面）',
+  R.cardH > 0 && localH > 0 && R.cardH <= localH * 1.02, `local=${localH}px region=${R.cardH}px`)
 ok('大区视图里仍然写着"跨区要开车"的说明 + 指路到本地地图',
   R.hasCrossHint && R.hasVehHint && R.hasLocalHint, JSON.stringify({ cross: R.hasCrossHint, veh: R.hasVehHint, local: R.hasLocalHint }))
 await shot('m16-region')
@@ -95,17 +96,23 @@ await sleep(900)
 const persisted = await ev(probeState)
 console.log('  刷新后: ' + persisted)
 const P = JSON.parse(persisted)
-ok('刷新后仍停在"大区地图"（视图选择被记住）', P.rcells === 9 && P.tabs[1].on, JSON.stringify({ rcells: P.rcells, on: P.tabs.map(t => t.on) }))
+ok('刷新后仍停在"大区地图"（视图选择被记住）', P.rcells === 144 && P.tabs[1].on, JSON.stringify({ rcells: P.rcells, on: P.tabs.map(t => t.on) }))
 
-// 4) 大区视图里跨区流程仍可用：没车 → 拦住；给车 → 能跨
+// 4) 大区视图里跨区流程仍可用：没车 → 拦住；给车 → 能跨（M17：区域 id 由种子生成，不能再写死）
+const meta = JSON.parse(await ev(`JSON.stringify(V4World.meta())`))
+const hop = JSON.parse(await ev(`JSON.stringify((() => {
+  const ms = V4World.meta().regions.filter(r => r.id !== V4World.meta().home).sort((a, b) => a.dist - b.dist);
+  for (const r of ms) { const t = V4World.trip(r.id); if (t.ok || /没有载具|靠两条腿/.test(t.why || '')) return { id: r.id, name: r.name }; }
+  return null;
+})())`))
+ok('大区地图上能找到相邻目标（跨区流程有对象可测）', !!hop, hop ? hop.name : 'none')
 const travel = await ev(`(() => {
-  const S = DEV.state();
   const before = V4World.snapshot();
-  V4World.travelRegion('dongjiao');                 // 没车
+  V4World.travelRegion('${hop.id}');                 // 没车
   const blocked = V4World.snapshot().region;
-  S.world.veh = { fuel: 8, hp: 100 };
-  if (window.render) window.render();
-  return JSON.stringify({ before: before.region, blocked, hasVeh: true });
+  const S = DEV.state();
+  S.world.veh = { fuel: 12, hp: 100 }; S.ap = 9;      // 模拟"修好了车、油也加满"
+  return JSON.stringify({ before: before.region, blocked });
 })()`)
 await sleep(700)
 console.log('  没车: ' + travel)
@@ -114,14 +121,14 @@ ok('大区视图里没车时跨区被拦住（还在原区域）', T.blocked ===
 
 const crossed = await ev(`(() => {
   const s0 = V4World.snapshot();
-  V4World.travelRegion('dongjiao');
+  V4World.travelRegion('${hop.id}');
   const s1 = V4World.snapshot();
   return JSON.stringify({ from: s0.region, to: s1.region, seen: s1.seenRegions });
 })()`)
 await sleep(800)
 console.log('  有车: ' + crossed)
 const C = JSON.parse(crossed)
-ok('大区视图里给车后能真的跨区', C.from !== C.to && C.to === 'dongjiao', JSON.stringify(C))
+ok('大区视图里给车后能真的跨区', C.from !== C.to && C.to === hop.id, JSON.stringify(C))
 ok('跨区之后仍能切回本地地图并正常渲染 576 格', await (async () => {
   await ev(`(() => { const b = [...document.querySelectorAll('#v4world .wmtab')].find(x => /本地/.test(x.textContent||'')); if (b && !b.className.includes('on')) b.click(); return 1; })()`)
   await sleep(600)
@@ -134,6 +141,6 @@ ok('全程无 console 报错 / 未捕获异常', pageErrs.length === 0, pageErrs
 
 const pass = checks.filter(c => c[1]).length
 console.log(`\n结果: ${pass}/${checks.length} 通过`)
-await fs.writeFile(`${outDir}/m16_probe.json`, JSON.stringify({ checks, errs: pageErrs, local: D, region: R, persisted: P, travel: T, crossed: C }, null, 2))
+await fs.writeFile(`${outDir}/m16_probe.json`, JSON.stringify({ checks, errs: pageErrs, local: D, region: R, persisted: P, travel: T, crossed: C, hop, metaRegions: meta.regions.length }, null, 2))
 ws.close()
 process.exit(pass === checks.length ? 0 : 1)

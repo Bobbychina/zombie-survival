@@ -48,17 +48,17 @@
   "errs": [],
   "zone": {
     "cells": 576,
-    "sameRatio": 0.63,
+    "sameRatio": 0.66,
     "tally": {
-      "ruins": 41,
-      "city": 198,
-      "suburb": 23,
-      "highway": 64,
-      "farm": 73,
-      "forest": 86,
-      "water": 78,
-      "industrial": 9,
-      "military": 4
+      "suburb": 65,
+      "water": 70,
+      "ruins": 78,
+      "highway": 53,
+      "forest": 75,
+      "industrial": 18,
+      "city": 166,
+      "farm": 24,
+      "military": 27
     },
     "road": 6
   },

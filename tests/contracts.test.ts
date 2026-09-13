@@ -2,8 +2,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   MAX_ACTIVE, accept, activeLine, abandon, bountyBudget, emptyContracts, ensureContracts, metricLabel, metricNow,
-  progressOf, refreshBoard, rollOffers, settle, type Snap,
+  progressOf, refreshBoard, rollOffers, settle, type Metric, type Snap,
 } from '../src/v4/contracts-core';
+import { HOME_REGION, REGIONS, regionById } from '../src/v4/regions-core';
 
 const seq = (...xs: number[]) => { let i = 0; return () => xs[Math.min(i++, xs.length - 1)]; };
 
@@ -26,6 +27,10 @@ const at = (metric: string, n: number, day: number): Snap => {
       const j = key.indexOf(':');
       const region = key.slice(0, j), poi = key.slice(j + 1);
       s.rzones[region] = { [poi === '*' ? 'market' : poi]: n };
+    }
+    else if (kind === 'rtype') {                                        // M17：按类型下目标 = 该类型的任一区域记到访
+      const r = REGIONS.find(x => x.type === key);
+      if (r) s.regions[r.id] = n;
     }
   }
   return s;
@@ -68,14 +73,26 @@ describe('委托板', () => {
   });
 
   it('rzone 指标：`*` 是该区域所有地点求和，具体 POI 只算那一处', () => {
-    const s = snap({ rzones: { jiangbei: { market: 2, depot: 3 }, ember: { market: 9 } } });
-    expect(metricNow('rzone:jiangbei:*', s)).toBe(5);
-    expect(metricNow('rzone:jiangbei:depot', s)).toBe(3);
-    expect(metricNow('rzone:jiangbei:hospital', s)).toBe(0);
+    const rid = HOME_REGION;                                             // M17：区域 id 由种子生成，不能再写死
+    const home = regionById(rid)!;
+    const M = (s: string) => s as Metric;                                // 拼出来的判定 key 类型上要手动收口
+    const s = snap({ rzones: { [rid]: { market: 2, depot: 3 } } });
+    expect(metricNow(M('rzone:' + rid + ':*'), s)).toBe(5);
+    expect(metricNow(M('rzone:' + rid + ':depot'), s)).toBe(3);
+    expect(metricNow(M('rzone:' + rid + ':hospital'), s)).toBe(0);
     expect(metricNow('rzone:nowhere:*', s)).toBe(0);                    // 没去过的区 = 0，不炸
-    expect(metricLabel('rzone:jiangbei:*')).toContain('江北工业区');
-    expect(metricLabel('rzone:jiangbei:*')).not.toMatch(/[a-z_]{3,}/);
-    expect(metricLabel('rzone:jiangbei:depot')).toContain('物流园');
+    expect(metricLabel(M('rzone:' + rid + ':*'))).toContain(home.name);
+    expect(metricLabel(M('rzone:' + rid + ':*'))).not.toMatch(/[a-z_]{3,}/);
+    expect(metricLabel(M('rzone:' + rid + ':depot'))).toContain('物流园');
+  });
+
+  it('rtype 指标：同类型的所有区域到访次数求和（元地图变大了，剧情只能按"类型"下目标）', () => {
+    const industry = REGIONS.filter(r => r.type === 'industry');
+    expect(industry.length).toBeGreaterThan(1);
+    const s = snap({ regions: { [industry[0].id]: 1, [industry[1].id]: 2 } });
+    expect(metricNow('rtype:industry', s)).toBe(3);
+    expect(metricNow('rtype:water', s)).toBe(0);
+    expect(metricLabel('rtype:industry')).not.toMatch(/[a-z_]{3,}/);
   });
 
   it('当前区域没有某个 POI 时，不发指向它的委托（种子生成的地图不能假设有药房）', () => {

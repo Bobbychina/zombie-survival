@@ -30,6 +30,10 @@ const byMetric = (metric: string, n: number, day = 1): Snap => {
       const region = key.slice(0, j), poi = key.slice(j + 1);
       s.rzones[region] = { [poi === '*' ? 'market' : poi]: n };
     }
+    else if (kind === 'rtype') {                                        // M17：第 4/5 章改成"到访某类型区域"
+      const r = REGIONS.find(x => x.type === key);
+      if (r) s.regions[r.id] = n;
+    }
   }
   return s;
 };
@@ -79,13 +83,13 @@ describe('大故事（章节）', () => {
     });
   });
 
-  it('章节发生地都是真实区域，且中途确实要跑别的区（大世界用得上）', () => {
-    const ids = REGIONS.map(r => r.id);
-    for (const c of STORY) expect(ids).toContain(c.region);
-    const away = STORY.filter(c => c.region !== 'ember');
+  it('章节发生地都是真实的区域类型，且中途确实要跑别的区（大世界用得上）', () => {
+    const types = new Set(REGIONS.map(r => r.type));
+    for (const c of STORY) expect(types, '未知类型 ' + c.regionType).toContain(c.regionType);
+    const away = STORY.filter(c => c.regionType !== 'core');
     expect(away.length).toBeGreaterThanOrEqual(2);
-    // 跨区章必须带 region: 目标，否则"去别的区"这件事根本没判定
-    for (const c of away) expect(c.objs.some(o => String(o.metric).startsWith('region:'))).toBe(true);
+    // 跨区章必须带 rtype: 目标（M17：元地图程序化生成，只能说"去一片工业区"）
+    for (const c of away) expect(c.objs.some(o => String(o.metric).startsWith('rtype:'))).toBe(true);
   });
 
   it('目标指向的 POI 与丧尸都真实存在（写错名字 = 这章永远做不完）', () => {

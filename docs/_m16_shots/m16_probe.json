@@ -1,19 +1,19 @@
 {
   "checks": [
     [
-      "顶部有两个切换按钮（本地 24×24 / 大区 3×3）",
+      "顶部有两个切换按钮（本地 24×24 / 大区 12×12）",
       true
     ],
     [
-      "默认显示本地地图：576 格在、大区 9 格不在（两张图不再同时铺开）",
+      "默认显示本地地图：576 格在、大区格子不在（两张图不再同时铺开）",
       true
     ],
     [
-      "点按钮切到大区视图：3×3 九格在、本地 576 格已移除",
+      "点按钮切到大区视图：144 格在、本地 576 格已移除",
       true
     ],
     [
-      "大区视图比本地视图矮（不占空间：地图卡片高度明显下降）",
+      "大区视图不比本地视图高（不占空间：没人看的那张图完全不占版面）",
       true
     ],
     [
@@ -22,6 +22,10 @@
     ],
     [
       "刷新后仍停在\"大区地图\"（视图选择被记住）",
+      true
+    ],
+    [
+      "大区地图上能找到相邻目标（跨区流程有对象可测）",
       true
     ],
     [
@@ -51,7 +55,7 @@
         "on": true
       },
       {
-        "t": "🌐 大区地图 3×3",
+        "t": "🌐 大区地图 12×12",
         "on": false
       }
     ],
@@ -60,59 +64,63 @@
     "title": "🗺️ 本地地图 区块 (1",
     "hasCrossHint": false,
     "hasVehHint": false,
-    "hasLocalHint": false
+    "hasLocalHint": true
   },
   "region": {
     "cells": 0,
-    "rcells": 9,
+    "rcells": 144,
     "tabs": [
       {
         "t": "🗺️ 本地地图 24×24",
         "on": false
       },
       {
-        "t": "🌐 大区地图 3×3",
+        "t": "🌐 大区地图 12×12",
         "on": true
       }
     ],
-    "cardH": 513,
+    "cardH": 835,
     "viewH": 926,
-    "title": "🌐 大区地图 3×3 区域",
+    "title": "🌐 大区地图 12×12 ",
     "hasCrossHint": true,
     "hasVehHint": true,
     "hasLocalHint": true
   },
   "persisted": {
     "cells": 0,
-    "rcells": 9,
+    "rcells": 144,
     "tabs": [
       {
         "t": "🗺️ 本地地图 24×24",
         "on": false
       },
       {
-        "t": "🌐 大区地图 3×3",
+        "t": "🌐 大区地图 12×12",
         "on": true
       }
     ],
-    "cardH": 513,
+    "cardH": 835,
     "viewH": 926,
-    "title": "🌐 大区地图 3×3 区域",
+    "title": "🌐 大区地图 12×12 ",
     "hasCrossHint": true,
     "hasVehHint": true,
     "hasLocalHint": true
   },
   "travel": {
-    "before": "ember",
-    "blocked": "ember",
-    "hasVeh": true
+    "before": "r5-6",
+    "blocked": "r5-6"
   },
   "crossed": {
-    "from": "ember",
-    "to": "dongjiao",
+    "from": "r5-6",
+    "to": "r4-5",
     "seen": [
-      "ember",
-      "dongjiao"
+      "r5-6",
+      "r4-5"
     ]
-  }
+  },
+  "hop": {
+    "id": "r4-5",
+    "name": "北学区"
+  },
+  "metaRegions": 144
 }

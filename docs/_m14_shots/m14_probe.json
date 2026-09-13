@@ -13,7 +13,7 @@
       true
     ],
     [
-      "章节数与所在区域正确（新档 = 第 1 章 / 余烬市区）",
+      "章节数与所在区域正确（新档 = 第 1 章 / 主城\"余烬市区\"）",
       true
     ],
     [
@@ -120,9 +120,9 @@
     "hasBoardTitle": true,
     "hasStoryTitle": true,
     "hasAccept": 3,
-    "budget": 20,
+    "budget": 22,
     "day": 1,
-    "region": "ember",
+    "region": "r5-6",
     "chapter": 0,
     "chapterTitle": "余烬"
   },
@@ -199,9 +199,9 @@
     "day": 6,
     "contractsDay": 6,
     "hasCar": false,
-    "farTitle": "东郊的一趟",
-    "farRegion": "dongjiao",
-    "farMetric": "rzone:dongjiao:*",
+    "farTitle": "废墟里的旧图",
+    "farRegion": "r6-3",
+    "farMetric": "rzone:r6-3:*",
     "boardKeys": [
       "story:6",
       "far:6",
@@ -212,33 +212,32 @@
   },
   "farDone": {
     "okAccept": true,
-    "far": "老城的旧图",
-    "farMetric": "rzone:laocheng:*",
-    "farNeed": 3,
-    "region": "laocheng",
-    "regionAfter": "laocheng",
+    "far": "城郊的托运",
+    "farMetric": "rzone:r3-3:*",
+    "farNeed": 2,
+    "region": "r3-3",
+    "regionAfter": "r3-3",
     "activeMid": 1,
     "justThereProg": 0,
     "oneProg": 1,
     "searchReturns": [
-      null,
       null,
       null
     ],
     "activeAfter": 0,
     "done": 2,
     "rzones": {
-      "laocheng": {
-        "pharmacy": 3
+      "r3-3": {
+        "construction": 2
       }
     },
     "visits": {
-      "ember": 1,
-      "laocheng": 1
+      "r5-6": 1,
+      "r3-3": 1
     },
     "log": [
-      "第 6 天接了委托：老城的旧图",
-      "第 6 天完成委托：老城的旧图"
+      "第 6 天接了委托：城郊的托运",
+      "第 6 天完成委托：城郊的托运"
     ]
   },
   "day": {
@@ -250,9 +249,9 @@
     "active": 0,
     "board": 3,
     "log": [
-      "第 6 天完成委托：老城的旧图",
-      "第 12 天接了委托：九分局的枪柜",
-      "第 17 天委托过期：九分局的枪柜"
+      "第 6 天完成委托：城郊的托运",
+      "第 12 天接了委托：医院里的线索",
+      "第 17 天委托过期：医院里的线索"
     ]
   },
   "misc": {
@@ -264,6 +263,8 @@
     "sanChapter": 1,
     "sanZoneCntKeys": [
       "hospital",
+      "oldtown",
+      "construction",
       "pharmacy"
     ],
     "poiKeySurvives": true
