@@ -70,7 +70,7 @@ async function main() {
      renderBounties）和任务页渲染都按这几个名字取函数——名字必须与 quests.ts 的导出一致。 */
   const quests = (V4 as any).quests as typeof import('./v4/quests');
   (window as any).V4Quest = {
-    accept: quests.accept, abandon: quests.abandon, summary: quests.summary,
+    accept: quests.accept, abandon: quests.abandon, choose: quests.choose, summary: quests.summary,
     storyHtml: quests.storyHtml, contractsHtml: quests.contractsHtml, teaser: quests.teaser,
     newDay: quests.newDay, tick: quests.tick,
   };

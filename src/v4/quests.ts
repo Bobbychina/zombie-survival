@@ -11,8 +11,8 @@ import {
   type ActiveContract, type BoardOffer, type ContractReward, type ContractsState, type Snap,
 } from './contracts-core';
 import {
-  STORY, STORY_LEN, archive, chapterLine, chapterRegionHint, chapterView, currentChapter, emptyStory,
-  ensureStory, nextObjective, objMetricLabel, storyTick, type StoryState,
+  STORY, STORY_LEN, archive, chapterLine, chapterRegionHint, chapterView, choose as chooseCore, currentChapter,
+  emptyStory, ensureStory, introOf, nextObjective, objMetricLabel, storyTick, type StoryState,
 } from './story-core';
 import { ensureSaveWorld, worldOf, type SaveWorld } from './worldstate';
 import { HOME_REGION, REGIONS, regionName } from './regions-core';
@@ -26,6 +26,8 @@ export function snapNow(): Snap {
   const s = S(), st = s.stats || {}, w = sw();
   const regions: Record<string, number> = { ...(w.regionVisits || {}) };
   regions[w.region] = Math.max(1, regions[w.region] || 0);          // 站在这个区就算来过
+  const rzones: Record<string, Record<string, number>> = {};
+  for (const rid in (w.regionZones || {})) rzones[rid] = { ...w.regionZones[rid] };
   return {
     day: s.day,
     kills: st.kills || 0,
@@ -36,6 +38,7 @@ export function snapNow(): Snap {
     zones: { ...(st.zoneCnt || {}) },
     items: itemCounts(),
     regions,
+    rzones,
   };
 }
 
@@ -123,8 +126,22 @@ function tickQuiet() {
     L.sfx('ok');
     L.render?.();
   }
+  /* M14：章节走到"该做抉择"时，必须让玩家看见——否则他在探索页打了一晚上，
+     任务页上挂着个没人点的决定（探针就是在这儿抓到"按钮数 0"的）。 */
+  if (sp.awaiting) {
+    if (announcedChoice !== sp.awaiting.id) {
+      announcedChoice = sp.awaiting.id;
+      L.log('⚖️ 第 ' + sp.awaiting.no + ' 章该做决定了：' + (sp.awaiting.choice?.prompt ?? '') + '（任务页 → 大故事）', 'lore');
+      L.toast('⚖️ 该做决定了', sp.awaiting.choice?.prompt ?? '', 'lore');
+      L.sfx('ok');
+    }
+    L.render?.();
+  }
   if (res.completed.length || res.expired.length || before !== ct.active.length) L.render?.();
 }
+
+/** 已经提醒过的抉择（按章 id 去重，避免每次击杀都弹一遍） */
+let announcedChoice = '';
 
 function applyReward(r: ContractReward) {
   if (r.mat) { S().mat += r.mat; }
@@ -136,10 +153,13 @@ const bar = (cur: number, need: number) => {
   const pct = Math.max(0, Math.min(100, Math.round((cur / Math.max(1, need)) * 100)));
   return '<div class="bar thin"><i class="sta" style="width:' + pct + '%"></i></div>';
 };
+/* 物品名：ammo 不是 ITEMS 里的一条（legacy 用独立计数器），itemName() 会直接把 id 吐出来，
+   委托/剧情的奖励里又确实会给弹药 —— 这里补一个映射，别让面板上出现 "ammo×18"。 */
+const itemLabel = (id: string) => (id === 'ammo' ? '弹药' : L.itemName(id));
 const rewardText = (r: ContractReward) =>
-  '🔩' + (r.mat ?? 0) + (r.item ? ' + ' + L.itemName(r.item) + '×' + (r.n ?? 1) : '');
+  '🔩' + (r.mat ?? 0) + (r.item ? ' + ' + itemLabel(r.item) + '×' + (r.n ?? 1) : '');
 
-/** 任务页：大故事面板（章节 + 目标 + 剧情日志） */
+/** 任务页：大故事面板（章节 + 目标 + 抉择 + 剧情日志） */
 export function storyHtml(): string {
   const s = S(), { sy } = ensureQuests();
   const snap = snapNow(), stage = s.quest ? s.quest.stage : 0;
@@ -150,10 +170,12 @@ export function storyHtml(): string {
     Math.min(sy.chapter + 1, STORY_LEN) + ' / ' + STORY_LEN + ' 章</span></div>';
   h += '<div class="card v4story">';
   if (finished) {
-    h += '<h3>✅ 全书完结 · ' + cur.title + '</h3><p class="v4story-intro">' + cur.outro + '</p>';
+    const opt = cur.choice && sy.choices[cur.id] ? cur.choice.options.find(o => o.id === sy.choices[cur.id]) : null;
+    h += '<h3>✅ 全书完结 · ' + cur.title + '</h3><p class="v4story-intro">' + cur.outro + '</p>' +
+      (opt ? '<div class="hint">你在最后一章的选择：' + opt.label + '</div>' : '');
   } else {
     h += '<h3>第 ' + cur.no + ' 章 · ' + cur.title + ' <span class="sub">' + cur.sub + '</span></h3>' +
-      '<p class="v4story-intro">' + cur.intro + '</p>';
+      '<p class="v4story-intro">' + introOf(cur, sy) + '</p>';
     h += '<div class="hint">📍 ' + chapterRegionHint(v, sw().region, hasVehicle()) + '</div>';
     for (const o of v.objs) {
       h += '<div class="v4obj' + (o.done ? ' ok' : '') + '">' +
@@ -163,14 +185,26 @@ export function storyHtml(): string {
         '<div class="hint">判定：' + objMetricLabel(o.def) + ' · ' + o.def.hint + '</div>' +
         '</div>';
     }
-    const next = nextObjective(sy, snap, stage);
-    h += '<div class="hint" style="margin-top:8px">下一步：' + (next || '这一章的条件已经齐了，去任务页看看（推进会在下次动作后触发）') + '</div>';
-    if (!v.gateOpen) h += '<div class="hint">🔒 ' + (cur.gate || '先推进主线') + '</div>';
-    h += '<div class="hint">章节奖励：' + rewardText(cur.reward) + '</div>';
+    /* M14：目标做完了但这一章有抉择 → 弹选项，不选就不推进 */
+    if (v.pendingChoice && cur.choice) {
+      h += '<div class="v4choice"><div class="nm">⚖️ ' + cur.choice.prompt + '</div>' +
+        cur.choice.options.map((o, i) =>
+          '<div class="v4copt"><div class="row"><span class="nm">' + o.label + '</span><span class="spacer"></span>' +
+          '<span class="tag gear">' + rewardText({ mat: (cur.reward.mat ?? 0) + (o.reward.mat ?? 0), item: o.reward.item, n: o.reward.n }) + '</span></div>' +
+          '<div class="hint">' + o.note + '</div>' +
+          '<button class="btn xs primary" onclick="V4Quest.choose(\'' + cur.id + '\',' + i + ')">就这么办</button>' +
+          '</div>').join('') +
+        '<div class="hint">选完就写进剧情日志，后面的章节开场会跟着变。</div></div>';
+    } else {
+      const next = nextObjective(sy, snap, stage);
+      h += '<div class="hint" style="margin-top:8px">下一步：' + (next || '这一章的条件已经齐了，去任务页看看（推进会在下次动作后触发）') + '</div>';
+      if (!v.gateOpen) h += '<div class="hint">🔒 ' + (cur.gate || '先推进主线') + '</div>';
+      h += '<div class="hint">章节奖励：' + rewardText(cur.reward) + '</div>';
+    }
   }
   h += '</div>';
   const log = archive(sy);
-  h += '<details class="v4arc"><summary>📜 剧情日志（' + log.length + ' 条）</summary>' +
+  h += '<details class="v4arc"' + (log.length ? '' : ' open') + '><summary>📜 剧情日志（' + log.length + ' 条）</summary>' +
     (log.length
       ? log.map(e => '<div class="v4arcrow"><div class="nm">第 ' + e.day + ' 天 · 第 ' + e.ch + ' 章 ' + e.title + '</div>' +
         '<div class="ds">' + e.text + '</div></div>').join('')
@@ -214,6 +248,7 @@ export function contractsHtml(): string {
       '<span class="tag gear">' + rewardText(o.reward) + '</span></div>' +
       '<div class="ds">' + o.desc + '</div>' +
       '<div class="hint">判定：' + metricLabel(o.metric) + ' ×' + o.need + ' · 期限 ' + o.days + ' 天' +
+      (o.from ? ' · 委托人：' + o.from : '') +
       (far ? ' · ' + regionHint(o, w.region, car) : '') + '</div>' +
       '<div class="row">' +
       (blocked
@@ -234,13 +269,16 @@ export function contractsHtml(): string {
 /** 探索页：只放一行摘要，详细板子在任务页 */
 export function teaser(): string {
   const s = S(), { ct, sy } = ensureQuests();
-  const snap = snapNow();
+  const snap = snapNow(), stage = s.quest ? s.quest.stage : 0;
   const near = ct.active.map(c => c.title + ' ' + (() => { const p = progressOf(c, snap); return p.current + '/' + p.need; })()).join(' · ');
   const ch = currentChapter(sy);
+  const v = sy.chapter < STORY_LEN ? chapterView(sy.chapter, sy, snap, stage) : null;
+  /* 有抉择挂着时，摘要直接说出来——否则玩家不知道该回任务页做决定 */
+  const need = v && v.pendingChoice ? '⚖️ 该做决定了：' + (ch.choice?.prompt ?? '') : '';
   return '<div class="card v4teaser" style="margin-bottom:12px">' +
     '<div class="row"><span class="nm">📖 第 ' + Math.min(sy.chapter + 1, STORY_LEN) + ' 章 · ' + ch.title + '</span>' +
     '<span class="spacer"></span><button class="btn sm" onclick="setTab(\'quest\')">任务页 →</button></div>' +
-    '<div class="hint">' + (near ? '手上委托：' + near : '手上没有委托（今日板上 ' + ct.board.length + ' 张）') + '</div>' +
+    '<div class="hint">' + (need || (near ? '手上委托：' + near : '手上没有委托（今日板上 ' + ct.board.length + ' 张）')) + '</div>' +
     '</div>';
 }
 
@@ -270,21 +308,43 @@ export function abandon(i: number): boolean {
   return true;
 }
 
+/** M14：章节抉择（内联 onclick：V4Quest.choose('ch1', 0)）。选完会继续推进章节链。 */
+export function choose(chId: string, optIndex: number): boolean {
+  const s = S(), { sy } = ensureQuests();
+  const snap = snapNow(), stage = s.quest ? s.quest.stage : 0;
+  const def = STORY.find(c => c.id === chId);
+  const opt = def && def.choice ? def.choice.options[optIndex] : null;
+  if (!def || !opt) return false;
+  const r = chooseCore(sy, chId, opt.id, snap, stage);
+  if (!r.ok) { L.toast('选不了', r.why || '', 'bad'); return false; }
+  applyReward(r.reward);
+  for (const m of r.messages) L.log(m, 'lore');
+  L.toast('📖 ' + opt.label, opt.consequence, 'lore');
+  L.sfx('ok');
+  L.render(); L.autosave();
+  return true;
+}
+
 /** 调试/探针用：一次拿全（不做副作用） */
 export function summary() {
   const s = S(), { ct, sy } = ensureQuests();
-  const snap = snapNow();
+  const snap = snapNow(), stage = s.quest ? s.quest.stage : 0;
+  const v = sy.chapter < STORY_LEN ? chapterView(sy.chapter, sy, snap, stage) : null;
   return {
     day: s.day, region: sw().region, hasCar: hasVehicle(),
     chapter: sy.chapter, chapterTitle: currentChapter(sy).title,
-    board: ct.board.map(o => ({ key: o.key, title: o.title, metric: o.metric, need: o.need, days: o.days, region: o.region || null, mat: o.reward.mat ?? 0, item: o.reward.item ?? null })),
+    board: ct.board.map(o => ({ key: o.key, title: o.title, metric: o.metric, need: o.need, days: o.days, region: o.region || null, mat: o.reward.mat ?? 0, item: o.reward.item ?? null, from: o.from || null })),
     active: ct.active.map(c => ({ id: c.id, title: c.title, metric: c.metric, ...progressOf(c, snap) })),
     rolled: !!ct.rolled, contractsDay: ct.day,
     done: ct.done, failed: ct.failed, log: ct.log.slice(-6), storyLog: sy.log.slice(-3),
-    storyObjs: chapterView(Math.min(sy.chapter, STORY_LEN - 1), sy, snap, s.quest ? s.quest.stage : 0).objs.map(o => ({ text: o.def.text, cur: o.cur, need: o.def.need, done: o.done })),
+    choices: { ...sy.choices }, pendingChoice: !!(v && v.pendingChoice),
+    choicePrompt: v && v.pendingChoice ? (v.def.choice?.prompt ?? '') : '',
+    choiceOptions: v && v.pendingChoice ? (v.def.choice?.options.map(o => ({ id: o.id, label: o.label })) ?? []) : [],
+    intro: v ? introOf(STORY[Math.min(sy.chapter, STORY_LEN - 1)], sy) : '',
+    storyObjs: v ? v.objs.map(o => ({ text: o.def.text, cur: o.cur, need: o.def.need, done: o.done })) : [],
   };
 }
 
-export const V4Quest = { accept, abandon, summary, storyHtml, contractsHtml, teaser, newDay, tick, snapNow, ensureQuests };
+export const V4Quest = { accept, abandon, choose, summary, storyHtml, contractsHtml, teaser, newDay, tick, snapNow, ensureQuests };
 export type { ActiveContract, BoardOffer, ContractsState, StoryState };
 export { STORY, REGIONS, HOME_REGION, metricNow, emptyStory, activeLine, chapterLine };

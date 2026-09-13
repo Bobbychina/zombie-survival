@@ -33,6 +33,10 @@ export interface SaveWorld extends RegionProgress {
   seenRegions: Record<string, 1>;
   /** M13：每个区域到访过几次（含主城）——跨区委托/剧情的判定依据（region:<id> 指标） */
   regionVisits: Record<string, number>;
+  /** M14：每个区域里各搜刮过几次 `{ 区域: { poiId: 次数 } }`——跨区委托用它判定
+      "在那个区真的翻了几个地方"（`rzone:<区域>:*`），而不是"踏进过那个区"。
+      按区域各记一份，不随 switchRegion 冻结/摊平（它天然是分区的）。 */
+  regionZones: Record<string, Record<string, number>>;
   cur: { x: number; y: number };
   /** 在营地买过情报：碎片点与实验室永久点亮（迷雾每次都由 visited + 这个派生出来） */
   intel: boolean;
@@ -92,7 +96,7 @@ export function markVisited(w: WorldState, sw: SaveWorld, x: number, y: number):
 export function defaultSaveWorld(seed: string): SaveWorld {
   const w = worldOf(seed, HOME_REGION);
   const sw: SaveWorld = {
-    v: 1, seed, region: HOME_REGION, regions: {}, seenRegions: { [HOME_REGION]: 1 }, regionVisits: { [HOME_REGION]: 1 },
+    v: 1, seed, region: HOME_REGION, regions: {}, seenRegions: { [HOME_REGION]: 1 }, regionVisits: { [HOME_REGION]: 1 }, regionZones: {},
     cur: { x: w.home.x, y: w.home.y },
     visited: {}, firstPoi: {}, left: {}, stock: {}, frag: {}, forage: {}, salvage: {}, fish: {}, chop: {}, intel: false,
     debt: 0, lastNight: null, lastRaidDay: 0, evac: null,
@@ -170,6 +174,16 @@ export function ensureSaveWorld(S: any): SaveWorld {
   for (const id in rv) { const n = Math.floor(Number(rv[id])); if (isFinite(n) && n > 0) sw.regionVisits[id] = Math.min(9999, n); }
   for (const id in sw.seenRegions) if (!sw.regionVisits[id]) sw.regionVisits[id] = 1;
   sw.regionVisits[sw.region] = Math.max(1, sw.regionVisits[sw.region] || 0);
+  /* M14：分区搜刮计数（老档没有 → 补空表；形状不对的条目直接丢掉，不让坏档传染） */
+  const rz = sw.regionZones && typeof sw.regionZones === 'object' ? sw.regionZones : {};
+  sw.regionZones = {};
+  for (const rid in rz) {
+    const bag = rz[rid];
+    if (!bag || typeof bag !== 'object') continue;
+    const out: Record<string, number> = {};
+    for (const poi in bag) { const n = Math.floor(Number(bag[poi])); if (isFinite(n) && n > 0) out[poi] = Math.min(9999, n); }
+    sw.regionZones[rid] = out;
+  }
   sw.cur = validPos(sw.cur) ? { x: sw.cur.x, y: sw.cur.y } : { x: w.home.x, y: w.home.y };
   // M7：水块现在是合法落脚点（可以游过去、可以潜水），所以**不再**把站在水里的玩家挪回陆地——
   // 以前那条"坏档防卡死"的兜底会把刚游下水的玩家瞬移回岸边（潜水功能因此完全失效，探针抓到过）。

@@ -1,14 +1,14 @@
 /* 委托系统纯逻辑测试：刷板预算、接单占坑、进度从接单起算、期限过期、结算奖励 */
 import { describe, expect, it } from 'vitest';
 import {
-  MAX_ACTIVE, accept, activeLine, abandon, bountyBudget, emptyContracts, ensureContracts, metricNow,
+  MAX_ACTIVE, accept, activeLine, abandon, bountyBudget, emptyContracts, ensureContracts, metricLabel, metricNow,
   progressOf, refreshBoard, rollOffers, settle, type Snap,
 } from '../src/v4/contracts-core';
 
 const seq = (...xs: number[]) => { let i = 0; return () => xs[Math.min(i++, xs.length - 1)]; };
 
 const snap = (over: Partial<Snap> = {}): Snap => ({
-  day: 1, kills: 0, killBy: {}, zones: {}, deep: 0, hordes: 0, nights: 0, items: {}, regions: {}, ...over,
+  day: 1, kills: 0, killBy: {}, zones: {}, deep: 0, hordes: 0, nights: 0, items: {}, regions: {}, rzones: {}, ...over,
 });
 
 /** 造一个"某个指标 = n"的快照（与具体委托模板无关，板子上刷出哪张都能测） */
@@ -22,6 +22,11 @@ const at = (metric: string, n: number, day: number): Snap => {
     const kind = metric.slice(0, i), key = metric.slice(i + 1);
     if (kind === 'killBy') s.killBy[key] = n; else if (kind === 'zone') s.zones[key] = n;
     else if (kind === 'region') s.regions[key] = n;
+    else if (kind === 'rzone') {
+      const j = key.indexOf(':');
+      const region = key.slice(0, j), poi = key.slice(j + 1);
+      s.rzones[region] = { [poi === '*' ? 'market' : poi]: n };
+    }
   }
   return s;
 };
@@ -50,12 +55,27 @@ describe('委托板', () => {
     }
   });
 
-  it('跨区委托不会指向玩家当前所在的区域', () => {
+  it('跨区委托不会指向玩家当前所在的区域，且判定要"在那区真的搜刮"', () => {
     const offers = rollOffers(9, seq(0.1, 0.5, 0.9), 0, { region: 'jiangbei' });
     const far = offers.find(o => o.region);
     expect(far).toBeTruthy();
     expect(far!.region).not.toBe('jiangbei');
-    expect(far!.metric).toBe('region:' + far!.region);
+    expect(far!.metric).toBe('rzone:' + far!.region + ':*');
+    expect(far!.need).toBeGreaterThanOrEqual(2);                        // 不是"踏进去就算"
+    // 光到访（regions 有值、rzone 空）不算进度；在那个区搜刮才算
+    expect(metricNow(far!.metric, snap({ regions: { [far!.region!]: 3 } }))).toBe(0);
+    expect(metricNow(far!.metric, at(far!.metric, 2, 9))).toBe(2);
+  });
+
+  it('rzone 指标：`*` 是该区域所有地点求和，具体 POI 只算那一处', () => {
+    const s = snap({ rzones: { jiangbei: { market: 2, depot: 3 }, ember: { market: 9 } } });
+    expect(metricNow('rzone:jiangbei:*', s)).toBe(5);
+    expect(metricNow('rzone:jiangbei:depot', s)).toBe(3);
+    expect(metricNow('rzone:jiangbei:hospital', s)).toBe(0);
+    expect(metricNow('rzone:nowhere:*', s)).toBe(0);                    // 没去过的区 = 0，不炸
+    expect(metricLabel('rzone:jiangbei:*')).toContain('江北工业区');
+    expect(metricLabel('rzone:jiangbei:*')).not.toMatch(/[a-z_]{3,}/);
+    expect(metricLabel('rzone:jiangbei:depot')).toContain('物流园');
   });
 
   it('当前区域没有某个 POI 时，不发指向它的委托（种子生成的地图不能假设有药房）', () => {

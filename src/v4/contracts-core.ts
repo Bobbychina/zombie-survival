@@ -4,16 +4,19 @@
  *   · 要**接单**：未接的只是"报价"，接了才占坑（最多 3 个），接了才开始算进度
  *   · 有**期限**：2~5 天，过期作废（记一次失败，不扣东西——这游戏惩罚已经够多了）
  *   · 进度**从接单那一刻起算**：baseline 快照，避免"你早就搜过医院了所以秒完成"
- *   · 跨区委托：目标 POI 在别的区域 → 没车就只能看着（正好接上 M12 的区域门槛）
- *   · 赏金预算：同一天刷出来的委托，材料奖励总和不超过 9 + 天数/2（沿用旧版 X06 的约束，
- *     防止委托变成无限材料机）
+ *   · 跨区委托：目标在别的区域 → 没车就只能看着（接上 M12 的区域门槛）。
+ *     M14 起判定用 `rzone:<区域>:*`（在那个区域搜刮过 N 次），不再只是"踏进那个区"——
+ *     否则开车过去再开回来就完成了，跨区委托会退化成"跑腿费"。
+ *   · 赏金预算：同一天刷出来的委托，材料奖励总和不超过 `20 + 2×天数`（防止委托变成无限材料机）
  */
 import { REGIONS, regionName } from './regions-core';
 import { foeName, poiName } from './labels';
 
 export type Metric =
   | 'kills' | 'deep' | 'hordes' | 'nights'
-  | `killBy:${string}` | `zone:${string}` | `region:${string}`;
+  | `killBy:${string}` | `zone:${string}` | `region:${string}`
+  /** M14：在某个区域里搜刮（`rzone:<区域>:<poiId|*>`，`*` = 该区域任意地点） */
+  | `rzone:${string}`;
 
 export interface ContractReward { mat?: number; item?: string; n?: number }
 
@@ -27,6 +30,8 @@ export interface ContractDef {
   reward: ContractReward;
   /** 目标所在区域（跨区委托用；UI 会提示"要开车过去"） */
   region?: string;
+  /** M14：谁托的这件事（营地里的名字，UI 里显示成"—— 老周"） */
+  from?: string;
   tier: number;              // 1..3 难度档（影响期限与奖励）
 }
 
@@ -38,6 +43,7 @@ export interface ActiveContract {
   need: number;
   reward: ContractReward;
   region?: string;
+  from?: string;
   acceptedDay: number;
   deadlineDay: number;
   baseline: number;          // 接单时的进度基线
@@ -69,10 +75,19 @@ export interface Snap {
   nights: number;
   items: Record<string, number>;
   regions: Record<string, number>;     // regionId → 到访次数
+  /** M14：regionId → (poiId → 该区域里的搜刮次数)。跨区委托判定用，按区各记一份。 */
+  rzones: Record<string, Record<string, number>>;
 }
 
 export function emptyContracts(day = 1): ContractsState {
   return { day, board: [], active: [], done: 0, failed: 0, log: [], rolled: false };
+}
+
+/** `rzone:<区域>:<poi|*>` 的三个字段（解析失败返回 null，让调用方兜底成 0） */
+function parseRzone(key: string): { region: string; poi: string } | null {
+  const j = key.indexOf(':');
+  if (j < 0) return null;
+  return { region: key.slice(0, j), poi: key.slice(j + 1) };
 }
 
 export function metricNow(metric: Metric, snap: Snap): number {
@@ -90,6 +105,15 @@ export function metricNow(metric: Metric, snap: Snap): number {
   if (kind === 'killBy') return snap.killBy[key] ?? 0;
   if (kind === 'zone') return snap.zones[key] ?? 0;
   if (kind === 'region') return snap.regions[key] ?? 0;
+  if (kind === 'rzone') {
+    const p = parseRzone(key);
+    if (!p) return 0;
+    const bag = (snap.rzones ?? {})[p.region] ?? {};
+    if (p.poi !== '*') return bag[p.poi] ?? 0;
+    let sum = 0;                                  // `*` = 该区域任意地点，求和
+    for (const k in bag) sum += bag[k] || 0;
+    return sum;
+  }
   return 0;
 }
 
@@ -101,6 +125,12 @@ export function metricLabel(metric: Metric): string {
   if (kind === 'killBy') return '击杀 ' + foeName(key);
   if (kind === 'zone') return '搜刮 ' + poiName(key);
   if (kind === 'region') return '前往 ' + regionName(key);
+  if (kind === 'rzone') {
+    const p = parseRzone(key);
+    if (!p) return metric;
+    const where = '在' + regionName(p.region);
+    return p.poi === '*' ? where + '搜刮（任意地点）' : where + '搜刮 ' + poiName(p.poi);
+  }
   return metric;
 }
 
@@ -113,31 +143,33 @@ export const bountyBudget = (day: number): number => 20 + Math.max(1, day) * 2;
    tier 1：本地跑腿（1~2 天）
    tier 2：要跑远一点（3 天）
    tier 3：跨区/硬目标（4~5 天，奖励最好） */
-interface Tpl { title: (k?: string) => string; desc: string; metric: (k?: string) => Metric; need: number; days: number; mat: number; item?: string; n?: number; tier: number }
+interface Tpl { title: (k?: string) => string; desc: string; metric: (k?: string) => Metric; need: number; days: number; mat: number; item?: string; n?: number; tier: number; from?: string }
 
 const T = (t: Tpl) => t;
+/* 委托人：谁托的这件事。纯风味，但玩家一眼就知道"这活是谁给的"，
+   也让"营地里的名字"和委托挂上钩（M14）。 */
 const LOCAL: Tpl[] = [
-  T({ tier: 1, title: () => '清理周边', desc: '安全屋附近总有东西在晃。清掉几只，今晚睡得安稳点。', metric: () => 'kills', need: 4, days: 2, mat: 6 }),
-  T({ tier: 1, title: () => '补给清单', desc: '抗生素永远不够用。去药房翻一趟。', metric: () => 'zone:pharmacy', need: 1, days: 2, mat: 5, item: 'bandage', n: 2 }),
-  T({ tier: 1, title: () => '深挖一层', desc: '浅尝辄止翻不到好东西——有人要你认真搜两次。', metric: () => 'deep', need: 2, days: 2, mat: 8 }),
-  T({ tier: 2, title: () => '枪柜里的东西', desc: '警局的枪柜还有货，前提是你能进去。', metric: () => 'zone:police', need: 1, days: 3, mat: 10, item: 'ammo', n: 12 }),
-  T({ tier: 2, title: () => '守一夜', desc: '有人愿意付钱让你替他盯一晚尸潮。', metric: () => 'hordes', need: 1, days: 3, mat: 12, item: 'medkit', n: 1 }),
-  T({ tier: 2, title: () => '猎犬问题', desc: '变异猎犬把北边的路堵死了，猎户出价请你解决。', metric: () => 'killBy:hound', need: 3, days: 3, mat: 10, item: 'jerky', n: 3 }),
-  T({ tier: 3, title: () => '装甲猎物', desc: '有人想要装甲丧尸身上的那层壳。价格开得很高，风险也一样。', metric: () => 'killBy:armored', need: 2, days: 4, mat: 16, item: 'kevlar', n: 1 }),
+  T({ tier: 1, title: () => '清理周边', desc: '安全屋附近总有东西在晃。清掉几只，今晚睡得安稳点。', metric: () => 'kills', need: 4, days: 2, mat: 6, from: '老周（守门的）' }),
+  T({ tier: 1, title: () => '补给清单', desc: '抗生素永远不够用。去药房翻一趟。', metric: () => 'zone:pharmacy', need: 1, days: 2, mat: 5, item: 'bandage', n: 2, from: '林医生' }),
+  T({ tier: 1, title: () => '深挖一层', desc: '浅尝辄止翻不到好东西——有人要你认真搜两次。', metric: () => 'deep', need: 2, days: 2, mat: 8, from: '一个不肯说名字的人' }),
+  T({ tier: 2, title: () => '枪柜里的东西', desc: '警局的枪柜还有货，前提是你能进去。', metric: () => 'zone:police', need: 1, days: 3, mat: 10, item: 'ammo', n: 12, from: '阿蛮' }),
+  T({ tier: 2, title: () => '守一夜', desc: '有人愿意付钱让你替他盯一晚尸潮。', metric: () => 'hordes', need: 1, days: 3, mat: 12, item: 'medkit', n: 1, from: '营地值夜的人' }),
+  T({ tier: 2, title: () => '猎犬问题', desc: '变异猎犬把北边的路堵死了，猎户出价请你解决。', metric: () => 'killBy:hound', need: 3, days: 3, mat: 10, item: 'jerky', n: 3, from: '霍克' }),
+  T({ tier: 3, title: () => '装甲猎物', desc: '有人想要装甲丧尸身上的那层壳。价格开得很高，风险也一样。', metric: () => 'killBy:armored', need: 2, days: 4, mat: 16, item: 'kevlar', n: 1, from: '镇上来的收货人' }),
 ];
 /** 跨区委托：目标在别的区域，必须有车才跑得动（M12 区域门槛）。
- *  指标只能用 region:<id>（到访次数）：各区域的地形/POI 是种子生成的，
- *  不能假设"江北一定有化工厂"，否则委托有可能永远做不完。价值在于那趟路本身
- *  （行动力 + 油 + 车损 + 路上遭遇）。 */
-const FAR: { region: string; title: string; desc: string; days: number; mat: number; item?: string; n?: number; tier: number }[] = [
-  { region: 'dongjiao', title: '东郊的一趟', desc: '东郊农场带的人捎话过来：开车跑一趟把货带回来，报酬翻倍。', days: 4, mat: 12, item: 'seed_veg', n: 3, tier: 2 },
-  { region: 'kuajiang', title: '跨江的桥面', desc: '跨江新区的桥面还算完整——车能过，靠两条腿走过去太远。', days: 4, mat: 13, item: 'tape', n: 4, tier: 2 },
-  { region: 'laocheng', title: '老城的旧图', desc: '老城遗址下面埋着旧管网图，值不少材料。开车去，别贪黑。', days: 4, mat: 15, item: 'data', n: 2, tier: 3 },
-  { region: 'jiangbei', title: '江北的托运', desc: '江北工业区有批材料等人去拉——走路不现实，得开车。', days: 4, mat: 16, item: 'chip', n: 2, tier: 3 },
-  { region: 'xishan', title: '西山的木料', desc: '西山山区的木料堆在路边没人管：有车，就是你的。', days: 4, mat: 14, item: 'wood', n: 6, tier: 3 },
-  { region: 'binhai', title: '滨海的渔获', desc: '滨海新区的水产仓库还锁着，钥匙在跑这条线的人手里。', days: 5, mat: 18, item: 'fish', n: 4, tier: 3 },
-  { region: 'nangang', title: '南港的集装箱', desc: '南港码头堆着没人认领的集装箱。开车去，装得下多少算多少。', days: 5, mat: 20, item: 'metal', n: 6, tier: 3 },
-  { region: 'beiling', title: '北岭的通行证', desc: '没人敢去北岭。开价的人只说了一句："你开车去，别走路。"', days: 5, mat: 24, item: 'keycard', n: 1, tier: 3 },
+ *  判定 = `rzone:<区域>:*`（在那个区域里搜刮 N 次）。为什么不指具体 POI：
+ *  各区域地形是种子生成的，"江北一定有化工厂"这种假设会让委托永远做不完；
+ *  为什么不是"到访一次"：开车过去立刻回来就完成了，跨区委托会退化成跑腿费。 */
+const FAR: { region: string; title: string; desc: string; days: number; need: number; mat: number; item?: string; n?: number; tier: number; from: string }[] = [
+  { region: 'dongjiao', title: '东郊的一趟', desc: '东郊农场带的人捎话过来：开车过去，在那边翻两处地方，把货带回来。', days: 4, need: 2, mat: 12, item: 'seed_veg', n: 3, tier: 2, from: '东郊捎话的人' },
+  { region: 'kuajiang', title: '跨江的桥面', desc: '跨江新区的桥面还算完整——车能过，靠两条腿走过去太远。那边至少翻两处。', days: 4, need: 2, mat: 13, item: 'tape', n: 4, tier: 2, from: '跑桥面这条线的人' },
+  { region: 'laocheng', title: '老城的旧图', desc: '老城遗址下面埋着旧管网图，值不少材料。开车去，别贪黑，翻三处再回来。', days: 4, need: 3, mat: 15, item: 'data', n: 2, tier: 3, from: '一个收旧图的老头' },
+  { region: 'jiangbei', title: '江北的托运', desc: '江北工业区有批材料等人去拉——走路不现实，得开车。到了那边翻三处。', days: 4, need: 3, mat: 16, item: 'chip', n: 2, tier: 3, from: '江东的货主' },
+  { region: 'xishan', title: '西山的木料', desc: '西山山区的木料堆在路边没人管：有车，就是你的。翻两处就够装一车。', days: 4, need: 2, mat: 14, item: 'wood', n: 6, tier: 3, from: '据点管建材的' },
+  { region: 'binhai', title: '滨海的渔获', desc: '滨海新区的水产仓库还锁着，钥匙在跑这条线的人手里。在那边翻三处。', days: 5, need: 3, mat: 18, item: 'fish', n: 4, tier: 3, from: '跑海货的' },
+  { region: 'nangang', title: '南港的集装箱', desc: '南港码头堆着没人认领的集装箱。开车去，翻三处，装得下多少算多少。', days: 5, need: 3, mat: 20, item: 'metal', n: 6, tier: 3, from: '码头上的人' },
+  { region: 'beiling', title: '北岭的通行证', desc: '没人敢去北岭。开价的人只说了一句："你开车去，别走路，在那边翻两处。"', days: 5, need: 2, mat: 24, item: 'keycard', n: 1, tier: 3, from: '不露面的人' },
 ];
 const FAR_POI_FALLBACK: Record<string, string[]> = {
   jiangbei: ['waterworks', 'tunnel', 'depot'], dongjiao: ['farm', 'sawmill'],
@@ -197,7 +229,7 @@ export function rollOffers(day: number, rng: () => number, mainStage = 0, opts: 
     if (chosen) {
       push({
         id: 'far:' + chosen.region, title: chosen.title, desc: chosen.desc + '（得开车过去：' + regionName(chosen.region) + '）',
-        metric: ('region:' + chosen.region) as Metric, need: 1, days: chosen.days,
+        metric: ('rzone:' + chosen.region + ':*') as Metric, need: chosen.need, days: chosen.days, from: chosen.from,
         reward: { mat: chosen.mat, item: chosen.item, n: chosen.n }, region: chosen.region, tier: chosen.tier,
       }, 'far:' + day);
     }
@@ -212,9 +244,9 @@ export function rollOffers(day: number, rng: () => number, mainStage = 0, opts: 
     while (pool.length && !picked) {
       const t = pool.splice(Math.floor(rng() * pool.length), 1)[0];
       if (!metricOk(t.metric())) continue;                        // 这一带没这个 POI 就别发
-      picked = push({ id: 'do:' + t.title() + slot, title: t.title(), desc: t.desc, metric: t.metric(), need: t.need, days: t.days, reward: { mat: t.mat, item: t.item, n: t.n }, tier: t.tier }, 'do:' + day + ':' + slot);
+      picked = push({ id: 'do:' + t.title() + slot, title: t.title(), desc: t.desc, metric: t.metric(), need: t.need, days: t.days, from: t.from, reward: { mat: t.mat, item: t.item, n: t.n }, tier: t.tier }, 'do:' + day + ':' + slot);
     }
-    if (!picked) push({ id: 'odd' + slot, title: slot ? '搭把手' : '顺手帮个忙', desc: '营地的人只要求你别空手回来，不给材料，管顿饭。', metric: 'kills', need: 2, days: 2, reward: { item: 'bandage', n: 1 }, tier: 1 }, 'odd:' + day + ':' + slot);
+    if (!picked) push({ id: 'odd' + slot, title: slot ? '搭把手' : '顺手帮个忙', desc: '营地的人只要求你别空手回来，不给材料，管顿饭。', metric: 'kills', need: 2, days: 2, from: '营地的人', reward: { item: 'bandage', n: 1 }, tier: 1 }, 'odd:' + day + ':' + slot);
   }
 
   /* 兜底：连零赏金都进不去（不可能，除非预算被改成负数）也要有一张能接的 */
@@ -234,7 +266,7 @@ export function accept(state: ContractsState, key: string, snap: Snap): AcceptRe
   if (state.active.some(a => a.id === offer.id)) return { ok: false, why: '这个委托你已经接了', state };
   const c: ActiveContract = {
     id: offer.id, title: offer.title, desc: offer.desc, metric: offer.metric, need: offer.need,
-    reward: offer.reward, region: offer.region, acceptedDay: snap.day, deadlineDay: snap.day + offer.days,
+    reward: offer.reward, region: offer.region, from: offer.from, acceptedDay: snap.day, deadlineDay: snap.day + offer.days,
     baseline: metricNow(offer.metric, snap),
   };
   state.active.push(c);

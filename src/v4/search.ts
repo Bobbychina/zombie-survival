@@ -53,6 +53,10 @@ export function searchPoi(block: Block, sw: SaveWorld, deep: boolean): boolean {
   // M13：再按 POI 粒度记一次（药房/警局/家电城…）。legacy 的映射很粗（药房→医院、农场→老城），
   // 委托文案写的是"去药房翻一趟"，判定就得按药房算，否则文案和进度对不上。
   S.stats.zoneCnt[block.poi!] = (S.stats.zoneCnt[block.poi!] || 0) + 1;
+  // M14：再按"区域 + POI"记一次，跨区委托靠它判定"在那个区真的翻了几个地方"
+  const rz = (sw.regionZones = sw.regionZones || {});
+  const bag = (rz[sw.region] = rz[sw.region] || {});
+  bag[block.poi!] = (bag[block.poi!] || 0) + 1;
   if (deep) S.stats.deep++;
   L.tickVitals(deep ? 1.5 : 1);
   L.addXP('survival', deep ? 5 : 3);

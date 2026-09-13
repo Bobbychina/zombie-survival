@@ -173,11 +173,14 @@ describe('M11 特殊机制', () => {
   });
 
   it('自爆者：被火焰打死则提前引爆，玩家不掉血', () => {
+    /* atk:0：这一条要验的是"火焰击杀跳过爆炸"，不是"它能不能打到你"——
+       投掷有命中率，miss 时它会反击，之前就因此偶发红过（hp 92 ≠ 100）。
+       让它打不出伤害，hp 就只可能被"爆炸"扣掉，判定才干净。 */
     const p2 = mkPlayer({ inventory: { molotov: 3 }, weaponDmg: 999 });
-    const bomber2 = mkFoe({ id: 'bomber', name: '自爆者', hp: 5, hpMax: 40, traits: ['volatile'], spd: 0.1 });
+    const bomber2 = mkFoe({ id: 'bomber', name: '自爆者', hp: 5, hpMax: 40, atk: 0, traits: ['volatile'], spd: 0.1 });
     const b2 = createBattle([bomber2], p2, {});
     let g2 = 0;
-    while (b2.foes[0].hp > 0 && g2++ < 5) { if (!advance(b2, p2, 10)) break; playerAct(b2, p2, 'molotov', 0); }   // fire → 不炸
+    while (b2.foes[0].hp > 0 && g2++ < 20) { if (!advance(b2, p2, 10)) break; playerAct(b2, p2, 'molotov', 0); }   // fire → 不炸
     expect(b2.foes[0].hp).toBe(0);
     expect(p2.hp).toBe(100);
     expect(b2.log.map(e => (e as { text?: string }).text ?? '').join(' ')).toContain('没来得及炸');
