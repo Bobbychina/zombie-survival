@@ -10,7 +10,7 @@ import { fragSpots } from './quest4';
 import type { Block } from '../types';
 
 const sw = () => ensureSaveWorld(L.S);
-const curBlock = (): Block | null => { const s = sw(); return blockAt(worldOf(s.seed), s.cur.x, s.cur.y); };
+const curBlock = (): Block | null => { const s = sw(); return blockAt(worldOf(s.seed, s.region), s.cur.x, s.cur.y); };
 
 export interface CampView { block: Block; npcs: NpcDef[]; stock: ReturnType<typeof campStock>; hostile: boolean }
 
@@ -63,7 +63,7 @@ function sell(itemId: string) {
 
 /** 情报：花材料买地图（点亮远处一片 + 标出碎片点） */
 function intel() {
-  const S = L.S, s = sw(), w = worldOf(s.seed);
+  const S = L.S, s = sw(), w = worldOf(s.seed, s.region);
   if (S.mat < INTEL_PRICE) { L.toast('材料不够', '情报要 ' + INTEL_PRICE + ' 材料。', 'bad'); return; }
   const spots = fragSpots(w);
   S.mat -= INTEL_PRICE;

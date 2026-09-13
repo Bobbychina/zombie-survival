@@ -9,7 +9,7 @@ export type { EvacSite };
 
 /** 读取/初始化存档里的撤离点（首次进入窗口时落盘） */
 export function ensureEvac(): { site: EvacSite; open: boolean } {
-  const S = L.S, s = ensureSaveWorld(S), w = worldOf(s.seed);
+  const S = L.S, s = ensureSaveWorld(S), w = worldOf(s.seed, s.region);
   const site = evacSite(w);
   const day = evacOpenDay(site.openDay);
   if (!s.evac && S.day >= EVAC_DAY) {

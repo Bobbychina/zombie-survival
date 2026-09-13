@@ -25,7 +25,7 @@ export interface RestOption { kind: RestKind; icon: string; name: string; detail
 
 /** 当前站在哪儿能怎么睡（把 POI 信息喂给纯函数） */
 export function tierAt(block: Block | null, hasCar: boolean): RestKind {
-  const s = ensureSaveWorld(L.S), w = worldOf(s.seed);
+  const s = ensureSaveWorld(L.S), w = worldOf(s.seed, s.region);
   const poi = block?.poi ? POIS[block.poi] : null;
   return restTierOf(block, hasCar, w.home, poi?.feat ?? null, poi?.id ?? null);
 }
@@ -46,7 +46,7 @@ export function restOptions(block: Block | null): RestOption[] {
   const night = isBloodMoonDay(L.S.day);
   return [
     { kind: 'base', icon: '🏠', name: '回安全屋睡', detail: 'AP 回满 · ' + rb + ' · 零夜袭' + (night ? ' · 血月夜：这里会打守夜战' : ''),
-      ok: tier === 'base', why: tier === 'base' ? undefined : '你不在这儿（安全屋在 (' + worldOf(s.seed).home.x + ',' + worldOf(s.seed).home.y + ')）' },
+      ok: tier === 'base', why: tier === 'base' ? undefined : '你不在这儿（安全屋在 (' + worldOf(s.seed, s.region).home.x + ',' + worldOf(s.seed, s.region).home.y + ')）' },
     { kind: 'shelter', icon: '🚪', name: '睡在掩体里', detail: px + ' · ' + rf + ' · 夜袭 低档', ok: tier === 'shelter', why: '需要掩体/监狱/军事哨所/隧道这类硬据点' },
     { kind: 'car', icon: '🚗', name: '睡在车里', detail: px + ' · ' + rf + ' · 夜袭 中档 · 耗 1 油', ok: tier === 'car', why: hasCar ? '走到空旷处就能睡，但你不在合适的位置' : '没有可用的车（车况/油）' },
     { kind: 'open', icon: '🔥', name: '就地生火过夜', detail: px + ' · ' + rf + ' · 夜袭 高档', ok: true },
@@ -100,7 +100,7 @@ export function rest(kind?: RestKind): void {
   const S = L.S;
   if (S.over) return;
   const s = ensureSaveWorld(S);
-  const w = worldOf(s.seed);
+  const w = worldOf(s.seed, s.region);
   const block = blockAt(w, s.cur.x, s.cur.y) ?? null;
   const hasCar = !!s.veh && s.veh.fuel > 0 && s.veh.hp > 0;
   const allowed = tierAt(block, hasCar);
@@ -171,7 +171,7 @@ export function syncApMax(): void {
    改成"据点被啃"结算（幂等，按天记账）。battle-ui 在开战前会问这个钩子。 */
 function atBaseNow(): boolean {
   const s = ensureSaveWorld(L.S);
-  const w = worldOf(s.seed);
+  const w = worldOf(s.seed, s.region);
   return s.cur.x === w.home.x && s.cur.y === w.home.y;
 }
 

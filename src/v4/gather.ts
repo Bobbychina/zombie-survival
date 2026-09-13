@@ -14,7 +14,7 @@ import { envOf, seasonNow, tempTick } from './env';
 import type { Block } from '../types';
 
 const sw = () => ensureSaveWorld(L.S);
-const curBlock = (): Block | null => { const s = sw(); return (worldOf(s.seed).blocks[bkey(s.cur.x, s.cur.y)] as Block) ?? null; };
+const curBlock = (): Block | null => { const s = sw(); return (worldOf(s.seed, s.region).blocks[bkey(s.cur.x, s.cur.y)] as Block) ?? null; };
 
 /** 采集点的剩余次数：每区块一份，采完要等几天再生 */
 function forageLeft(s: SaveWorld, b: Block): number {

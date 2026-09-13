@@ -5,9 +5,12 @@ import { L } from '../main';
 import { POIS, BIOME_INFO } from './pois';
 import { blockAt, bkey, WORLD_W, WORLD_H } from './worldgen';
 import {
-  ensureSaveWorld, markVisited, planTrip, rollTravelEncounter, worldOf, zoneOfPoi,
+  ensureSaveWorld, markVisited, planTrip, rollTravelEncounter, switchRegion, worldOf, zoneOfPoi,
   type SaveWorld, type Trip,
 } from './worldstate';
+import {
+  HOME_REGION, REGIONS, dangerLabel, metaGrid, planRegionTrip, regionById, regionName,
+} from './regions-core';
 import { poiLeft, searchPoi } from './search';
 import { pendingFragKeys, takeFragment } from './fragments';
 import { apMaxOf, isBloodMoonDay, rest, restOptions, tierAt, syncApMax } from './night';
@@ -32,10 +35,10 @@ let preview: { x: number; y: number; path: string[]; text: string; ok: boolean }
 
 const biomeName = (b: Block) => BIOME_INFO[b.biome]?.name ?? b.biome;
 const poiOf = (b: Block | null) => (b && b.poi ? POIS[b.poi] : null);
-const homeKey = (sw: SaveWorld) => { const w = worldOf(sw.seed); return bkey(w.home.x, w.home.y); };
+const homeKey = (sw: SaveWorld) => { const w = worldOf(sw.seed, sw.region); return bkey(w.home.x, w.home.y); };
 
 function sw(): SaveWorld { return ensureSaveWorld(L.S); }
-function curBlock(): Block { const s = sw(); const w = worldOf(s.seed); return blockAt(w, s.cur.x, s.cur.y) as Block; }
+function curBlock(): Block { const s = sw(); const w = worldOf(s.seed, s.region); return blockAt(w, s.cur.x, s.cur.y) as Block; }
 
 /** 骨折：走路要额外花行动力（legacy 的伤口系统里叫 fracture） */
 function fractured(): boolean {
@@ -49,7 +52,7 @@ const isNight = () => {
 /* ── 面板渲染 ── */
 
 function cellHtml(b: Block, s: SaveWorld, frags: Record<string, 1>): string {
-  const w = worldOf(s.seed);
+  const w = worldOf(s.seed, s.region);
   const cur = b.x === s.cur.x && b.y === s.cur.y;
   const isHome = bkey(b.x, b.y) === bkey(w.home.x, w.home.y);
   const labKnown = !!L.S.base.radio && b.poi === 'lab';
@@ -91,8 +94,57 @@ function cellHtml(b: Block, s: SaveWorld, frags: Record<string, 1>): string {
 }
 
 /** 地图块（宽屏时单独占一列：标题 + 状态行 + 24×24 格 + 预览/悬停/图例） */
-export function renderMapPanel(): string {
-  const s = sw(), w = worldOf(s.seed), b = curBlock();
+/* ── M12 区域面板：3×3 元地图。格子之间（区域内部）随便走，跨区必须开车 ── */
+function regionTripFor(s: SaveWorld, to: string) {
+  return planRegionTrip({
+    hasVehicle: !!s.veh && s.veh.hp > 0,
+    fuel: s.veh ? s.veh.fuel : 0,
+    ap: L.S.ap,
+    apMax: apMaxOf(s.debt),
+    from: s.region,
+    to,
+  });
+}
+
+export function renderRegionPanel(s: SaveWorld): string {
+  const here = regionById(s.region) ?? regionById(HOME_REGION)!;
+  let h = '<div class="sect-title" style="margin-top:10px">🗺️ 区域 ' +
+    '<span class="badge">' + esc(here.name) + ' · ' + dangerLabel(here.tier) + '</span>' +
+    '<span class="badge">已到过 ' + Object.keys(s.seenRegions).length + '/' + REGIONS.length + '</span></div>';
+  h += '<div class="hint">' + esc(here.desc) + '</div>';
+  h += '<div class="rgrid">';
+  for (const row of metaGrid()) {
+    for (const def of row) {
+      if (!def) { h += '<div class="rcell none"></div>'; continue; }
+      const isHere = def.id === here.id;
+      const seen = isHere || !!s.seenRegions[def.id];
+      const trip = isHere ? null : regionTripFor(s, def.id);
+      const cls = 'rcell' + (isHere ? ' here' : trip && trip.ok ? ' go' : ' no');
+      const click = trip && trip.ok ? ' onclick="V4World.travelRegion(\'' + def.id + '\')"' : '';
+      /* 区域名一律显示（地理常识，玩家得知道自己在往哪开）；**描述**才是到了才解锁的 */
+      const title = def.name + (seen ? '：' + def.desc : '（没去过）');
+      h += '<div class="' + cls + '"' + click + ' title="' + esc(title) + '">' +
+        '<div class="ricon">' + (isHere ? '📍' : def.icon) + '</div>' +
+        '<div class="rname">' + esc(def.short) + '</div>' +
+        '<div class="rmeta">' + (isHere ? '当前所在' : trip && trip.ok ? '⚡' + trip.ap + ' ⛽' + trip.fuel : '危险 ' + def.tier) + '</div>' +
+        '</div>';
+    }
+  }
+  h += '</div>';
+  const near = metaGrid().flat().filter((d): d is NonNullable<typeof d> => !!d && d.id !== here.id && regionTripFor(s, d.id).ok);
+  if (!s.veh) {
+    h += '<div class="hint">🚗 <b>没有载具</b>：同一区域里的格子随便走，但要跨到别的区域（地图上相邻那一格）得开车——' +
+      '汽车修理厂 / 物流园里有能修的车，先弄辆车再说。</div>';
+  } else if (!near.length) {
+    h += '<div class="hint">车在门口，但油/行动力不够跨区：<b>油 ' + s.veh.fuel + '</b> · <b>行动力 ' + L.S.ap + '/' + apMaxOf(s.debt) + '</b>——' +
+      '加油站和物流园能抽油，行动力回安全屋睡一觉。</div>';
+  } else {
+    h += '<div class="hint">车已就绪：点上面任何一个亮着的区域即可出发（跨区消耗行动力与燃油，车况也会磨损）。</div>';
+  }
+  return h;
+}
+
+export function renderMapPanel(): string {  const s = sw(), w = worldOf(s.seed, s.region), b = curBlock();
   const poi = poiOf(b);
   const home = bkey(b.x, b.y) === homeKey(s);
   const dLab = Math.max(Math.abs(b.x - w.lab.x), Math.abs(b.y - w.lab.y));
@@ -101,6 +153,7 @@ export function renderMapPanel(): string {
 
   let h = '<div class="sect-title">大世界地图 <span class="badge">区块 (' + b.x + ',' + b.y + ') · 1km²</span>' +
     '<span class="badge">走过 ' + s.steps + ' 个区块</span></div>';
+  h += renderRegionPanel(s);
   h += '<div class="whead">' +
     '<div class="wmeta">' +
       '<div class="wname">' + (home ? '🏠 安全屋（' : (poi ? poi.icon + ' ' + poi.name + '（' : '📍 ')) + esc(b.name) + '）</div>' +
@@ -439,7 +492,7 @@ function biomeEnemies(b: Block): string[] {
 
 /** 走完一段路：逐格推进 + 掷遭遇；撞上东西就停在那一格打起来（打完可以继续走） */
 function runTrip(target: { x: number; y: number }, t: Trip) {
-  const S = L.S, s = sw(), w = worldOf(s.seed);
+  const S = L.S, s = sw(), w = worldOf(s.seed, s.region);
   if (!L.spendAP(t.ap)) return;
   if (t.mode === 'car' && s.veh) {
     s.veh.fuel = Math.max(0, s.veh.fuel - t.fuel);
@@ -486,7 +539,7 @@ function runTrip(target: { x: number; y: number }, t: Trip) {
 export const V4World = {
   /** C10：点格子 = 先出路线预览（第一次），同一个目标再点一次才出发（手机 tap 等价路径） */
   click(x: number, y: number) {
-    const s = sw(), w = worldOf(s.seed);
+    const s = sw(), w = worldOf(s.seed, s.region);
     const b = blockAt(w, x, y);
     if (!b) return;
     if (b.x === s.cur.x && b.y === s.cur.y) { L.toast('你就在这儿', '搜刮下面的 POI，或者点别的区块出发。', 'info'); preview = null; L.render(); return; }
@@ -508,7 +561,7 @@ export const V4World = {
 
   /** 悬停/长按详情（R6：可读文本，不依赖 emoji 含义） */
   hover(x: number, y: number) {
-    const s = sw(), w = worldOf(s.seed);
+    const s = sw(), w = worldOf(s.seed, s.region);
     const b = blockAt(w, x, y);
     const box = document.getElementById('v4-hover');
     if (!b || !box) return;
@@ -529,6 +582,46 @@ export const V4World = {
 
   cancelTrip() { preview = null; L.render(); },
 
+  /** M12 只读快照：探针/自检用（不提供任何写能力；区域、载具、进度计数都在这里） */
+  snapshot() {
+    const s = sw();
+    return {
+      seed: s.seed,
+      region: s.region,
+      cur: { x: s.cur.x, y: s.cur.y },
+      seenRegions: Object.keys(s.seenRegions),
+      frozenRegions: Object.keys(s.regions),
+      visitedKeys: Object.keys(s.visited).length,
+      veh: s.veh ? { fuel: s.veh.fuel, hp: s.veh.hp } : null,
+      ap: L.S.ap,
+    };
+  },
+
+  /** M12 跨区域：先判定（没车/没油/行动力不够都给理由），通过才扣成本再换图 */
+  travelRegion(id: string) {
+    const S = L.S, s = sw();
+    const trip = regionTripFor(s, id);
+    if (!trip.ok) {
+      L.toast('去不了 ' + regionName(id), (trip.why || '') + (trip.hint ? '　' + trip.hint : ''), 'bad');
+      return;
+    }
+    const fuelCost = trip.fuel, apCost = trip.ap;
+    const r = switchRegion(S, s, id);
+    if (!r.ok) { L.toast('跨区失败', r.why || '未知原因', 'bad'); return; }
+    S.ap = Math.max(0, S.ap - apCost);
+    if (s.veh) {
+      s.veh.fuel = Math.max(0, s.veh.fuel - fuelCost);
+      s.veh.hp = Math.max(0, s.veh.hp - 4);          // 长途磨损：车况掉到 0 就得修
+    }
+    s.trail.push('🚗 跨区 → ' + regionName(id) + '（⚡-' + apCost + ' ⛽-' + fuelCost + '）');
+    s.trail = s.trail.slice(-24);
+    L.log('🚗 你上了高速，往「' + regionName(id) + '」去了（行动力 -' + apCost + '，油 -' + fuelCost + '）。', 'success');
+    if (r.firstEnter) L.log('📖 ' + r.firstEnter, 'dim');
+    if (s.veh && s.veh.hp <= 0) L.log('🔧 车在半路就开始冒烟了——得找地方修车，不然回不去。', 'danger');
+    preview = null;
+    L.render();
+  },
+
   confirmTrip() {
     if (!preview || !preview.ok) { preview = null; L.render(); return; }
     const { x, y } = preview;
@@ -546,7 +639,7 @@ export const V4World = {
   fish() { doFish(); },
   /** M7：朝最近的水块游一格 */
   swim() {
-    const s = sw(), w = worldOf(s.seed);
+    const s = sw(), w = worldOf(s.seed, s.region);
     const near = waterNearby();
     if (!near.blocks.length) { L.toast('旁边没水', '游水只用来过河/过湖：先走到水边。', 'bad'); return; }
     // 选离目标方向最近的那一格水（这里简单选第一格，玩家可反复点）
@@ -558,7 +651,7 @@ export const V4World = {
   dive() { doDive(); },
 
   travel(x: number, y: number) {
-    const s = sw(), w = worldOf(s.seed);
+    const s = sw(), w = worldOf(s.seed, s.region);
     const b = blockAt(w, x, y);
     if (!b) return;
     const r = planTrip(w, s.cur, b, { ap: L.S.ap, veh: s.veh, fractured: fractured(), night: isNight() });
@@ -610,7 +703,7 @@ export const V4World = {
 
   /** 调试/测试用：把玩家瞬移到某个区块（不花行动力） */
   teleport(x: number, y: number) {
-    const s = sw(), w = worldOf(s.seed);
+    const s = sw(), w = worldOf(s.seed, s.region);
     const b = blockAt(w, x, y); if (!b) return;
     s.cur = { x, y }; markVisited(w, s, x, y); L.render();
   },

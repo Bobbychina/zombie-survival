@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 afterEach(() => vi.restoreAllMocks());
-import { advance, canUse, createBattle, foeTurn, movesFor, playerAct, tryFlee, type PlayerProfile } from '../src/v4/combat';
+import { advance, canUse, createBattle, foeTurn, movesFor, playerAct, tickStatuses, tryFlee, type PlayerProfile } from '../src/v4/combat';
 import { TYPE_CHART, effectivenessText, typeMult, weaponMoves } from '../src/v4/moves';
 import { FOE_TRAITS, FOE_TYPES } from '../src/v4/foe-data';
 import { POIS } from '../src/v4/pois';
@@ -173,11 +173,11 @@ describe('M11 特殊机制', () => {
   });
 
   it('自爆者：被火焰打死则提前引爆，玩家不掉血', () => {
-    const p2 = mkPlayer({ inventory: { molotov: 1 }, weaponDmg: 999 });
+    const p2 = mkPlayer({ inventory: { molotov: 3 }, weaponDmg: 999 });
     const bomber2 = mkFoe({ id: 'bomber', name: '自爆者', hp: 5, hpMax: 40, traits: ['volatile'], spd: 0.1 });
     const b2 = createBattle([bomber2], p2, {});
-    advance(b2, p2, 10);
-    playerAct(b2, p2, 'molotov', 0);             // fire → 不炸
+    let g2 = 0;
+    while (b2.foes[0].hp > 0 && g2++ < 5) { if (!advance(b2, p2, 10)) break; playerAct(b2, p2, 'molotov', 0); }   // fire → 不炸
     expect(b2.foes[0].hp).toBe(0);
     expect(p2.hp).toBe(100);
     expect(b2.log.map(e => (e as { text?: string }).text ?? '').join(' ')).toContain('没来得及炸');
@@ -185,14 +185,16 @@ describe('M11 特殊机制', () => {
 
   it('自爆者：被持续伤害耗死也不会炸', () => {
     /* sta:0 → 战术槽是"架势"（0 伤害），玩家全程不出手，只让燃烧把它烧死 */
-    const p = mkPlayer({ sta: 0, staMax: 100, weaponDmg: 1 });
+    /* 不经过玩家回合，直接推状态结算——这条要验的是"faint 没拿到 killerType 就不炸"，
+       混进玩家行动会引入随机（暴击/命中）导致偶发失败（这个测试第一版就偶发红过） */
+    const p = mkPlayer();
     const bomber = mkFoe({ id: 'bomber', name: '自爆者', hp: 12, hpMax: 40, traits: ['volatile'], spd: 0.1 });
-    bomber.statuses.push({ kind: 'burn', turns: 5, power: 10 });
     const b = createBattle([bomber], p, {});
-    let guard = 0;
-    while (b.foes[0].hp > 0 && guard++ < 8) { if (!advance(b, p, 1)) break; playerAct(b, p, 'guard', 0); }
+    bomber.statuses.push({ kind: 'burn', turns: 5, power: 10 });
+    tickStatuses(b, p);
+    tickStatuses(b, p);
     expect(b.foes[0].hp).toBe(0);
-    expect(b.foes[0].statuses.length + 1).toBeGreaterThan(0);   // 确实是被状态耗死的（不是被打死）
+    expect(p.hp).toBe(100);
     expect(b.log.map(e => (e as { text?: string }).text ?? '').join(' ')).not.toContain('炸开');
   });
 
@@ -209,22 +211,25 @@ describe('M11 特殊机制', () => {
   });
 
   it('喷吐者：护甲被腐蚀后，同样一击挨得更疼', () => {
+    /* 单次伤害有 ±8% 随机浮动，而"护甲 6 → 视为 4"只差约 17%，单样本会偶发反超
+       （这个测试第一版就是这么偶发红的）。所以取 30 次的均值来比。 */
     const mk = () => mkFoe({ id: 'spitter', name: '喷吐者', hp: 500, hpMax: 500, atk: 20, traits: ['ranged'], spd: 3 });
-    const p1 = mkPlayer({ hp: 500, hpMax: 500, armor: 6, dodge: 0 });
-    const b1 = createBattle([mk()], p1, {});
-    b1.player.guard = 0;
-    advance(b1, p1, 1);
-    const takenClean = 500 - p1.hp;
-
-    const p2 = mkPlayer({ hp: 500, hpMax: 500, armor: 6, dodge: 0 });
-    const b2 = createBattle([mk()], p2, {});
-    b2.player.statuses.push({ kind: 'corrode', turns: 3, power: 0 });
-    b2.player.guard = 0;
-    advance(b2, p2, 1);
-    const takenCorroded = 500 - p2.hp;
-
-    expect(takenClean).toBeGreaterThan(0);
-    expect(takenCorroded).toBeGreaterThan(takenClean);
+    const sample = (corroded: boolean): number => {
+      let sum = 0;
+      for (let i = 0; i < 30; i++) {
+        const p = mkPlayer({ hp: 500, hpMax: 500, armor: 6, dodge: 0 });
+        const b = createBattle([mk()], p, {});
+        if (corroded) b.player.statuses.push({ kind: 'corrode', turns: 3, power: 0 });
+        b.player.guard = 0;
+        advance(b, p, 1);
+        sum += 500 - p.hp;
+      }
+      return sum / 30;
+    };
+    const clean = sample(false);
+    const corroded = sample(true);
+    expect(clean).toBeGreaterThan(0);
+    expect(corroded).toBeGreaterThan(clean);
   });
 
   it('喷吐者的酸液无视格挡', () => {

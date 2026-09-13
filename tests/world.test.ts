@@ -4,14 +4,15 @@ import { describe, expect, it } from 'vitest';
 import { zombieIds } from './legacy-tables';
 import { bkey, blockAt, generateWorld } from '../src/v4/worldgen';
 import {
-  defaultSaveWorld, ensureSaveWorld, findPath, planTrip, rollTravelEncounter, zoneOfPoi, worldOf,
+  defaultSaveWorld, ensureSaveWorld, findPath, markVisited, planTrip, rollTravelEncounter, switchRegion, zoneOfPoi, worldOf,
   type SaveWorld,
 } from '../src/v4/worldstate';
 import { foesFor, pickLoot, rollSearchKind, searchWeights } from '../src/v4/search-core';
 import { POIS } from '../src/v4/pois';
+import { HOME_REGION } from '../src/v4/regions-core';
 
 const seq = (...xs: number[]) => { let i = 0; return () => xs[Math.min(i++, xs.length - 1)]; };
-const w = worldOf('test-seed-1');
+const w = worldOf('test-seed-1', HOME_REGION);
 
 describe('大世界状态', () => {
   it('同一 seed 生成的世界是稳定的', () => {
@@ -196,5 +197,70 @@ describe('搜刮与 POI', () => {
       expect(foes.length).toBeLessThanOrEqual(3);
       for (const f of foes) expect(POIS.hospital.enemies).toContain(f);
     }
+  });
+});
+
+describe('M12 多区域大世界', () => {
+  it('老存档（没有 region 字段）自动认成主城，原有进度一个不丢', () => {
+    const sw: any = defaultSaveWorld('old-save-1');
+    delete sw.region; delete sw.regions; delete sw.seenRegions;
+    sw.visited['3,4'] = 1;                       // 老档在主城踩过的格子
+    const fixed = ensureSaveWorld({ seed: 'old-save-1', world: sw });
+    expect(fixed.region).toBe(HOME_REGION);
+    expect(fixed.visited['3,4']).toBe(1);        // 顶层 map 就是主城的进度，没被搬走
+    expect(fixed.seenRegions[HOME_REGION]).toBe(1);
+    expect(fixed.regions).toEqual({});
+  });
+
+  it('跨区：进度会被冻结、换回来还能接着用；坐标落到新区域的落脚点', () => {
+    const S: any = { seed: 'multi-1', world: null };
+    const sw = defaultSaveWorld('multi-1');
+    S.world = sw;
+    const wHome = worldOf(sw.seed, HOME_REGION);
+    markVisited(wHome, sw, wHome.home.x, wHome.home.y);
+    sw.visited['5,5'] = 1;                       // 主城里踩过的一格
+
+    const r1 = switchRegion(S, sw, 'dongjiao');
+    expect(r1.ok).toBe(true);
+    expect(sw.region).toBe('dongjiao');
+    expect(sw.visited['5,5']).toBeUndefined();   // 换区后顶层 map 是这个区域的（空）
+    expect(r1.firstEnter).toBeTruthy();          // 首次进入给叙事钩子
+    const wNew = worldOf(sw.seed, 'dongjiao');
+    expect(sw.cur).toEqual({ x: wNew.home.x, y: wNew.home.y });
+    expect(sw.seenRegions.dongjiao).toBe(1);
+    expect(sw.regions[HOME_REGION].visited['5,5']).toBe(1);   // 主城进度被冻住了
+
+    sw.visited['2,2'] = 1;                       // 在东郊踩一格
+    const r2 = switchRegion(S, sw, HOME_REGION);
+    expect(r2.ok).toBe(true);
+    expect(sw.visited['5,5']).toBe(1);           // 回主城：老进度还在
+    expect(sw.visited['2,2']).toBeUndefined();   // 东郊的进度留在东郊
+    expect(sw.regions.dongjiao.visited['2,2']).toBe(1);
+    expect(r2.firstEnter).toBeUndefined();       // 不是第一次来主城
+  });
+
+  it('每个区域的 24×24 世界不一样（同一存档、不同区域）', () => {
+    const a = worldOf('multi-2', HOME_REGION);
+    const b = worldOf('multi-2', 'beiling');
+    const aTerra = Object.keys(a.blocks).map(k => a.blocks[k].biome).join('');
+    const bTerra = Object.keys(b.blocks).map(k => b.blocks[k].biome).join('');
+    expect(aTerra).not.toBe(bTerra);
+    // 外圈危险度整体更高（tier 5 vs tier 1）
+    const avg = (w: typeof a) => Object.keys(w.blocks).reduce((s, k) => s + w.blocks[k].danger, 0) / Object.keys(w.blocks).length;
+    expect(avg(b)).toBeGreaterThan(avg(a));
+  });
+
+  it('同区域反复取世界对象是同一个实例（有缓存，不在 render 里重建）', () => {
+    expect(worldOf('multi-3', HOME_REGION)).toBe(worldOf('multi-3', HOME_REGION));
+    expect(worldOf('multi-3', HOME_REGION)).not.toBe(worldOf('multi-3', 'xishan'));
+  });
+
+  it('switchRegion 对不存在的区域不生效', () => {
+    const S: any = { seed: 'multi-4', world: null };
+    const sw = defaultSaveWorld('multi-4');
+    S.world = sw;
+    const r = switchRegion(S, sw, 'no-such-region');
+    expect(r.ok).toBe(false);
+    expect(sw.region).toBe(HOME_REGION);
   });
 });

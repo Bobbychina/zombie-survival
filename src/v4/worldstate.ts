@@ -3,30 +3,35 @@
    - 旅行规划 = 寻路 + 行动力/燃油核算；遭遇判定也在这里，UI 只负责展示与落地副作用。 */
 import { generateWorld, bkey, blockAt, revealAround, WORLD_W, WORLD_H } from './worldgen';
 import { fragSpots } from './quest4';
+import { HOME_REGION, regionById, regionSeed } from './regions-core';
 import type { Block, WorldState } from '../types';
 export interface VehState { fuel: number; hp: number }
 
-export interface SaveWorld {
+/** 单个区域的进度（跨区时整块换进换出，见 switchRegion） */
+export interface RegionProgress {
+  visited: Record<string, 1>;
+  firstPoi: Record<string, 1>;
+  left: Record<string, number>;
+  stock: Record<string, number>;
+  frag: Record<string, 1>;
+  forage: Record<string, { left: number; day: number }>;
+  salvage: Record<string, { left: number }>;
+  fish: Record<string, { left: number; day: number }>;
+  chop: Record<string, { left: number; day: number }>;
+}
+
+export interface SaveWorld extends RegionProgress {
   v: 1;
   seed: string;
+  /** M12：当前所在区域 id（元地图上的一格）。老存档没有这个字段 → 默认余烬市区，
+      而老存档里那批 map 本来就是余烬市区的进度，所以旧档**天然兼容**，不需要搬数据。 */
+  region: string;
+  /** 其他区域的进度（只有离开时才冻进来；当前区域的进度就存在上面那几个顶层字段里）。
+      这样设计是为了让 40 多处 `sw.visited[...]` 之类的老代码一行都不用改。 */
+  regions: Record<string, RegionProgress>;
+  /** 去过哪些区域（首次进入给叙事钩子） */
+  seenRegions: Record<string, 1>;
   cur: { x: number; y: number };
-  visited: Record<string, 1>;
-  /** 到过的 POI（key = "x,y"）：首次到访才给线索/首次奖励 */
-  firstPoi: Record<string, 1>;
-  /** POI 剩余可搜刮次数（搜空后只剩外壳）：key = "x,y" */
-  left: Record<string, number>;
-  /** 营地当日库存（买光了就没了）：key = poiId + 货架序号 */
-  stock: Record<string, number>;
-  /** 已拿走的门禁卡碎片（key = "x,y"） */
-  frag: Record<string, 1>;
-  /** M6：采集点剩余次数与上次采集日（key = "x,y"）——采光了要等几天再生 */
-  forage: Record<string, { left: number; day: number }>;
-  /** M6：拆解点剩余资源（key = "x,y"）——拆光为止，禁止无限材料机 */
-  salvage: Record<string, { left: number }>;
-  /** M7：钓鱼点当天剩余次数（key = "x,y"，每天刷新） */
-  fish: Record<string, { left: number; day: number }>;
-  /** M8：伐木点当天剩余次数（key = "x,y"，每天刷新）—— 与 forage/salvage/fish 并列的第四张表 */
-  chop: Record<string, { left: number; day: number }>;
   /** 在营地买过情报：碎片点与实验室永久点亮（迷雾每次都由 visited + 这个派生出来） */
   intel: boolean;
   /** 睡眠债（档，0~3）：AP 上限 = 9 - 债，派生值不单独存 */
@@ -43,18 +48,35 @@ export interface SaveWorld {
   trail: string[];               // 最近若干条旅行/搜刮记录（地图面板显示用）
 }
 
-let cache: { seed: string; w: WorldState } | null = null;
+let cache: { key: string; w: WorldState } | null = null;
 /** C11：迷雾重放很贵（576 格 ×9 邻居），而 ensure 会被每次 render 调到；
     这里记住"上次重放时的状态指纹"，只有读档/情报/无线电/新到过区块才重放一次。 */
-let lastSynced: { S: any; intel: boolean; radio: boolean; visited: number } | null = null;
+let lastSynced: { S: any; intel: boolean; radio: boolean; visited: number; region: string } | null = null;
 /** 迷雾重放次数（C11 的性能指标：反复 render 不该把它越推越高） */
 let replays = 0;
 export const replayCount = () => replays;
 
-/** 世界对象按 seed 缓存：同一存档反复 render 不重复生成 */
-export function worldOf(seed: string): WorldState {
-  if (!cache || cache.seed !== seed) cache = { seed, w: generateWorld(seed) };
+/** 世界对象按 "种子+区域" 缓存：同一存档在同一区域反复 render 不重复生成。
+    第二参数是**必填**的——不给区域就默认主城是个很容易埋的坑（会拿着别人的地图算坐标）。 */
+export function worldOf(seed: string, region: string): WorldState {
+  const key = seed + '::' + region;
+  if (!cache || cache.key !== key) cache = { key, w: buildRegionWorld(seed, region) };
   return cache.w;
+}
+
+/** 生成某个区域的 24×24 世界。地形/POI 完全沿用原来的生成器（只换 seed），
+    危险度按区域层级整体上浮（主城 tier=1 → 与旧版逐格一致，不动老档的平衡）。 */
+function buildRegionWorld(seed: string, region: string): WorldState {
+  const w = generateWorld(regionSeed(seed, region));
+  const def = regionById(region);
+  const bump = def ? Math.max(0, def.tier - 1) : 0;
+  if (bump > 0) {
+    for (const k in w.blocks) {
+      const b = w.blocks[k];
+      b.danger = Math.min(5, b.danger + bump);
+    }
+  }
+  return w;
 }
 
 export function markVisited(w: WorldState, sw: SaveWorld, x: number, y: number): string[] {
@@ -66,15 +88,61 @@ export function markVisited(w: WorldState, sw: SaveWorld, x: number, y: number):
 }
 
 export function defaultSaveWorld(seed: string): SaveWorld {
-  const w = worldOf(seed);
+  const w = worldOf(seed, HOME_REGION);
   const sw: SaveWorld = {
-    v: 1, seed, cur: { x: w.home.x, y: w.home.y },
+    v: 1, seed, region: HOME_REGION, regions: {}, seenRegions: { [HOME_REGION]: 1 },
+    cur: { x: w.home.x, y: w.home.y },
     visited: {}, firstPoi: {}, left: {}, stock: {}, frag: {}, forage: {}, salvage: {}, fish: {}, chop: {}, intel: false,
     debt: 0, lastNight: null, lastRaidDay: 0, evac: null,
     veh: null, steps: 0, fights: 0, trail: [],
   };
   markVisited(w, sw, w.home.x, w.home.y);
   return sw;
+}
+
+/** 把当前区域的进度收进 regions[region]，再把目标区域的进度摊到顶层字段上 */
+function stashCurrent(sw: SaveWorld): void {
+  sw.regions[sw.region] = {
+    visited: sw.visited, firstPoi: sw.firstPoi, left: sw.left, stock: sw.stock, frag: sw.frag,
+    forage: sw.forage, salvage: sw.salvage, fish: sw.fish, chop: sw.chop,
+  };
+}
+function loadRegion(sw: SaveWorld, region: string): void {
+  const p = sw.regions[region];
+  /* 摊到顶层之后就把这份副本删掉：regions 的语义严格是"**其它**区域的进度"，
+     否则同一个区域会同时活在顶层和 regions 里，计数与排查都会误导人 */
+  delete sw.regions[region];
+  sw.visited = p ? p.visited : {};
+  sw.firstPoi = p ? p.firstPoi : {};
+  sw.left = p ? p.left : {};
+  sw.stock = p ? p.stock : {};
+  sw.frag = p ? p.frag : {};
+  sw.forage = p ? p.forage : {};
+  sw.salvage = p ? p.salvage : {};
+  sw.fish = p ? p.fish : {};
+  sw.chop = p ? p.chop : {};
+}
+
+export interface SwitchResult { ok: boolean; why?: string; firstEnter?: string; region: string; home: { x: number; y: number } }
+
+/** 跨区域：换地图 + 换进度 + 落到目标区的安全屋/落脚点。
+ *  成本（油/行动力）由 regions-core.planRegionTrip 判定，这里只负责"真的搬过去"。 */
+export function switchRegion(S: any, sw: SaveWorld, toRegion: string): SwitchResult {
+  const def = regionById(toRegion);
+  if (!def) return { ok: false, why: '没有这个区域', region: sw.region, home: sw.cur };
+  if (def.id === sw.region) return { ok: true, region: sw.region, home: sw.cur };
+  stashCurrent(sw);
+  sw.region = def.id;
+  const first = !sw.seenRegions[def.id];
+  sw.seenRegions[def.id] = 1;
+  loadRegion(sw, def.id);
+  const w = worldOf(sw.seed, def.id);
+  sw.cur = { x: w.home.x, y: w.home.y };      // 跨区落地 = 该区入口（生成器给的 home 点）
+  markVisited(w, sw, sw.cur.x, sw.cur.y);
+  /* 迷雾是按"当前区域"重放的，换区必须让指纹失效，否则会一直用上一张图的迷雾 */
+  lastSynced = null;
+  if (S) S.world = sw;
+  return { ok: true, region: def.id, home: sw.cur, firstEnter: first ? def.firstEnter : undefined };
 }
 
 /** 存档里的 world 字段可能缺字段/被改坏：这里补齐并把迷雾按 visited 重放回来 */
@@ -85,8 +153,14 @@ export function ensureSaveWorld(S: any): SaveWorld {
     if (S) S.world = sw;
     return sw;
   }
-  const w = worldOf(sw.seed);
+  const w = worldOf(sw.seed, sw.region);
   sw.v = 1;
+  /* M12：多区域字段补齐。老存档没有 region/regions/seenRegions：
+     它顶层那批 map 本来就是主城的进度，所以直接认成 region=余烬市区，数据一个都不用搬。 */
+  sw.region = typeof sw.region === 'string' && regionById(sw.region) ? sw.region : HOME_REGION;
+  sw.regions = sw.regions && typeof sw.regions === 'object' ? sw.regions : {};
+  sw.seenRegions = sw.seenRegions && typeof sw.seenRegions === 'object' ? sw.seenRegions : { [sw.region]: 1 as const };
+  sw.seenRegions[sw.region] = 1;
   sw.cur = validPos(sw.cur) ? { x: sw.cur.x, y: sw.cur.y } : { x: w.home.x, y: w.home.y };
   // M7：水块现在是合法落脚点（可以游过去、可以潜水），所以**不再**把站在水里的玩家挪回陆地——
   // 以前那条"坏档防卡死"的兜底会把刚游下水的玩家瞬移回岸边（潜水功能因此完全失效，探针抓到过）。
@@ -112,10 +186,10 @@ export function ensureSaveWorld(S: any): SaveWorld {
   // C11：只有指纹变了才重放迷雾（否则每次 render 都要重放 576 格）
   const radio = !!(S && S.base && S.base.radio);
   const visitedN = Object.keys(sw.visited).length;
-  if (lastSynced && lastSynced.S === S && lastSynced.intel === sw.intel && lastSynced.radio === radio && lastSynced.visited === visitedN) {
+  if (lastSynced && lastSynced.S === S && lastSynced.intel === sw.intel && lastSynced.radio === radio && lastSynced.visited === visitedN && lastSynced.region === sw.region) {
     return sw;
   }
-  lastSynced = { S, intel: sw.intel, radio, visited: visitedN };
+  lastSynced = { S, intel: sw.intel, radio, visited: visitedN, region: sw.region };
   replays++;
   // 迷雾恢复：visited 是唯一的真相源，其余 revealed/visited 全部重放
   for (const k in w.blocks) { w.blocks[k].revealed = false; w.blocks[k].visited = false; }

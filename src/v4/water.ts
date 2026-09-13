@@ -15,7 +15,7 @@ import {
 import type { Block } from '../types';
 
 const sw = () => ensureSaveWorld(L.S);
-const curBlock = (): Block | null => { const s = sw(); return (worldOf(s.seed).blocks[bkey(s.cur.x, s.cur.y)] as Block) ?? null; };
+const curBlock = (): Block | null => { const s = sw(); return (worldOf(s.seed, s.region).blocks[bkey(s.cur.x, s.cur.y)] as Block) ?? null; };
 const hasWetsuit = () => {
   const S = L.S as any;
   return S.eq?.body === WETSUIT || L.itemCount(WETSUIT) > 0;
@@ -24,7 +24,7 @@ const isNight = () => { const p = String(L.phaseName ? L.phaseName()[0] : ''); r
 
 /** 相邻有没有水（能不能站在这儿钓） */
 export function waterNearby(): { any: boolean; blocks: Block[] } {
-  const s = sw(), w = worldOf(s.seed), b = curBlock();
+  const s = sw(), w = worldOf(s.seed, s.region), b = curBlock();
   if (!b) return { any: false, blocks: [] };
   const out: Block[] = [];
   for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
@@ -90,7 +90,7 @@ export function canSwim(): { ok: boolean; why?: string; note: string } {
 
 /** 游一格水：扣行动力/体力/体温，掷风险 */
 export function swimStep(dir: { x: number; y: number }): boolean {
-  const S = L.S as any, s = sw(), w = worldOf(s.seed);
+  const S = L.S as any, s = sw(), w = worldOf(s.seed, s.region);
   const target = blockAt(w, dir.x, dir.y);
   if (!target) return false;
   if (target.biome !== 'water') { L.toast('那儿不是水', '游泳只用来过水。', 'bad'); return false; }

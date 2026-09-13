@@ -17,7 +17,7 @@ export function fragTaken(): Record<string, 1> {
 /** 还没拿走的碎片格子 key 集合（地图上要标 📡） */
 export function pendingFragKeys(): Record<string, 1> {
   const s = ensureSaveWorld(L.S);
-  const w = worldOf(s.seed);
+  const w = worldOf(s.seed, s.region);
   const taken = fragTaken();
   const out: Record<string, 1> = {};
   for (const f of fragSpots(w)) if (!taken[f.key]) out[f.key] = 1;
@@ -27,7 +27,7 @@ export function pendingFragKeys(): Record<string, 1> {
 /** 站在碎片点上就拿走一块；返回是否真的拿到了 */
 export function takeFragment(block: Block): boolean {
   const s = ensureSaveWorld(L.S);
-  const w = worldOf(s.seed);
+  const w = worldOf(s.seed, s.region);
   const key = block.x + ',' + block.y;
   const f = fragSpots(w).find(x => x.key === key);
   if (!f) return false;
