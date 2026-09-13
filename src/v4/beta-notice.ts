@@ -45,8 +45,8 @@ function installMobileWarn(): void {
   const bar = document.createElement('div');
   bar.id = 'mobile-warn';
   bar.setAttribute('role', 'alert');
-  bar.innerHTML = '<span>📱 <b>手机端暂未做适配</b>：这是键鼠操作的游戏，触屏和窄屏下排版、操作都会很难受，'
-    + '建议换电脑打开。</span>';
+  bar.innerHTML = '<span>📱 <b>手机端是基础适配</b>：按钮已经加大、地图格子也放大了，能玩；'
+    + '但这游戏是按键鼠设计的（地图靠左右滑动、没有快捷键），体验仍不如电脑。</span>';
   const btn = document.createElement('button');
   btn.type = 'button';
   btn.textContent = '知道了';

@@ -260,6 +260,32 @@
     .btn.sm{min-height:36px}
     .btn.xs{min-height:30px}
   }
+  /* ── M10 触屏适配：手机是"手指点"，桌面是"鼠标点"，尺寸标准不一样 ──
+     实测（iPhone 390×844）改前的毛病：标签 93×32、顶栏图标 30×28、地图格子 24×24、
+     按钮 touch-action:auto（双击缩放会吃掉 300ms）、点按高亮是刺眼的蓝色。
+     这里把"要点的东西"统一抬到 ≥44px，地图格子放大到 30px+，并关掉双击缩放延迟。 */
+  @media (max-width:860px){
+    #btn-sfx,#btn-help,#btn-menu{min-width:44px;min-height:44px;font-size:17px;padding:0}
+    .tab{min-height:44px;display:flex;align-items:center;justify-content:center}
+    .btn.xs{min-height:44px;padding:10px 14px}
+    .btn.sm{min-height:44px}
+    #btn-clear-log{min-height:44px;padding:8px 12px}
+    /* 10px 的小字在手机上是真的看不清（图例、徽标、品牌版本号、战斗里的招式标签）；
+       加 #app 前缀 + 逐类点名，是为了压过 .brand .ver / .v4world .wlegend 这类多段选择器 */
+    #app .badge,#app .lg,#app .ap-label,#app .ver,#app .tag,#app .hint,#app .muted,#app .meta,
+    #app .enemy .tr,#app .mv-meta,#app .mv-why,#app .type-chip,#app .status-chip,
+    #app .wlegend,#app .wlegend-box,#app kbd,#app .chip{font-size:11.5px}
+    #log{line-height:1.55}
+    /* 刘海屏/手势条：底部留出安全区，别让日志被 home 条盖住 */
+    #app{padding-bottom:env(safe-area-inset-bottom)}
+    #topbar{padding-top:calc(8px + env(safe-area-inset-top))}
+  }
+  /* ── 触屏卫生（不限宽度：触屏笔记本也吃这套）──
+     touch-action:manipulation 去掉双击缩放那 300ms 等待；点按高亮改成几乎看不见；
+     user-select:none 防止长按选中按钮文字。这些都是"有触屏才生效"的属性，桌面上无副作用。 */
+  button,.btn,.tab,[onclick],input,select,textarea{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+  button,.btn,.tab{user-select:none;-webkit-user-select:none}
+  html{-webkit-text-size-adjust:100%;text-size-adjust:100%}
   @media (prefers-reduced-motion:reduce){*{animation-duration:.01ms!important;transition-duration:.01ms!important}}
   /* 深色页打印兜底：白底黑字，避免导出全黑 */
   @media print{

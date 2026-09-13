@@ -65,6 +65,17 @@
 .v4world .wmapwrap{overflow:auto;border:1px solid var(--line);border-radius:6px;background:#0b0d10;padding:6px}
 .v4world .wgrid{display:grid;gap:2px;min-width:0;grid-template-columns:repeat(24,minmax(20px,28px))!important;justify-content:center}
 @media (max-width:1399px){.v4world .wgrid{min-width:620px}}
+/* M10 触屏：地图是"点区块"这个核心操作，24px 一格手指点不准。
+   窄屏把格子放大到 30~36px（靠左右滑动看地图），并给滚动容器加惯性滚动。 */
+@media (max-width:860px){
+  .v4world .wmapwrap{-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scrollbar-width:thin}
+  .v4world .wgrid{grid-template-columns:repeat(24,minmax(30px,36px))!important;gap:3px}
+  .v4world .wcell{min-height:30px}
+  .v4world .wlegend,.v4world .wlegend-box{font-size:11.5px}
+}
+@media (max-width:480px){
+  .v4world .wgrid{min-width:0}          /* 375px 屏上别硬撑 620px，交给容器横向滚动 */
+}
 .v4world .wcell.frag{box-shadow:inset 0 0 0 1px rgba(216,192,122,.8);animation:wfrag 2.4s ease-in-out infinite}
 @keyframes wfrag{0%,100%{box-shadow:inset 0 0 0 1px rgba(216,192,122,.8)}50%{box-shadow:inset 0 0 0 2px rgba(216,192,122,.95)}}
 .v4world .wcell.evac{box-shadow:inset 0 0 0 2px rgba(127,214,232,.85)}
