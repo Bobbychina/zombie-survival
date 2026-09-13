@@ -199,9 +199,9 @@
     "day": 6,
     "contractsDay": 6,
     "hasCar": false,
-    "farTitle": "废墟里的旧图",
-    "farRegion": "r6-3",
-    "farMetric": "rzone:r6-3:*",
+    "farTitle": "城郊的托运",
+    "farRegion": "r8-8",
+    "farMetric": "rzone:r8-8:*",
     "boardKeys": [
       "story:6",
       "far:6",
@@ -213,10 +213,10 @@
   "farDone": {
     "okAccept": true,
     "far": "城郊的托运",
-    "farMetric": "rzone:r3-3:*",
+    "farMetric": "rzone:r8-8:*",
     "farNeed": 2,
-    "region": "r3-3",
-    "regionAfter": "r3-3",
+    "region": "r8-8",
+    "regionAfter": "r8-8",
     "activeMid": 1,
     "justThereProg": 0,
     "oneProg": 1,
@@ -227,13 +227,13 @@
     "activeAfter": 0,
     "done": 2,
     "rzones": {
-      "r3-3": {
-        "construction": 2
+      "r8-8": {
+        "mall": 2
       }
     },
     "visits": {
       "r5-6": 1,
-      "r3-3": 1
+      "r8-8": 1
     },
     "log": [
       "第 6 天接了委托：城郊的托运",
@@ -263,8 +263,8 @@
     "sanChapter": 1,
     "sanZoneCntKeys": [
       "hospital",
-      "oldtown",
-      "construction",
+      "market",
+      "mall",
       "pharmacy"
     ],
     "poiKeySurvives": true

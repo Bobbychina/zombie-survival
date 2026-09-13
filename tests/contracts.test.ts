@@ -4,7 +4,10 @@ import {
   MAX_ACTIVE, accept, activeLine, abandon, bountyBudget, emptyContracts, ensureContracts, metricLabel, metricNow,
   progressOf, refreshBoard, rollOffers, settle, type Metric, type Snap,
 } from '../src/v4/contracts-core';
-import { HOME_REGION, REGIONS, regionById } from '../src/v4/regions-core';
+import { AP_MAX_BASE } from '../src/v4/night-core';
+import {
+  HOME_REGION, MAX_HOPS, REGIONS, regionById, regionTravelCost, planRegionTrip, setActiveRegions,
+} from '../src/v4/regions-core';
 
 const seq = (...xs: number[]) => { let i = 0; return () => xs[Math.min(i++, xs.length - 1)]; };
 
@@ -126,6 +129,29 @@ describe('委托板', () => {
     const b = rollOffers(4, seq(0.5), 3).find(o => o.key.startsWith('story'))!;
     expect(a.metric).toBe('zone:hospital');
     expect(b.metric).toBe('zone:military');
+  });
+
+  it('跨区委托的目标"满状态一趟跑得到"（跳数、行动力、油都在预算内）', () => {
+    /* 探针实测踩过两次：先是发到 5 格外（超 MAX_HOPS），改完又发到"4 格但斜着走要 12 行动力"的地方
+       （上限只有 9）——两种都是接了也完不成的废委托。这里把三条预算钉死。 */
+    for (const seed of ['ember-01', 'regions-test', 'mig-test']) {
+      setActiveRegions(seed);
+      const home = HOME_REGION;
+      for (const day of [6, 12, 30]) {
+        const offers = rollOffers(day, seq(0.15, 0.45, 0.75, 0.3, 0.6), 3, { region: home });
+        const far = offers.find(o => o.region);
+        if (!far) continue;
+        const to = regionById(far.region!)!;
+        const from = regionById(home)!;
+        const c = regionTravelCost(from, to);
+        const plan = planRegionTrip({ hasVehicle: true, fuel: 12, ap: AP_MAX_BASE, apMax: AP_MAX_BASE, from: home, to: to.id });
+        expect(plan.ok, seed + ' 第 ' + day + ' 天的跨区委托跑不到：' + to.name).toBe(true);
+        expect(c.hops, seed + ' 委托目标太远：' + to.name).toBeLessThanOrEqual(MAX_HOPS);
+        expect(c.ap).toBeLessThanOrEqual(AP_MAX_BASE);
+        expect(c.fuel).toBeLessThanOrEqual(12);
+      }
+    }
+    setActiveRegions('ember-01');                 // 别把全局表留在测试种子上
   });
 
   it('换日会刷新板子（没接的报价作废）', () => {

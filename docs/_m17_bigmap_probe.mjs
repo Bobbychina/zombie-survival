@@ -76,6 +76,11 @@ const dump = `(() => {
     tabs: [...document.querySelectorAll('#v4world .wmtab')].map(b => b.textContent.trim()),
     badge: (document.querySelector('#v4world .sect-title') || {}).textContent || '',
     cur: (document.querySelector('#v4world .rcur') || {}).textContent || '',
+    /* M17.1：格子按 DOM 顺序（12×12 行优先）取"地貌标签"，用来验"成片/约束" */
+    grid: cs.map(c => {
+      const m = /·\\s*([^·]+?)\\s*·\\s*危险/.exec(c.getAttribute('title') || '');
+      return m ? m[1].trim() : '';
+    }),
     detail: (document.querySelector('#v4world .rdetail') || {}).textContent || '',
     detailHtml: (document.querySelector('#v4world .rdetail') || {}).innerHTML || '',
     hasGoBtn: !!document.querySelector('#v4world .rdetail .rgo button'),
@@ -127,6 +132,26 @@ const dcOf = {}; for (const c of A.cells) (dcOf[c.tier] = dcOf[c.tier] || new Se
 const dcOk = [1, 2, 3, 4, 5].every(t => dcOf[t] && dcOf[t].size === 1) && new Set([1, 2, 3, 4, 5].map(t => [...dcOf[t]][0])).size === 5
 ok('底边条按危险度上色（同档同色、五档五色，图上能看出"越往外越红"）', dcOk,
   [1, 2, 3, 4, 5].map(t => t + ':' + (dcOf[t] ? [...dcOf[t]][0] : '?')).join(' '))
+
+/* M17.1：用户截图评审的核心——"色块马赛克、工业区贴着市中心"。
+   这里直接在 DOM 上量：相邻同类占比 + 工业区是否贴着主城。 */
+const G = A.grid
+ok('每格的"地貌标签"都能从 DOM 里读出来（下面的成片/约束检查靠它）', G.filter(t => t).length === 144, `解析到 ${G.filter(t => t).length}/144`)
+const at = (r, c) => (r < 0 || r > 11 || c < 0 || c > 11 ? '' : G[r * 12 + c])
+let sameN = 0, totN = 0
+for (let r = 0; r < 12; r++) for (let c = 0; c < 12; c++) {
+  if (c < 11) { totN++; if (at(r, c) === at(r, c + 1)) sameN++ }
+  if (r < 11) { totN++; if (at(r, c) === at(r + 1, c)) sameN++ }
+}
+const ratio = sameN / totN
+ok('同类型连成片，不是色块马赛克（相邻同类占比 ≥0.45，随机打散约 0.15）', ratio >= 0.45 && ratio < 1, `ratio=${ratio.toFixed(2)}`)
+const homeIdx = A.cells.findIndex(c => c.home)
+const homeRC = [Math.floor(homeIdx / 12), homeIdx % 12]
+const homeNb = [[0, -1], [0, 1], [-1, 0], [1, 0]].map(([dr, dc]) => at(homeRC[0] + dr, homeRC[1] + dc)).filter(Boolean)
+ok('工业区不贴市中心（主城四周没有化工园）', homeNb.length === 4 && homeNb.every(t => t !== '工业区'), `主城四周=${homeNb.join('/')}`)
+const box = A.cells.filter((c, i) => Math.max(Math.abs(Math.floor(i / 12) - homeRC[0]), Math.abs((i % 12) - homeRC[1])) <= 1)
+ok('主城 + 紧邻一圈都是安全区（危险度 1），玩家有"新手村"',
+  box.length === 9 && box.every(c => c.tier === 1), `九宫格危险度=${box.map(c => c.tier).join(',')}`)
 
 /* ② 点一格 → 详情联动（评审："缺资源暗示、描述不与选中区域联动"） */
 const hop1 = meta.regions.filter(r => r.dist === 1 && r.type !== 'water')[0]

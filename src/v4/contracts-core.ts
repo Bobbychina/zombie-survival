@@ -9,7 +9,8 @@
  *     否则开车过去再开回来就完成了，跨区委托会退化成"跑腿费"。
  *   · 赏金预算：同一天刷出来的委托，材料奖励总和不超过 `20 + 2×天数`（防止委托变成无限材料机）
  */
-import { MAX_HOPS, REGIONS, regionName, regionPath, type RegionType, typeLabel } from './regions-core';
+import { MAX_HOPS, REGIONS, regionById, regionName, regionPath, regionTravelCost, type RegionType, typeLabel } from './regions-core';
+import { AP_MAX_BASE } from './night-core';
 import { foeName, poiName } from './labels';
 
 export type Metric =
@@ -192,21 +193,29 @@ export interface RollOpts {
   region?: string;
 }
 
-/** M17：按类型挑一个"真能开车去"的目标区域。
- *  两条硬约束（都是实测踩出来的）：
- *   ① 别再发"一趟开不到"的委托——车一箱油 + 一天体力最多 MAX_HOPS 格，超了玩家接了就完不成；
- *   ② 同类型里挑最近的几个随机一个，避免每天都发同一处。
- *  实在没有一趟能到的（例如军管区只在深山角落），退化成"最近的那个"（玩家可以中途落脚，两天跑完）。 */
+/** 满状态出发的预算：行动力上限（安全屋睡满）+ 油箱上限。跨区委托必须落在预算内，否则就是废委托 */
+const FUEL_CAP = 12;
+
+/** M17：按类型挑一个"真能开车去"的目标区域。三条硬约束（都是实测踩出来的）：
+ *   ① 别再发"一趟开不到"的委托——超过 MAX_HOPS 格玩家接了也完不成；
+ *   ② 也别发"开得到但花不起"的——满状态出发的预算就是 AP 上限 9 + 油箱 12，
+ *      斜向格 3 行动力/3 油，4 格斜着走要 12 行动力，照样到不了（探针实测：目标 r1-10 hops=4 却拦下来了）；
+ *   ③ 同类型里挑最近的几个随机一个，避免每天都发同一处。
+ *  实在没有一趟能到的（例如军管区只在深山角落），退化成"最近的那个"（玩家分两天跑）。 */
 function pickFarRegion(want: RegionType, curId: string | undefined, rng: () => number) {
   const cur = curId ? REGIONS.find(r => r.id === curId) : null;
-  const hops = (id: string) => cur ? (regionPath(cur.id, id)?.length ?? 99) - 1 : 0;
+  const full = (id: string) => {
+    if (!cur) return { hops: 0, ap: 0, fuel: 0 };
+    const c = regionTravelCost(cur, regionById(id)!);
+    return { hops: (regionPath(cur.id, id)?.length ?? 99) - 1, ap: c.ap, fuel: c.fuel };
+  };
   const pool = REGIONS
     .filter(r => r.type === want && r.id !== curId && !r.homeBase && r.type !== 'water')
-    .map(r => ({ r, d: cur ? Math.max(Math.abs(r.col - cur.col), Math.abs(r.row - cur.row)) : r.dist, h: hops(r.id) }))
+    .map(r => ({ r, d: cur ? Math.max(Math.abs(r.col - cur.col), Math.abs(r.row - cur.row)) : r.dist, trip: full(r.id) }))
     .sort((a, b) => a.d - b.d);
   if (!pool.length) return null;
-  const inOneTrip = pool.filter(x => x.h <= MAX_HOPS);
-  const cands = (inOneTrip.length ? inOneTrip : pool).slice(0, 4);
+  const affordable = pool.filter(x => x.trip.hops <= MAX_HOPS && x.trip.ap <= AP_MAX_BASE && x.trip.fuel <= FUEL_CAP);
+  const cands = (affordable.length ? affordable : pool).slice(0, 4);
   return cands[Math.floor(rng() * cands.length)].r;
 }
 
