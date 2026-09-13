@@ -22,6 +22,9 @@ export interface RegionProgress {
 
 export interface SaveWorld extends RegionProgress {
   v: 1;
+  /** M15.1：地形生成器版本。改了 worldgen 就 +1 —— BETA 阶段允许"地图重画"，
+      存档里只保留人物进度，地形相关的进度（到过哪、搜过几次、营地库存、采伐配额）全部重置。 */
+  wv: number;
   seed: string;
   /** M12：当前所在区域 id（元地图上的一格）。老存档没有这个字段 → 默认余烬市区，
       而老存档里那批 map 本来就是余烬市区的进度，所以旧档**天然兼容**，不需要搬数据。 */
@@ -55,6 +58,12 @@ export interface SaveWorld extends RegionProgress {
 }
 
 let cache: { key: string; w: WorldState } | null = null;
+/** 地形生成器版本：**改了 worldgen 的产出就 +1**（BETA 阶段允许地图重画）。
+    v1 = M12 的噪声撒点；v2 = M15 的土地利用分区生成。 */
+export const WORLD_VER = 2;
+/** 这一局是否刚刚做过"地图重画"迁移（main.ts 读一次，用来给玩家一句说明） */
+let migrated = false;
+export const takeWorldMigration = (): boolean => { const m = migrated; migrated = false; return m; };
 /** C11：迷雾重放很贵（576 格 ×9 邻居），而 ensure 会被每次 render 调到；
     这里记住"上次重放时的状态指纹"，只有读档/情报/无线电/新到过区块才重放一次。 */
 let lastSynced: { S: any; intel: boolean; radio: boolean; visited: number; region: string } | null = null;
@@ -97,7 +106,7 @@ export function markVisited(w: WorldState, sw: SaveWorld, x: number, y: number):
 export function defaultSaveWorld(seed: string): SaveWorld {
   const w = worldOf(seed, HOME_REGION);
   const sw: SaveWorld = {
-    v: 1, seed, region: HOME_REGION, regions: {}, seenRegions: { [HOME_REGION]: 1 }, regionVisits: { [HOME_REGION]: 1 }, regionZones: {},
+    v: 1, wv: WORLD_VER, seed, region: HOME_REGION, regions: {}, seenRegions: { [HOME_REGION]: 1 }, regionVisits: { [HOME_REGION]: 1 }, regionZones: {},
     cur: { x: w.home.x, y: w.home.y },
     visited: {}, firstPoi: {}, left: {}, stock: {}, frag: {}, forage: {}, salvage: {}, fish: {}, chop: {}, intel: false,
     debt: 0, lastNight: null, lastRaidDay: 0, evac: null,
@@ -160,6 +169,26 @@ export function ensureSaveWorld(S: any): SaveWorld {
     sw = defaultSaveWorld(String((S && S.seed) || 'ember-01'));
     if (S) S.world = sw;
     return sw;
+  }
+  const w0 = worldOf(sw.seed, typeof sw.region === 'string' && regionById(sw.region) ? sw.region : HOME_REGION);
+  /* M15.1：地图重画。地形生成器版本对不上（老档没有 wv，或 worldgen 改过）→
+     把**地形相关的进度**全部清掉，只保留人物进度（天/血/背包/材料/据点/成就/任务/剧情）。
+     为什么必须清：visited/left/firstPoi 这些是按坐标记的，地形一换就指向别的东西
+     （搜空的点变成满库存、营地库存错位、碎片落在水里）。BETA 阶段这样处理最干净。 */
+  if (sw.wv !== WORLD_VER) {
+    sw.visited = {}; sw.firstPoi = {}; sw.left = {}; sw.stock = {}; sw.frag = {};
+    sw.forage = {}; sw.salvage = {}; sw.fish = {}; sw.chop = {};
+    sw.regions = {};
+    sw.seenRegions = { [sw.region]: 1 as const };
+    sw.regionVisits = { [sw.region]: 1 };
+    sw.regionZones = {};
+    sw.evac = null; sw.lastNight = null; sw.lastRaidDay = 0;
+    sw.intel = false;                       // 情报点的是"旧地图上的碎片点"，作废
+    sw.trail = []; sw.steps = 0; sw.fights = 0;
+    sw.cur = { x: w0.home.x, y: w0.home.y };  // 老坐标在新区可能是水/是别人家：回本区入口
+    sw.wv = WORLD_VER;
+    migrated = true;
+    lastSynced = null;
   }
   const w = worldOf(sw.seed, sw.region);
   sw.v = 1;

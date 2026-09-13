@@ -27,7 +27,7 @@ export function fragSpots(w: WorldState): Frag[] {
   const pick = (cands: Block[], out: Frag[], need: number) => {
     for (const b of cands) {
       if (out.length >= need) break;
-      if (!b.poi || b.poi === 'lab') continue;
+      if (!b.poi || b.poi === 'lab' || b.poi === 'sunken') continue;
       if (out.some(f => Math.max(Math.abs(f.x - b.x), Math.abs(f.y - b.y)) < 4)) continue;   // 三个点别挤在一块
       out.push({ x: b.x, y: b.y, poi: b.poi, key: bkey(b.x, b.y), taken: false });
     }
@@ -35,7 +35,9 @@ export function fragSpots(w: WorldState): Frag[] {
   const all: Block[] = [];
   for (const k in w.blocks) {
     const b = w.blocks[k];
-    if (b.poi && b.poi !== 'lab' && near(b)) all.push(b);
+    /* 只挑"能走进去搜"的 POI：沉没基地在水下（要潜水，碎片扔那儿等于逼人练潜水）、
+       实验室是终点不藏碎片。M15 起地形按分区生成、POI 分布变化很大，这条过滤必须有。 */
+    if (b.poi && b.poi !== 'lab' && b.poi !== 'sunken' && b.biome !== 'water' && near(b)) all.push(b);
   }
   // 稳一点：先按坐标排序再洗牌，避免不同引擎的枚举顺序影响结果
   all.sort((a, b) => (a.y - b.y) || (a.x - b.x));

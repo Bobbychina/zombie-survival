@@ -1,0 +1,84 @@
+{
+  "checks": [
+    [
+      "成功写入一份\"老版本地形\"的存档",
+      true
+    ],
+    [
+      "世界版本号补上了",
+      true
+    ],
+    [
+      "日志明确说明\"地图重画了\"",
+      true
+    ],
+    [
+      "地形进度已清空（visited/left/stock/firstPoi/chop/intel/evac/trail）",
+      true
+    ],
+    [
+      "人物进度一项不少（天/材料/血/背包/主线/抉择/结局档案/车）",
+      true
+    ],
+    [
+      "玩家被挪回本区入口（老坐标不再可信）",
+      true
+    ],
+    [
+      "同版本不会重复迁移（探索进度保住了，也不再提示）",
+      true
+    ],
+    [
+      "全程无 console 报错 / 未捕获异常",
+      true
+    ]
+  ],
+  "errs": [],
+  "seeded": {
+    "wrote": true,
+    "hasWv": false,
+    "day": 42,
+    "visited": 2
+  },
+  "after": {
+    "wv": 2,
+    "day": 42,
+    "mat": 321,
+    "hp": 66,
+    "inv": {
+      "can": 2,
+      "water": 2,
+      "bandage": 1,
+      "crowbar": 1
+    },
+    "quest": 4,
+    "choices": {
+      "ch1": "keep"
+    },
+    "endings": [
+      "ash"
+    ],
+    "visited": 0,
+    "left": 0,
+    "stock": 0,
+    "firstPoi": 0,
+    "chop": 0,
+    "intel": false,
+    "evac": null,
+    "trail": 0,
+    "veh": {
+      "fuel": 5,
+      "hp": 80
+    },
+    "cur": {
+      "x": 12,
+      "y": 12
+    },
+    "logMigrate": true,
+    "logKeep": true
+  },
+  "again": {
+    "visited": 1,
+    "logMigrate": false
+  }
+}

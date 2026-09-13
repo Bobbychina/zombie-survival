@@ -174,6 +174,13 @@ async function main() {
   integrity.installWriteHook();
   L.boot();
   integrity.reportAfterBoot();
+  /* M15.1：地图重画（世界生成器版本变了）。BETA 阶段地形会随生成器更新而变，
+     存档里保留人物进度、清掉按坐标记的地形进度——这事必须告诉玩家，否则会以为丢档了。 */
+  if (worldState.takeWorldMigration()) {
+    L.log('🗺️ BETA：地图生成器更新了，这个世界重画了一遍。', 'system');
+    L.log('　 你的人物/背包/材料/据点/天数/任务都还在；探索过的格子、POI 剩余次数、营地库存与地图情报重置了（它们按坐标存，地形一换就对不上）。', 'info');
+    L.toast('地图已重画', 'BETA 阶段地形会随生成器更新而变，人物进度保留。', 'info');
+  }
   mountWorld();
   L.log('🧪 v4 引擎已接管战斗：4 招式槽 / 速度出手 / 属性克制。', 'info');
   // file:// 直开时存档只落在本浏览器：给一句提示，免得换个浏览器以为存档丢了
