@@ -68,6 +68,7 @@ export const STATUS_NAME: Record<string, { name: string; icon: string; desc: str
   burn:   { name:'燃烧', icon:'🔥', desc:'每回合失去较多生命' },
   stun:   { name:'眩晕', icon:'💫', desc:'跳过它的回合' },
   weak:   { name:'被压制', icon:'⬇️', desc:'造成的伤害 -25%' },
+  corrode:{ name:'护甲腐蚀', icon:'🧪', desc:'护甲被酸液啃掉，接下来挨打更疼' },
 };
 
 export function effectivenessText(m: number): string {

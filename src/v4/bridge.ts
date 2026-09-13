@@ -1,27 +1,13 @@
 /* legacy 底座 ↔ v4 新系统的桥：v4 只通过这里读写存档、拿玩家数值、发奖励。
    目的：新代码不直接摸 window 上那 200 个名字；等 legacy 逐步被替换掉，这里就是唯一需要改的地方。 */
 import { L } from '../main';
-import type { Foe, FoeType } from '../types';
+import type { Foe } from '../types';
 import type { PlayerProfile } from './combat';
+import { FOE_TRAITS, FOE_TYPES, foeMoves } from './foe-data';
 
-/** 丧尸模板 id → 宝可梦式"属性"（决定克制关系） */
-export const FOE_TYPES: Record<string, FoeType[]> = {
-  walker: ['flesh'], crawler: ['flesh', 'swift'], runner: ['flesh', 'swift'], hound: ['flesh', 'swift'],
-  brute: ['flesh', 'hulk'], poison: ['toxic'], screamer: ['flesh', 'swift'],
-  armored: ['armor', 'bone'], giant: ['hulk', 'flesh'], bandit: ['flesh'],
-  boss_a: ['armor', 'hulk'], boss_b: ['toxic', 'hulk'],
-};
-
-/** 丧尸 id → 招式偏好（威力按它的伤害换算） */
-function foeMoves(id: string, atk: number): string[] {
-  const heavy = atk >= 14;
-  const swift = id === 'runner' || id === 'hound' || id === 'screamer' || id === 'crawler';
-  const out = ['claw'];
-  if (heavy) out.push('slam');
-  if (swift) out.push('pounce');
-  if (id === 'poison' || id === 'boss_b') out.push('spit');
-  return out;
-}
+/* 属性表 / 机制表 / 招式偏好都在 foe-data.ts（纯数据，单测能直接 import）。
+   这里再导出一次，保持老引用路径可用。 */
+export { FOE_TRAITS, FOE_TYPES };
 
 /** legacy 的丧尸（mkFoe 出来的）→ v4 Foe。legacy 用 dmg/spd/t，v4 用 atk/def/types/moves。 */
 export function toFoe(src: any): Foe {
@@ -43,7 +29,7 @@ export function toFoe(src: any): Foe {
     statuses: [],
     elite: !!src.elite,
     affix,
-    traits: [],
+    traits: (FOE_TRAITS[id] ?? []).slice(),
     loot: t.loot,
     xp: src.xp,
     boss: !!src.boss,

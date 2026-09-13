@@ -1,6 +1,7 @@
 /* 大世界层的单元测试：旅行报价、迷雾恢复、搜刮纯逻辑。
    这些是"玩家每天都点"的路径，出错会直接卡住主线，所以用测试钉住。 */
 import { describe, expect, it } from 'vitest';
+import { zombieIds } from './legacy-tables';
 import { bkey, blockAt, generateWorld } from '../src/v4/worldgen';
 import {
   defaultSaveWorld, ensureSaveWorld, findPath, planTrip, rollTravelEncounter, zoneOfPoi, worldOf,
@@ -164,10 +165,12 @@ describe('搜刮与 POI', () => {
   });
 
   it('敌人都能在 legacy 丧尸表里找到', () => {
-    const KNOWN = ['walker', 'crawler', 'runner', 'hound', 'brute', 'poison', 'screamer', 'armored', 'giant', 'bandit', 'drowned', 'boss_a', 'boss_b'];
+    /* 不手写 KNOWN 名单：直接从 legacy 源码解析（加新丧尸时测试自动跟上，不会误报） */
+    const KNOWN = zombieIds();
     const bad: string[] = [];
     for (const id in POIS) for (const e of POIS[id].enemies) if (!KNOWN.includes(e)) bad.push(id + ':' + e);
     expect(bad).toEqual([]);
+    expect(KNOWN.length).toBeGreaterThan(10);
   });
 
   it('权重掷结果落在唯一非零项上；抽掉落会过滤非法 id', () => {

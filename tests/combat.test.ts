@@ -1,9 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 afterEach(() => vi.restoreAllMocks());
-import { advance, canUse, createBattle, movesFor, playerAct, tryFlee, type PlayerProfile } from '../src/v4/combat';
+import { advance, canUse, createBattle, foeTurn, movesFor, playerAct, tryFlee, type PlayerProfile } from '../src/v4/combat';
 import { TYPE_CHART, effectivenessText, typeMult, weaponMoves } from '../src/v4/moves';
+import { FOE_TRAITS, FOE_TYPES } from '../src/v4/foe-data';
+import { POIS } from '../src/v4/pois';
 import type { Foe } from '../src/types';
+
+import { zombieTable } from './legacy-tables';
+const ZOMBIES = zombieTable();
+
 
 const mkFoe = (over: Partial<Foe> = {}): Foe => ({
   id: 'walker', name: '普通丧尸', hp: 40, hpMax: 40, atk: 8, def: 2, spd: 1,
@@ -149,5 +155,125 @@ describe('回合制引擎', () => {
     expect(b.over).toBe('flee');
     const b2 = createBattle([mkFoe({ spd: 3 })], p, { noFlee: true });
     expect(tryFlee(b2, p)).toBe(false);
+  });
+});
+
+/* ── M11 新敌人机制：自爆 / 孵化 / 远程腐蚀 / 狂暴 ── */
+describe('M11 特殊机制', () => {
+  it('自爆者：被近战打死会炸（玩家掉血）', () => {
+    const p = mkPlayer({ weaponDmg: 999 });
+    const bomber = mkFoe({ id: 'bomber', name: '自爆者', hp: 5, hpMax: 40, traits: ['volatile'], spd: 0.1 });
+    const b = createBattle([bomber], p, {});
+    /* 速击有 5% 会 miss，所以循环打到死为止——测试不能靠运气 */
+    let guard = 0;
+    while (b.foes[0].hp > 0 && guard++ < 10) { if (!advance(b, p, 10)) break; playerAct(b, p, 'swing', 0); }
+    expect(b.foes[0].hp).toBe(0);
+    expect(p.hp).toBeLessThan(100);
+    expect(b.log.map(e => (e as { text?: string }).text ?? '').join(' ')).toContain('炸开');
+  });
+
+  it('自爆者：被火焰打死则提前引爆，玩家不掉血', () => {
+    const p2 = mkPlayer({ inventory: { molotov: 1 }, weaponDmg: 999 });
+    const bomber2 = mkFoe({ id: 'bomber', name: '自爆者', hp: 5, hpMax: 40, traits: ['volatile'], spd: 0.1 });
+    const b2 = createBattle([bomber2], p2, {});
+    advance(b2, p2, 10);
+    playerAct(b2, p2, 'molotov', 0);             // fire → 不炸
+    expect(b2.foes[0].hp).toBe(0);
+    expect(p2.hp).toBe(100);
+    expect(b2.log.map(e => (e as { text?: string }).text ?? '').join(' ')).toContain('没来得及炸');
+  });
+
+  it('自爆者：被持续伤害耗死也不会炸', () => {
+    /* sta:0 → 战术槽是"架势"（0 伤害），玩家全程不出手，只让燃烧把它烧死 */
+    const p = mkPlayer({ sta: 0, staMax: 100, weaponDmg: 1 });
+    const bomber = mkFoe({ id: 'bomber', name: '自爆者', hp: 12, hpMax: 40, traits: ['volatile'], spd: 0.1 });
+    bomber.statuses.push({ kind: 'burn', turns: 5, power: 10 });
+    const b = createBattle([bomber], p, {});
+    let guard = 0;
+    while (b.foes[0].hp > 0 && guard++ < 8) { if (!advance(b, p, 1)) break; playerAct(b, p, 'guard', 0); }
+    expect(b.foes[0].hp).toBe(0);
+    expect(b.foes[0].statuses.length + 1).toBeGreaterThan(0);   // 确实是被状态耗死的（不是被打死）
+    expect(b.log.map(e => (e as { text?: string }).text ?? '').join(' ')).not.toContain('炸开');
+  });
+
+  it('孵化者：每两回合产出一只爬行者，且不超过 2 只', () => {
+    const p = mkPlayer({ hp: 999, hpMax: 999 });
+    const mom = mkFoe({ id: 'hatcher', name: '孵化者', hp: 400, hpMax: 400, atk: 1, traits: ['spawn'], spd: 0.1 });
+    const b = createBattle([mom], p, {});
+    let guard = 0;
+    while (!b.over && b.round <= 8 && guard++ < 60) { if (!advance(b, p, 1)) break; playerAct(b, p, 'guard', 0); }
+    const babies = b.foes.filter(f => f.traits?.includes('spawned'));
+    expect(babies.length).toBe(2);
+    expect(babies[0].name).toContain('爬行者');
+    expect(b.log.map(e => (e as { text?: string }).text ?? '').join(' ')).toContain('钻了出来');
+  });
+
+  it('喷吐者：护甲被腐蚀后，同样一击挨得更疼', () => {
+    const mk = () => mkFoe({ id: 'spitter', name: '喷吐者', hp: 500, hpMax: 500, atk: 20, traits: ['ranged'], spd: 3 });
+    const p1 = mkPlayer({ hp: 500, hpMax: 500, armor: 6, dodge: 0 });
+    const b1 = createBattle([mk()], p1, {});
+    b1.player.guard = 0;
+    advance(b1, p1, 1);
+    const takenClean = 500 - p1.hp;
+
+    const p2 = mkPlayer({ hp: 500, hpMax: 500, armor: 6, dodge: 0 });
+    const b2 = createBattle([mk()], p2, {});
+    b2.player.statuses.push({ kind: 'corrode', turns: 3, power: 0 });
+    b2.player.guard = 0;
+    advance(b2, p2, 1);
+    const takenCorroded = 500 - p2.hp;
+
+    expect(takenClean).toBeGreaterThan(0);
+    expect(takenCorroded).toBeGreaterThan(takenClean);
+  });
+
+  it('喷吐者的酸液无视格挡', () => {
+    const p = mkPlayer({ hp: 500, hpMax: 500, armor: 0, dodge: 0 });
+    const b = createBattle([mkFoe({ id: 'spitter', name: '喷吐者', hp: 500, hpMax: 500, atk: 20, traits: ['ranged'], spd: 3 })], p, {});
+    b.player.guard = 0.9;
+    advance(b, p, 1);
+    expect(500 - p.hp).toBeGreaterThan(10);
+  });
+
+  it('暴君：半血后狂暴，且只触发一次', () => {
+    const p = mkPlayer({ hp: 999, hpMax: 999 });
+    const tyrant = mkFoe({ id: 'tyrant', name: '暴君', hp: 100, hpMax: 100, atk: 10, traits: ['enrage'], spd: 0.1 });
+    const b = createBattle([tyrant], p, {});
+    const atk0 = b.foes[0].atk;
+    b.foes[0].hp = 40;
+    foeTurn(b, p, 0);              // 直接走它的回合（玩家速度更高时 advance 会停在等玩家）
+    const atk1 = b.foes[0].atk;
+    expect(atk1).toBeGreaterThan(atk0);
+    foeTurn(b, p, 0);
+    expect(b.foes[0].atk).toBe(atk1);
+    expect(b.log.map(e => (e as { text?: string }).text ?? '').join(' ')).toContain('疯了');
+  });
+});
+
+/* ── 内容表一致性：POI 里写的敌人必须真的存在（防手滑写错 id） ── */
+describe('内容表一致性', () => {
+  it('每个 POI 的敌人 id 都在丧尸表里，且都有属性映射', () => {
+    const missing: string[] = [];
+    for (const [poiId, poi] of Object.entries(POIS)) {
+      for (const e of poi.enemies) {
+        if (!ZOMBIES[e]) missing.push(`${poiId} → 丧尸表缺 ${e}`);
+        if (!FOE_TYPES[e]) missing.push(`${poiId} → 属性表缺 ${e}`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+
+  it('M11 新敌人四处都登记了（表 / 属性 / 机制 / 掉落）', () => {
+    for (const id of ['spitter', 'bomber', 'hatcher', 'tyrant']) {
+      expect(ZOMBIES[id], id).toBeTruthy();
+      expect(FOE_TYPES[id], id).toBeTruthy();
+      expect(FOE_TRAITS[id], id).toBeTruthy();
+      expect(ZOMBIES[id].n.length).toBeGreaterThan(1);
+      expect(Object.keys(ZOMBIES[id].loot).length).toBeGreaterThan(0);
+    }
+    expect(FOE_TRAITS.spitter).toContain('ranged');
+    expect(FOE_TRAITS.bomber).toContain('volatile');
+    expect(FOE_TRAITS.hatcher).toContain('spawn');
+    expect(FOE_TRAITS.tyrant).toContain('enrage');
   });
 });

@@ -28,7 +28,7 @@ export interface WorldState {
 /* ── 战斗（宝可梦式） ── */
 export type DamageType = 'blunt' | 'slash' | 'bullet' | 'fire' | 'blast' | 'toxic' | 'shock';
 export type FoeType = 'flesh' | 'bone' | 'armor' | 'toxic' | 'swift' | 'hulk';
-export type StatusKind = 'bleed' | 'poison' | 'burn' | 'stun' | 'weak';
+export type StatusKind = 'bleed' | 'poison' | 'burn' | 'stun' | 'weak' | 'corrode';
 
 export interface MoveCost { sta?: number; ammo?: number; item?: string; }
 export interface Move {

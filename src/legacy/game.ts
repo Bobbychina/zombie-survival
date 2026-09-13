@@ -85,6 +85,16 @@ const ZOMBIES = {
   bandit:  {n:'拾荒者',   hp:34, dmg:12, spd:1.4, xp:16, armGun:.25, bite:.06, loot:{ammo:.35, metal:.25, bandage:.2, pistol:.06, kevlar:.08}, desc:'和你一样的人，只是先动了手。'},
   // M7：水下遭遇（沉没基地潜水时出现，水里比人快）
   drowned: {n:'溺亡者',   hp:36, dmg:11, spd:1.2, xp:18, armGun:.2, bite:.18, loot:{cloth:.3, chem:.2, chip:.15, o2:.12}, desc:'泡得发白的东西，在水里比人快。'},
+  // M11 三种"要动脑子打"的：数值不是重点，机制才是（机制由 v4 引擎的 traits 实现，见 bridge.ts）
+  spitter: {n:'喷吐者',   hp:30, dmg:8,  spd:1.2, xp:20, armGun:.15, loot:{chem:.45, anti:.2, chip:.15, tape:.2},
+    desc:'喉咙鼓成一个囊，隔着五米把酸液吐过来——格挡挡不住，护甲会被啃薄。'},
+  bomber:  {n:'自爆者',   hp:20, dmg:5,  spd:1.5, xp:16, loot:{powder:.4, fuel:.25, metal:.2, chip:.12},
+    desc:'肚子撑得发亮，走得摇摇晃晃。它死了会炸——除非你先用火烧掉它。'},
+  hatcher: {n:'孵化者',   hp:56, dmg:7,  spd:.8,  xp:24, armGun:.2, loot:{chem:.3, serum:.1, cloth:.3, chip:.2},
+    desc:'行动迟缓的肉囊，每两回合撑破一个口子，爬行者就从里面钻出来。'},
+  tyrant:  {n:'暴君',     hp:140, dmg:22, spd:1.5, xp:60, boss:true, armGun:.4, armMelee:.3, bite:.25,
+    loot:{serum:.35, kevlar:.25, powder:.3, marksman:.12, medkit:.3},
+    desc:'三米高，肩膀顶穿天花板。打到一半它会彻底不管不顾。'},
 };
 
 // 区域：d 危险等级，req 解锁条件，enemies 权重表
@@ -1075,8 +1085,18 @@ function nightRaid(){
   if(S.day >= 8) pool.push('brute');
   if(S.day >= 15) pool.push('hound','brute');
   if(S.day >= 25) pool.push('giant');
+  /* M11：新敌人按天数进池——自爆者逼你留远程手段，喷吐者逼你别指望格挡，
+     孵化者逼你优先集火。血月再加一次暴君的抽奖（低权重）。 */
+  if(S.day >= 12) pool.push('bomber');
+  if(S.day >= 20) pool.push('spitter');
+  if(S.day >= 30) pool.push('hatcher');
+  const tyrantChance = blood ? .18 : (horde ? .1 : 0);
   const foes = [];
   for(let i = 0; i < count; i++) foes.push(pick(pool));
+  if(Math.random() < tyrantChance){
+    foes[0] = 'tyrant';
+    log('💢 尸潮后面跟着个三米高的东西——它把围墙当纸。','danger');
+  }
   log('💀💀💀 ' + (blood ? '血月夜，' : (horde ? '迁徙的尸群，' : '')) + '尸潮撞上据点！' +
       (guardCut ? '围墙和门窗替你挡掉了 ' + Math.min(guardCut, 3) + ' 个方向，' : '') + '还有 ' + count + ' 只挤了进来。', 'danger');
   startCombat(foes, {
@@ -3010,6 +3030,7 @@ function openHelp(){
     '<b>主线</b>：7 个阶段，最后要下到方舟实验室第 7 层。通关后可进无尽模式。<br>' +
     '<b>委托板</b>：每晚刷新 3 张委托（其中 1 张指向当前主线），材料奖励受"当日赏金预算"封顶（9 + 天数÷2），不会凭空印材料。<br>' +
     '<b>精英丧尸</b>：第 3 天起每天最多出现 1 只，带一个词条（腐化／迅捷／爆裂／装甲／寄生），血更厚、经验更高、掉落更好，也可能出现在夜间尸潮里。<br>' +
+    '<b>三种"要动脑子打"的</b>：<b>自爆者</b>死了会炸——用燃烧瓶/手雷（火焰、爆炸类）打死就不会炸；<b>喷吐者</b>隔着距离吐酸液，举盾挡不住，还会把你的护甲腐蚀变薄；<b>孵化者</b>每两回合产出一只爬行者，得优先集火。血月夜里还可能跟着一头<b>暴君</b>，它半血后攻击直接 +50%。<br>' +
     '<b>武器改装</b>：工作台 Lv.2 后可改装，每把武器最多 2 件，且都有取舍（消音降伤、弹匣增重、握把只对近战）。<br>' +
     '<b>同伴支线</b>：招募同伴会开启他的支线，三步走完给独占装备与秘闻。<br>' +
     '<b>设置</b>：菜单里可切换战斗节奏（即时／节拍三段演出）、配乐与环境底噪；配乐按白天 62 / 夜晚 52 / 战斗 132 / 守夜 146 BPM 自动变奏，残血时会叠一层小二度张力音。<br>' +

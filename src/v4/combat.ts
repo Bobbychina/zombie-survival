@@ -4,7 +4,7 @@
    - 属性克制给倍率，状态异常按回合结算
    - 引擎不碰 DOM，也不直接读全局 S：由 bridge 注入玩家数值、由 UI 层同步回存档 */
 import { ITEM_MOVES, STATUS_NAME, TACTIC_MOVES, typeMult, effectivenessText, weaponMoves } from './moves';
-import type { ActorRef, Battle, BattleEvent, Foe, Move, PlayerCombatState, StatusKind } from '../types';
+import type { ActorRef, Battle, BattleEvent, DamageType, Foe, Move, PlayerCombatState, StatusKind } from '../types';
 
 export interface PlayerProfile {
   hp: number; hpMax: number; sta: number; staMax: number; ammo: number;
@@ -61,12 +61,33 @@ export function createBattle(foes: Foe[], player: PlayerProfile, opts: Battle['o
 /* ── 回合与队列 ── */
 export function startRound(b: Battle, pSpeed: number) {
   b.round++;
+  /* M11 特性三：孵化者每两回合产出一只爬行者（上限 2 只，免得滚雪球滚到没法收场） */
+  hatchSpawn(b);
   const order: { ref: ActorRef; spd: number }[] = [{ ref: { side: 'player' }, spd: pSpeed }];
   b.foes.forEach((f, i) => { if (f.hp > 0) order.push({ ref: { side: 'foe', index: i }, spd: f.spd * 10 }); });
   order.sort((a, z) => z.spd - a.spd);
   b.queue = order.map(o => o.ref);
   b.idx = 0;
   b.player.guard = 0;
+}
+
+/** 孵化者：每 2 回合吐出一只爬行者（血量按幼体算，别让玩家面对满血爬行者洪流） */
+function hatchSpawn(b: Battle): void {
+  if (b.round < 2 || b.round % 2 !== 0) return;
+  const moms = b.foes.filter(f => f.hp > 0 && f.traits?.includes('spawn'));
+  if (!moms.length) return;
+  let spawned = b.foes.filter(f => f.id === 'crawler' && f.traits?.includes('spawned')).length;
+  for (const mom of moms) {
+    if (spawned >= 2) break;
+    const baby: Foe = {
+      id: 'crawler', name: '刚破壳的爬行者', hp: Math.max(6, Math.round(mom.hpMax * 0.18)), hpMax: Math.max(6, Math.round(mom.hpMax * 0.18)),
+      atk: Math.max(4, Math.round(mom.atk * 0.8)), def: 0, spd: 1, types: ['flesh', 'swift'], moves: ['claw'],
+      statuses: [], traits: ['spawned'], xp: 4,
+    };
+    b.foes.push(baby);
+    spawned++;
+    push(b, { kind: 'status', text: `🥚 ${mom.name} 的躯干撑破了——一只爬行者钻了出来。` });
+  }
 }
 
 export function currentActor(b: Battle): ActorRef | null {
@@ -168,7 +189,7 @@ export function playerAct(b: Battle, p: PlayerProfile, moveId: string, targetIdx
     const eff = effectivenessText(mult);
     push(b, { kind: 'damage', text: `${m.name} 命中 ${foe.name}：-${dmg}${crit ? '（暴击）' : ''}${eff ? ' · ' + eff : ''}`, target: { side: 'foe', index: ti }, amount: dmg, crit, effectiveness: mult });
     if (m.status && rnd() < (m.statusChance ?? 0.3)) applyStatus(foe.statuses, m.status, 3, m.type === 'fire' ? 8 : 5, foe.name);
-    if (foe.hp <= 0) faint(b, ti);
+    if (foe.hp <= 0) faint(b, ti, m.type, p);
   }
   if (anyCrit) b.player.critUp = 0;
   endPlayerAction(b, p);
@@ -180,10 +201,27 @@ export function applyStatus(list: { kind: StatusKind; turns: number; power: numb
   else list.push({ kind, turns, power });
 }
 
-function faint(b: Battle, i: number) {
+function faint(b: Battle, i: number, killerType?: DamageType, p?: PlayerProfile) {
   const f = b.foes[i];
   f.hp = 0;
   push(b, { kind: 'faint', text: `☠️ ${f.name} 倒下了。`, target: { side: 'foe', index: i } });
+  /* M11 特性四：自爆者死亡时爆炸。用火焰/爆炸类招式打死 = 提前引爆，不会炸到你；
+     被流血/中毒这类持续伤害耗死（killerType 为空）也不会炸。 */
+  if (f.traits?.includes('volatile')) {
+    const safe = !killerType || killerType === 'fire' || killerType === 'blast';
+    if (safe) {
+      push(b, { kind: 'info', text: `🔥 ${f.name} 体内的气体被引燃，没来得及炸。` });
+    } else if (p) {
+      const boom = Math.max(4, Math.round(f.hpMax * 0.55));
+      const dmg = Math.max(1, Math.round(boom * (b.player.guard ? 0.5 : 1)));
+      p.hp -= dmg;
+      b.player.hp = p.hp;
+      b.stats.taken += dmg;
+      b.stats.clean = false;
+      push(b, { kind: 'damage', text: `💥 ${f.name} 的尸体炸开了：-${dmg}`, target: { side: 'player' }, amount: dmg });
+      if (p.hp <= 0) { b.opts.hooks?.onPlayerFaint?.(); finish(b, 'lose'); push(b, { kind: 'end', text: '你被那一下炸倒了……' }); return; }
+    }
+  }
   b.opts.hooks?.onFoeFaint?.(f);
 }
 
@@ -193,21 +231,34 @@ export function foeTurn(b: Battle, p: PlayerProfile, i: number): void {
   if (f.hp <= 0) return;
   const stun = f.statuses.find(s => s.kind === 'stun');
   if (stun) { stun.turns--; if (stun.turns <= 0) f.statuses = f.statuses.filter(s => s !== stun); push(b, { kind: 'info', text: `${f.name} 还在眩晕中，动作僵住了。` }); return; }
+  /* M11 特性一：狂暴（暴君半血后攻击 +50%，只触发一次） */
+  if (f.traits?.includes('enrage') && !(f as Foe & { enraged?: boolean }).enraged && f.hp <= f.hpMax / 2) {
+    (f as Foe & { enraged?: boolean }).enraged = true;
+    f.atk = Math.round(f.atk * 1.5);
+    push(b, { kind: 'status', text: `💢 ${f.name} 彻底疯了：攻击大幅提升！` });
+  }
+  /* M11 特性二：远程（喷吐者隔着距离吐酸液——格挡没用，护甲会被啃薄） */
+  const ranged = !!f.traits?.includes('ranged');
+  const corrode = b.player.statuses.find(s => s.kind === 'corrode');
+  const effArmor = Math.max(0, p.armor - (corrode ? 2 : 0));       // 被腐蚀时护甲按 -2 算
   const dodge = Math.min(0.55, p.dodge);
   const hits = f.spd >= 2 ? 2 : 1;
   for (let n = 0; n < hits; n++) {
     if (rnd() < dodge) { push(b, { kind: 'miss', text: `你侧身躲开了 ${f.name} 的攻击。` }); continue; }
     let dmg = f.atk * (0.85 + rnd() * 0.3);
-    dmg *= 1 - Math.min(0.45, p.armor * 0.05);
-    if (b.player.guard) dmg *= 1 - b.player.guard;
+    dmg *= 1 - Math.min(0.45, effArmor * 0.05);
+    if (b.player.guard && !ranged) dmg *= 1 - b.player.guard;      // 远程吐酸：举盾挡不住
     if (f.statuses.some(s => s.kind === 'weak')) dmg *= 0.75;
     dmg = Math.max(1, Math.round(dmg));
     p.hp -= dmg;
     b.player.hp = p.hp;
     b.stats.taken += dmg;
     b.stats.clean = false;
-    push(b, { kind: 'damage', text: `${f.name} 命中你：-${dmg}`, target: { side: 'player' }, amount: dmg });
-    if (rnd() < 0.12) applyStatus(b.player.statuses, 'bleed', 3, 5, '你');
+    push(b, { kind: 'damage', text: `${f.name} ${ranged ? '吐出的酸液溅到你' : '命中你'}：-${dmg}`, target: { side: 'player' }, amount: dmg });
+    if (ranged && rnd() < 0.6) {
+      applyStatus(b.player.statuses, 'corrode', 3, 0, '你');
+      push(b, { kind: 'status', text: `🧪 酸液啃在护甲上——护甲暂时变薄了。` });
+    } else if (rnd() < 0.12) applyStatus(b.player.statuses, 'bleed', 3, 5, '你');
     if (p.hp <= 0) { b.opts.hooks?.onPlayerFaint?.(); finish(b, 'lose'); push(b, { kind: 'end', text: '你倒下了……' }); return; }
   }
   const burst = f.types.includes('toxic') && rnd() < 0.25;
@@ -217,6 +268,12 @@ export function foeTurn(b: Battle, p: PlayerProfile, i: number): void {
 /* ── 回合结算：状态 DOT、顺序推进 ── */
 export function tickStatuses(b: Battle, p: PlayerProfile): void {
   for (const s of b.player.statuses.slice()) {
+    /* M11：护甲腐蚀不是伤害型状态——只倒计时，效果体现在 foeTurn 的护甲扣除里 */
+    if (s.kind === 'corrode') {
+      s.turns--;
+      if (s.turns <= 0) { b.player.statuses = b.player.statuses.filter(x => x !== s); push(b, { kind: 'info', text: '🧪 护甲上的酸液干掉了。' }); }
+      continue;
+    }
     const dmg = s.power;
     p.hp -= dmg; b.player.hp = p.hp; b.stats.taken += dmg; b.stats.clean = false;
     push(b, { kind: 'damage', text: `${STATUS_NAME[s.kind].icon} ${STATUS_NAME[s.kind].name}：你失去 ${dmg} 生命`, target: { side: 'player' }, amount: dmg });
