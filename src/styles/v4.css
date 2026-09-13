@@ -131,3 +131,24 @@
   .v4world .rcell .rname{font-size:12.5px}
   .v4world .rcell .rmeta{font-size:11px}
 }
+
+/* ── M13 任务页：大故事（章节）+ 委托（接单板） ──
+   复用 legacy 的 .card/.lrow/.bar/.tag/.btn，只补几个这一块专属的排版；
+   目标行用左侧竖线区分"已达成/未达成"，不用进度条颜色骗人（低对比度主题下颜色最不可靠）。 */
+.v4story .v4story-intro{font-size:13px;line-height:1.75;color:var(--ink);margin:6px 0 10px}
+.v4obj{border-left:2px solid var(--line);padding:4px 0 4px 8px;margin:6px 0}
+.v4obj.ok{border-left-color:var(--green)}
+.v4obj .nm{font-size:13px}
+.v4obj .hint{font-size:11px}
+.v4ct{background:#0d1015}
+.v4ct.ok{border-color:var(--green)}
+.v4ct .ds{font-size:12px;color:var(--dim);line-height:1.6}
+.v4arc{margin:10px 0;border:1px solid var(--line);border-radius:6px;background:#0b0e12}
+.v4arc>summary{cursor:pointer;padding:8px 10px;font-size:12px;color:var(--ink);list-style:none}
+.v4arc>summary::-webkit-details-marker{display:none}
+.v4arc>summary::before{content:'▸ ';color:var(--dim)}
+.v4arc[open]>summary::before{content:'▾ '}
+.v4arcrow{padding:6px 10px;border-top:1px solid var(--line)}
+.v4arcrow .nm{font-size:12px;color:var(--accent)}
+.v4arcrow .ds{font-size:12px;color:var(--dim);line-height:1.7}
+.v4teaser{border-left:2px solid var(--warn)}

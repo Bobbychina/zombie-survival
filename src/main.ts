@@ -64,7 +64,21 @@ async function main() {
     gather,
     npc: await import('./v4/npc'),
     quest4: await import('./v4/quest4'),
+    quests: await import('./v4/quests'),
   });
+  /* M13：委托（接单制）+ 大故事（章节制）。legacy 里那几个桥（rollBounties / bountyTick /
+     renderBounties）和任务页渲染都按这几个名字取函数——名字必须与 quests.ts 的导出一致。 */
+  const quests = (V4 as any).quests as typeof import('./v4/quests');
+  (window as any).V4Quest = {
+    accept: quests.accept, abandon: quests.abandon, summary: quests.summary,
+    storyHtml: quests.storyHtml, contractsHtml: quests.contractsHtml, teaser: quests.teaser,
+    newDay: quests.newDay, tick: quests.tick,
+  };
+  (window as any).__v4QuestNewDay = quests.newDay;
+  (window as any).__v4QuestTick = quests.tick;
+  (window as any).__v4StoryHtml = quests.storyHtml;
+  (window as any).__v4ContractsHtml = quests.contractsHtml;
+  (window as any).__v4QuestTeaser = quests.teaser;
   // 内联 onclick 只认 window 上的名字：今夜（过夜）与撤离
   (window as any).V4Night = { rest: night.rest, options: night.restOptions, apMaxOf: night.apMaxOf };
   (window as any).V4Farm = { plant: farm.plant, harvest: farm.harvest, plots: farm.plotSlots, summary: farm.farmSummary };

@@ -29,3 +29,18 @@ export function zombieTable(): Record<string, LegacyZombie> {
 }
 
 export const zombieIds = (): string[] => Object.keys(zombieTable());
+
+/** legacy 的 ITEMS 里所有物品 id（委托/剧情的奖励物品必须在里面，否则 grant 会空摔） */
+export function itemIds(): string[] {
+  const text = src();
+  const ids = new Set<string>();
+  const tables = [...text.matchAll(/Object\.assign\(ITEMS, \{([\s\S]*?)\n\}\);/g), /const ITEMS = \{([\s\S]*?)\n\};/.exec(text)]
+    .filter(Boolean) as RegExpExecArray[];
+  for (const t of tables) {
+    const body = t[1] ?? '';
+    for (const m of body.matchAll(/(?:^|\n)\s*([a-z_][a-z0-9_]*)\s*:\s*\{/g)) ids.add(m[1]);
+  }
+  /* 弹药不是 ITEMS 里的一条，而是 legacy 的独立计数器（grant('ammo') 会加到 S.ammo） */
+  ids.add('ammo');
+  return [...ids];
+}

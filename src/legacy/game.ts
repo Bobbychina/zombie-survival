@@ -338,6 +338,10 @@ function newState(){
     seen:{},              // 区域首次发现记录
     noise:0,              // 噪音值：引尸潮
     world:null,           // v4.0 大世界进度（区块位置/迷雾/POI 剩余次数/载具）：由 src/v4/worldstate.ts 解释
+    // M13：委托（接单制）与「大故事」章节进度 —— 逻辑全在 src/v4/contracts-core.ts / story-core.ts，
+    // 这里只留两个字段做存档容器；老档没有它们 → 由 v4 侧 ensure 补齐。
+    contracts:{ day:1, board:[], active:[], done:0, failed:0, log:[] },
+    story:{ chapter:0, done:[], log:[] },
     // M6：季节/天气/体温（env）与菜园地块（plots）——数值与公式全在 src/v4/env-core.ts
     env:{ weather:'clear', tomorrow:'cloudy', temp:50, rainToday:0, coldTier:0 },
     plots:[],
@@ -413,7 +417,10 @@ function sanitizeSave(d){
       st[k] = {}; const src = (out.stats || {})[k];
       if(src && typeof src === 'object') for(const id in src){
         const v = Math.floor(num(src[id], 0, 0, 1e9));
-        if(v > 0 && (k === 'zoneCnt' ? ZONES[id] : ZOMBIES[id])) st[k][id] = v;
+        // M13：zoneCnt 的键不再只认 legacy 区域——委托按 POI 粒度计数（药房/警局/家电城…），
+        // 那些键不在 ZONES 里；只校验键名形状，值域照旧卡住。
+        const ok = k === 'zoneCnt' ? /^[a-z][a-z0-9_]{1,24}$/.test(id) : !!ZOMBIES[id];
+        if(v > 0 && ok) st[k][id] = v;
       }
     } else st[k] = Math.floor(num((out.stats||{})[k], 0, 0, 1e9));
   }
@@ -426,6 +433,22 @@ function sanitizeSave(d){
   const sd = out.side || {};
   out.side = {}; for(const k in SIDE_QUESTS) out.side[k] = Math.floor(num(sd[k], 0, 0, SIDE_QUESTS[k].steps.length));
   out.sideBase = (out.sideBase && typeof out.sideBase === 'object') ? out.sideBase : {};
+  /* M13：委托与剧情。这里只做"形状"兜底（对象/数组/数字），细粒度校验在 v4 侧
+     contracts-core.ensureContracts / story-core.ensureStory 里做（那边有单测盯着）。 */
+  const ct = out.contracts || {};
+  out.contracts = {
+    day: Math.floor(num(ct.day, 1, 1, 1e6)),
+    board: Array.isArray(ct.board) ? ct.board.slice(0, 8) : [],
+    active: Array.isArray(ct.active) ? ct.active.slice(0, 8) : [],
+    done: Math.floor(num(ct.done, 0, 0, 1e6)), failed: Math.floor(num(ct.failed, 0, 0, 1e6)),
+    log: Array.isArray(ct.log) ? ct.log.filter(x => typeof x === 'string').slice(-12) : [],
+  };
+  const sy = out.story || {};
+  out.story = {
+    chapter: Math.floor(num(sy.chapter, 0, 0, 6)),
+    done: Array.isArray(sy.done) ? sy.done.filter(x => typeof x === 'string').slice(0, 60) : [],
+    log: Array.isArray(sy.log) ? sy.log.slice(-40) : [],
+  };
   const md = out.mods || {};
   out.mods = {}; for(const w in md){
     if(ITEMS[w] && ITEMS[w].t === 'wpn' && Array.isArray(md[w])) out.mods[w] = md[w].filter(x => MODS[x]).slice(0, 2);
@@ -2381,7 +2404,11 @@ function checkQuest(){
 }
 function renderQuest(){
   const stage = Math.min(S.quest.stage, 6), s = QUEST_STAGES[stage];
-  let h = '<div class="sect-title">主线 · 寻找解药</div>';
+  /* M13：任务页 = 大故事（章节）+ 委托（接单板）+ 支线 + 秘闻。
+     前两块由 v4 渲染（src/v4/quests.ts），legacy 只负责把它们插进来。 */
+  let h = window.__v4StoryHtml ? window.__v4StoryHtml() : '';
+  h += window.__v4ContractsHtml ? window.__v4ContractsHtml() : '';
+  h += '<div class="sect-title">主线 · 寻找解药</div>';
   h += '<div class="card"><h3>' + s.n + ' <span class="sub">阶段 ' + (stage + 1) + '/7</span></h3>' +
     '<p style="font-size:13px;line-height:1.7">' + s.d + '</p>' +
     '<div class="hint" style="margin-top:6px">📍 ' + s.hint + '</div>' +
@@ -2635,11 +2662,13 @@ function runScore(){
 /* ═══════════════════════════════════════════════
    v2.2 系统：C17 悬赏板 / C16 精英词条 / C21 支线 / C22 改装与限购
    ═══════════════════════════════════════════════ */
-/* ── C17 悬赏委托板 ─────────────────────────────
-   X06 准入算式：赏金材料按"当日预算"封顶 = 9 + ⌊day/2⌋，与商人汇率 (1+day·2%) 同步增长，
-   即 day20 预算 19 / 汇率 1.40、day50 预算 34 / 汇率 2.00 —— 名义收入涨 1.8x，实际购买力被价格吃掉，
-   再加上 C22 改装（单件 40~120 材料）作为新增消耗出口，不构成"凭空印材料"。 */
-function bountyBudget(){ return 9 + Math.floor(S.day / 2); }
+/* ── C17 → M13：委托板改成「接单制」，逻辑搬去了 src/v4/contracts-core.ts + quests.ts
+   旧版（C17）：每晚刷 3 张、做完自动"点一下领奖"、没有接单概念、赏金受当日预算封顶。
+   新版（M13）：接单（最多 3 张同时挂）+ 期限（过期作废）+ 进度从接单那刻起算（防"早就搜过所以秒完成"）
+              + 跨区委托（目标在别的区域 → 没车就只能看着，接上 M12 的区域门槛）
+              + 大故事（6 章，从余烬推到江北/滨海/南港）。
+   下面这几个 legacy 函数只留**桥**：老调用点（睡觉换日 / 击杀 / 搜刮 / 探索页渲染）一行都不用改。 */
+function bountyBudget(){ return 9 + Math.floor(S.day / 2); }   // 旧算式：新系统见 contracts-core.bountyBudget（20 + 2·day）
 function bountyDef(id){
   if(id.indexOf('q_') === 0){ const st = +id.slice(2); return QUEST_BOUNTIES[Math.min(st, QUEST_BOUNTIES.length - 1)]; }
   return BOUNTY_POOL.find(p => p.id === id);
@@ -2651,63 +2680,10 @@ function metricValue(metric){
   if(metric.indexOf('killBy:') === 0) return (st.killBy || {})[metric.slice(7)] || 0;
   return st[metric] || 0;
 }
-function rollBounties(){
-  const pool = BOUNTY_POOL.slice(), list = [];
-  const qb = QUEST_BOUNTIES[Math.min(S.quest.stage, QUEST_BOUNTIES.length - 1)];
-  list.push({ id:'q_' + Math.min(S.quest.stage, QUEST_BOUNTIES.length - 1), base:metricValue(qb.metric) });
-  while(list.length < 3 && pool.length){
-    const p = pool.splice(Math.floor(Math.random() * pool.length), 1)[0];
-    list.push({ id:p.id, base:metricValue(p.metric) });
-  }
-  S.bounty = { day:S.day, spent:0, list:list.map(b => ({ id:b.id, base:b.base, prog:0, done:false })) };
-}
-function bountyTick(){
-  if(!S.bounty || !S.bounty.list) return;
-  S.bounty.list.forEach(b => {
-    const def = bountyDef(b.id); if(!def) return;
-    b.prog = Math.max(0, metricValue(def.metric) - b.base);
-    if(!b.done && b.prog >= def.need){
-      b.done = true; sfx('ok');
-      log('📋 委托达成：' + def.t + '（回探索页领取）', 'success');
-      toast('📋 委托达成', def.t + ' —— 去探索页领奖', 'ok');
-    }
-  });
-}
-function claimBounty(i){
-  const b = S.bounty.list[i]; if(!b) return;
-  const def = bountyDef(b.id); if(!def || !b.done) return;
-  const left = Math.max(0, bountyBudget() - S.bounty.spent);
-  const want = (def.reward && def.reward.mat) || 0;
-  const paid = Math.min(want, left);
-  S.bounty.spent += paid; S.mat += paid;
-  if(def.reward && def.reward.item) grant(def.reward.item, def.reward.n || 1);
-  S.bounty.list.splice(i, 1);
-  S.stats.bounties++;
-  log('💼 领取委托奖励：' + paid + ' 材料' + (def.reward && def.reward.item ? ' + ' + itemName(def.reward.item) + ' ×' + (def.reward.n || 1) : '') +
-      (paid < want ? '（今日赏金预算已用完，余下部分作废）' : ''), 'loot');
-  if(S.stats.bounties >= 10) award('a_bounty');
-  sfx('loot'); render(); autosave();
-}
-function renderBounties(){
-  if(!S.bounty || S.bounty.day !== S.day) rollBounties();
-  const budgetLeft = Math.max(0, bountyBudget() - S.bounty.spent);
-  let h = '<div class="sect-title">委托板 <span class="badge">今日赏金预算 ' + budgetLeft + ' / ' + bountyBudget() + ' 材料</span></div>';
-  h += '<div class="grid" style="gap:6px;margin-bottom:12px">';
-  S.bounty.list.forEach((b, i) => {
-    const def = bountyDef(b.id); if(!def) return;
-    const pct = clamp(b.prog / def.need * 100, 0, 100);
-    h += '<div class="lrow" style="flex-direction:column;align-items:stretch;gap:5px">' +
-      '<div class="row"><span class="nm">' + (def.q ? '🎯 ' : '📋 ') + def.t + (def.q ? ' <span class="tag key">主线相关</span>' : '') + '</span>' +
-      '<span class="spacer"></span><span class="hint mono">' + Math.min(b.prog, def.need) + '/' + def.need + '</span>' +
-      '<span class="tag gold">🔩' + ((def.reward && def.reward.mat) || 0) + (def.reward && def.reward.item ? ' + ' + itemName(def.reward.item) : '') + '</span></div>' +
-      '<div class="bar thin"><i class="sta" style="width:' + pct + '%"></i></div>' +
-      (b.done ? '<button class="btn xs ok" onclick="claimBounty(' + i + ')">领取奖励</button>' : '<span class="hint">进行中…</span>') +
-      '</div>';
-  });
-  if(!S.bounty.list.length) h += '<p class="muted">今天的委托都做完了。睡觉会刷新新的委托板。</p>';
-  h += '</div>';
-  return h;
-}
+function rollBounties(){ if(window.__v4QuestNewDay) window.__v4QuestNewDay(); }
+function bountyTick(){ if(window.__v4QuestTick) window.__v4QuestTick(); }
+function claimBounty(){ /* M13：旧的"点一下领奖"没了，改成接单 → 自动结算（见 src/v4/quests.ts） */ }
+function renderBounties(){ return window.__v4QuestTeaser ? window.__v4QuestTeaser() : ''; }
 /* ── C16 精英词条（封顶：单只 ≤1.5x 生命；每日 ≤1 只；不碰原始伤害） ── */
 function affixRoll(){
   if(S.day < 3) return null;
@@ -3102,7 +3078,7 @@ function initGame(fresh){
   battle = null; combatModalId = null;
   defInit();
   clearLog();
-  log('⛔ 丧尸末日生存 v3.0 · 余烬', 'system');
+  log('⛔ 丧尸末日生存 v4.0 · 余烬（大世界）', 'system');
   log('🗓️ 第 1 天 · 清晨 · 行动力 6/6', 'system');
   log('你在一间废弃医院的病床上醒来。左手背插着断掉的针头，记忆碎成一块一块。', 'narrative');
   log('走廊里有东西在拖行。你手边只有一根撬棍。', 'narrative');
