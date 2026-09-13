@@ -6,6 +6,7 @@
  * 幂等：站点脚本（bobbychina-pages/beta-notice.js）注入过就跳过，避免两条。
  */
 const BETA_VERSION = 'v4.0.0-beta';
+const MOBILE_KEY = 'dsh.mobile-notice.dismissed';
 
 const CSS = `
 #beta-notice{position:sticky;top:0;z-index:2147483000;display:flex;gap:10px;align-items:center;
@@ -18,10 +19,71 @@ const CSS = `
 #beta-notice .warn{color:#f0a35e}
 #beta-notice .sep{opacity:.45}
 @media (max-width:560px){#beta-notice{font-size:11px;padding:5px 10px;gap:6px}}
+#mobile-warn{position:relative;z-index:2147482999;display:flex;gap:10px;align-items:center;
+  justify-content:center;flex-wrap:wrap;padding:9px 16px;text-align:center;
+  font:13px/1.5 system-ui,"Segoe UI",sans-serif;background:#3a2415;color:#ffd7a8;border-bottom:1px solid #6b4423}
+#mobile-warn b{color:#ffc27a}
+#mobile-warn button{margin-left:6px;background:transparent;border:1px solid #8a5a2b;color:#ffd7a8;
+  border-radius:6px;padding:2px 9px;font-size:12px;cursor:pointer}
 `;
+
+/** 手机端没做适配：触屏操作、窄屏排版都不行，进来先说清楚，别让人以为游戏就这么烂 */
+function isMobile(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const ua = navigator.userAgent || '';
+  const touch = (navigator.maxTouchPoints || 0) > 1;
+  const narrow = typeof window !== 'undefined' && window.innerWidth <= 820;
+  return /Android|iPhone|iPad|iPod|Mobile|HarmonyOS|MiuiBrowser|MicroMessenger/i.test(ua) || (touch && narrow);
+}
+
+function mobileWarnDismissed(): boolean {
+  try { return sessionStorage.getItem(MOBILE_KEY) === '1'; } catch { return false; }
+}
+
+function installMobileWarn(): void {
+  if (!isMobile() || mobileWarnDismissed() || document.getElementById('mobile-warn')) return;
+  const bar = document.createElement('div');
+  bar.id = 'mobile-warn';
+  bar.setAttribute('role', 'alert');
+  bar.innerHTML = '<span>📱 <b>手机端暂未做适配</b>：这是键鼠操作的游戏，触屏和窄屏下排版、操作都会很难受，'
+    + '建议换电脑打开。</span>';
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.textContent = '知道了';
+  btn.onclick = () => {
+    try { sessionStorage.setItem(MOBILE_KEY, '1'); } catch { /* 无痕模式忽略 */ }
+    bar.parentNode?.removeChild(bar);
+  };
+  bar.appendChild(btn);
+  const anchor = document.getElementById('beta-notice');
+  if (anchor?.parentNode) anchor.parentNode.insertBefore(bar, anchor.nextSibling);
+  else document.body.insertBefore(bar, document.body.firstChild);
+}
+
+/** 第一方匿名计数：无 Cookie、不存 IP，只报页面/来源/语言/屏宽；失败绝不影响游戏。
+    后端没启用时第一次失败就本会话不再试（避免 404 刷控制台）。 */
+function countView(): void {
+  try {
+    if (sessionStorage.getItem('dsh.hit.off') === '1') return;
+    const api = String((globalThis as { DSH_AUTH_CONFIG?: { api?: string } }).DSH_AUTH_CONFIG?.api || '');
+    if (!api) return;
+    const body = JSON.stringify({
+      p: location.pathname || '/game',
+      r: document.referrer ? document.referrer.split('/')[2] || '' : '',
+      w: window.innerWidth || 0,
+      l: navigator.language || '',
+    });
+    const off = () => { try { sessionStorage.setItem('dsh.hit.off', '1'); } catch { /* 无痕忽略 */ } };
+    void fetch(api.replace(/\/+$/, '') + '/api/hit', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body, keepalive: true, mode: 'cors',
+    }).then(r => { if (!r.ok) off(); }).catch(off);
+  } catch { /* 计数失败无所谓 */ }
+}
 
 export function installBetaNotice(version: string = BETA_VERSION): void {
   if (typeof document === 'undefined' || !document.body) return;
+  installMobileWarn();                                              // 手机端提醒（与 BETA 条无关，独立判断）
+  countView();                                                      // 匿名计数（无 Cookie、无 IP）
   if (document.getElementById('beta-notice')) return;               // 已经有一条了
   const style = document.createElement('style');
   style.id = 'beta-notice-style';

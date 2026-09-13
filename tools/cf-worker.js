@@ -279,7 +279,32 @@ export async function handle(req, env) {
     }
   }
   if (RELAY[path] || path === '/oauth/access_token') return err(req, 405, 'method_not_allowed', '只接受 POST');
-  if (path === '/' || path === '') return json(req, { ok: true, service: 'bobbychina cloud', api: ['/api/health', '/api/register', '/api/login', '/api/recover/begin', '/api/recover/commit', '/api/me', '/api/quota', '/api/saves', '/api/save'] });
+  if (path === '/' || path === '') return json(req, { ok: true, service: 'bobbychina cloud', api: ['/api/health', '/api/hit', '/api/register', '/api/login', '/api/recover/begin', '/api/recover/commit', '/api/me', '/api/quota', '/api/saves', '/api/save'] });
+
+  /* ---- 第一方匿名计数（页面访问量）: 写 Analytics Engine，不占 KV 写额度 ----
+     为什么不用 KV：KV 免费版每天只有 1000 次写，页面访问量会瞬间把它刷光，
+     而 Analytics Engine 免费额度是 10 万点/天，正好干这个。
+     隐私：只记页面路径 / 来源域名 / 语言 / 屏宽，不写 Cookie、不存 IP、不做指纹。 */
+  if (path === '/api/hit' && req.method === 'POST') {
+    if (!ALLOW_ORIGINS.includes(req.headers.get('origin') || '')) {
+      return err(req, 403, 'bad_origin', '只接受本站页面的计数请求');
+    }
+    const b = (await readJSON(req)) || {};
+    const page = String(b.p || '/').slice(0, 120);
+    const ref = String(b.r || '').slice(0, 80);
+    const lang = String(b.l || '').slice(0, 16);
+    const wide = Number(b.w) || 0;
+    const ae = env && env.AE;
+    if (!ae || typeof ae.writeDataPoint !== 'function') {
+      return json(req, { ok: false, reason: 'no_analytics_engine' }, 200);   // 没绑 AE 也不报错，静默降级
+    }
+    try {
+      ae.writeDataPoint({ blobs: [page, ref, lang], doubles: [1, wide], indexes: [page] });
+      return json(req, { ok: true }, 200);
+    } catch (e) {
+      return json(req, { ok: false, reason: 'write_failed' }, 200);
+    }
+  }
 
   /* ---- 健康检查 ---- */
   if (path === '/api/health') {

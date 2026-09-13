@@ -29,3 +29,11 @@ invocation_logs = true
 [[kv_namespaces]]
 binding = "DSH_KV"
 id = "55c168162fc8475990ba74b5a728003f"
+
+# 页面访问计数（env.AE）：写 Analytics Engine，不占 KV 每天 1000 次的写额度。
+# 查数据：Cloudflare 面板 → Workers & Pages → Analytics Engine → 选 dataset site_hits → SQL：
+#   SELECT index1 AS page, count() AS views, count(DISTINCT blob2) AS refs
+#   FROM site_hits WHERE timestamp > NOW() - INTERVAL '7' DAY GROUP BY page ORDER BY views DESC
+[[analytics_engine_datasets]]
+binding = "AE"
+dataset = "site_hits"
