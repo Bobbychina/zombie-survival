@@ -1,0 +1,118 @@
+{
+  "checks": [
+    [
+      "顶部有两个切换按钮（本地 24×24 / 大区 3×3）",
+      true
+    ],
+    [
+      "默认显示本地地图：576 格在、大区 9 格不在（两张图不再同时铺开）",
+      true
+    ],
+    [
+      "点按钮切到大区视图：3×3 九格在、本地 576 格已移除",
+      true
+    ],
+    [
+      "大区视图比本地视图矮（不占空间：地图卡片高度明显下降）",
+      true
+    ],
+    [
+      "大区视图里仍然写着\"跨区要开车\"的说明 + 指路到本地地图",
+      true
+    ],
+    [
+      "刷新后仍停在\"大区地图\"（视图选择被记住）",
+      true
+    ],
+    [
+      "大区视图里没车时跨区被拦住（还在原区域）",
+      true
+    ],
+    [
+      "大区视图里给车后能真的跨区",
+      true
+    ],
+    [
+      "跨区后视图自动回到本地地图（到新地方了，看格子）",
+      true
+    ],
+    [
+      "全程无 console 报错 / 未捕获异常",
+      true
+    ]
+  ],
+  "errs": [],
+  "local": {
+    "cells": 576,
+    "rcells": 0,
+    "tabs": [
+      {
+        "t": "🗺️ 本地地图 24×24",
+        "on": true
+      },
+      {
+        "t": "🌐 大区地图 3×3",
+        "on": false
+      }
+    ],
+    "cardH": 872,
+    "viewH": 926,
+    "title": "🗺️ 本地地图 区块 (1",
+    "hasCrossHint": false,
+    "hasVehHint": false,
+    "hasLocalHint": false
+  },
+  "region": {
+    "cells": 0,
+    "rcells": 9,
+    "tabs": [
+      {
+        "t": "🗺️ 本地地图 24×24",
+        "on": false
+      },
+      {
+        "t": "🌐 大区地图 3×3",
+        "on": true
+      }
+    ],
+    "cardH": 513,
+    "viewH": 926,
+    "title": "🌐 大区地图 3×3 区域",
+    "hasCrossHint": true,
+    "hasVehHint": true,
+    "hasLocalHint": true
+  },
+  "persisted": {
+    "cells": 0,
+    "rcells": 9,
+    "tabs": [
+      {
+        "t": "🗺️ 本地地图 24×24",
+        "on": false
+      },
+      {
+        "t": "🌐 大区地图 3×3",
+        "on": true
+      }
+    ],
+    "cardH": 513,
+    "viewH": 926,
+    "title": "🌐 大区地图 3×3 区域",
+    "hasCrossHint": true,
+    "hasVehHint": true,
+    "hasLocalHint": true
+  },
+  "travel": {
+    "before": "ember",
+    "blocked": "ember",
+    "hasVeh": true
+  },
+  "crossed": {
+    "from": "ember",
+    "to": "dongjiao",
+    "seen": [
+      "ember",
+      "dongjiao"
+    ]
+  }
+}

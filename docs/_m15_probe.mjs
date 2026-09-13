@@ -35,7 +35,7 @@ await sleep(4500)
 const checks = []
 const ok = (n, c, extra = '') => { checks.push([n, !!c]); console.log((c ? 'PASS ' : 'FAIL ') + n + (extra ? '  ' + extra : '')) }
 
-await ev(`localStorage.removeItem('zombie_survival_save_v2'); sessionStorage.clear(); 1`)
+await ev(`localStorage.removeItem('zombie_survival_save_v2'); localStorage.removeItem('dsh.mapmode'); sessionStorage.clear(); 1`)
 await send('Page.navigate', { url })
 await sleep(4200)
 

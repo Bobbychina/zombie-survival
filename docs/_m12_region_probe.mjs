@@ -40,6 +40,14 @@ await sleep(4200)
 await ev(`(() => { const b = [...document.querySelectorAll('.tab, button')].find(e => /探索/.test(e.textContent||'')); if (b) b.click(); })()`)
 await sleep(900)
 
+/* M16：区域面板默认收在「大区地图」视图里（本地/大区合并成一个面板 + 按钮切换），
+   所以这里的每一步都要先切到大区视图；下面统一用 openRegion()。 */
+async function openRegion() {
+  await ev(`(() => { const b = [...document.querySelectorAll('#v4world .wmtab')].find(x => /大区/.test(x.textContent||'')); if (b && !b.className.includes('on')) b.click(); })()`)
+  await sleep(500)
+}
+
+await openRegion()
 const panel = await ev(`(() => {
   const cells = [...document.querySelectorAll('.rcell')];
   const t = document.body.innerText;

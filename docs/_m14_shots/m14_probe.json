@@ -120,7 +120,7 @@
     "hasBoardTitle": true,
     "hasStoryTitle": true,
     "hasAccept": 3,
-    "budget": 21,
+    "budget": 20,
     "day": 1,
     "region": "ember",
     "chapter": 0,
@@ -199,9 +199,9 @@
     "day": 6,
     "contractsDay": 6,
     "hasCar": false,
-    "farTitle": "西山的木料",
-    "farRegion": "xishan",
-    "farMetric": "rzone:xishan:*",
+    "farTitle": "东郊的一趟",
+    "farRegion": "dongjiao",
+    "farMetric": "rzone:dongjiao:*",
     "boardKeys": [
       "story:6",
       "far:6",
@@ -212,32 +212,33 @@
   },
   "farDone": {
     "okAccept": true,
-    "far": "东郊的一趟",
-    "farMetric": "rzone:dongjiao:*",
-    "farNeed": 2,
-    "region": "dongjiao",
-    "regionAfter": "dongjiao",
+    "far": "老城的旧图",
+    "farMetric": "rzone:laocheng:*",
+    "farNeed": 3,
+    "region": "laocheng",
+    "regionAfter": "laocheng",
     "activeMid": 1,
     "justThereProg": 0,
     "oneProg": 1,
     "searchReturns": [
+      null,
       null,
       null
     ],
     "activeAfter": 0,
     "done": 2,
     "rzones": {
-      "dongjiao": {
-        "appliance": 2
+      "laocheng": {
+        "pharmacy": 3
       }
     },
     "visits": {
       "ember": 1,
-      "dongjiao": 1
+      "laocheng": 1
     },
     "log": [
-      "第 6 天接了委托：东郊的一趟",
-      "第 6 天完成委托：东郊的一趟"
+      "第 6 天接了委托：老城的旧图",
+      "第 6 天完成委托：老城的旧图"
     ]
   },
   "day": {
@@ -249,7 +250,7 @@
     "active": 0,
     "board": 3,
     "log": [
-      "第 6 天完成委托：东郊的一趟",
+      "第 6 天完成委托：老城的旧图",
       "第 12 天接了委托：九分局的枪柜",
       "第 17 天委托过期：九分局的枪柜"
     ]
@@ -263,7 +264,6 @@
     "sanChapter": 1,
     "sanZoneCntKeys": [
       "hospital",
-      "appliance",
       "pharmacy"
     ],
     "poiKeySurvives": true

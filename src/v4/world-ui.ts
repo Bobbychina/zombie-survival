@@ -109,6 +109,31 @@ function regionTripFor(s: SaveWorld, to: string) {
   });
 }
 
+/* ── M16：本地地图 / 大区地图合并到一个面板，用一个按钮切换 ──
+   用户反馈：3×3 大区地图和 24×24 本地地图分成两块太占地方，也不方便来回看。
+   两张图其实是"同一件事的两个缩放级"，所以合成一块、记住上次看的是哪个视图。 */
+export type MapMode = 'local' | 'region';
+const MAP_MODE_KEY = 'dsh.mapmode';
+let mapMode: MapMode = (() => {
+  try { return localStorage.getItem(MAP_MODE_KEY) === 'region' ? 'region' : 'local'; } catch { return 'local'; }
+})();
+export const currentMapMode = (): MapMode => mapMode;
+export function setMapMode(m: string): boolean {
+  const next: MapMode = m === 'region' ? 'region' : 'local';
+  if (next === mapMode) return false;
+  mapMode = next;
+  try { localStorage.setItem(MAP_MODE_KEY, next); } catch { /* 隐私模式：记不住就算了 */ }
+  try { mountWorldPanel(); } catch (e) { console.warn('[v4] 切换地图视图失败', e); }
+  return true;
+}
+/** 视图切换按钮（两个按钮做成一段 segmented control） */
+function mapTabs(): string {
+  const tab = (id: MapMode, label: string, badge: string) =>
+    '<button class="wmtab' + (mapMode === id ? ' on' : '') + '" onclick="V4World.mapMode(\'' + id + '\')">' + label +
+    ' <span class="mbadge">' + badge + '</span></button>';
+  return '<div class="wmtabs">' + tab('local', '🗺️ 本地地图', '24×24') + tab('region', '🌐 大区地图', '3×3') + '</div>';
+}
+
 export function renderRegionPanel(s: SaveWorld): string {
   const here = regionById(s.region) ?? regionById(HOME_REGION)!;
   let h = '<div class="sect-title" style="margin-top:10px">🗺️ 区域 ' +
@@ -144,19 +169,22 @@ export function renderRegionPanel(s: SaveWorld): string {
   } else {
     h += '<div class="hint">车已就绪：点上面任何一个亮着的区域即可出发（跨区消耗行动力与燃油，车况也会磨损）。</div>';
   }
+  h += '<div class="hint">🔎 区域里面的格子（哪条街、哪栋楼）切到「本地地图」看。</div>';
   return h;
 }
 
-export function renderMapPanel(): string {  const s = sw(), w = worldOf(s.seed, s.region), b = curBlock();
+export function renderMapPanel(): string {
+  const s = sw(), w = worldOf(s.seed, s.region), b = curBlock();
   const poi = poiOf(b);
   const home = bkey(b.x, b.y) === homeKey(s);
   const dLab = Math.max(Math.abs(b.x - w.lab.x), Math.abs(b.y - w.lab.y));
   const labTxt = L.S.base.radio ? (dLab + ' 公里（' + (dLab <= 3 ? '快到了' : dLab <= 8 ? '还有一段' : '很远') + '）') : '未定位（据点架设无线电后解锁）';
   const frags = pendingFragKeys();
 
-  let h = '<div class="sect-title">大世界地图 <span class="badge">区块 (' + b.x + ',' + b.y + ') · 1km²</span>' +
+  let h = '<div class="sect-title">' + (mapMode === 'region' ? '🌐 大区地图' : '🗺️ 本地地图') +
+    ' <span class="badge">' + (mapMode === 'region' ? '3×3 区域 · 跨区要开车' : '区块 (' + b.x + ',' + b.y + ') · 1km²') + '</span>' +
     '<span class="badge">走过 ' + s.steps + ' 个区块</span></div>';
-  h += renderRegionPanel(s);
+  h += mapTabs();
   h += '<div class="whead">' +
     '<div class="wmeta">' +
       '<div class="wname">' + (home ? '🏠 安全屋（' : (poi ? poi.icon + ' ' + poi.name + '（' : '📍 ')) + esc(b.name) + '）</div>' +
@@ -167,6 +195,19 @@ export function renderMapPanel(): string {  const s = sw(), w = worldOf(s.seed, 
       '　⚡ ' + L.S.ap + '/' + apMaxOf(s.debt) + ' · 债 ' + s.debt + ' 档' +
       (isBloodMoonDay(L.S.day) ? '　🩸 血月' : '') + '</div>' +
   '</div>';
+
+  /* 大区视图：只有 3×3 那张图 + 跨区说明；本地视图：格子地图 + 预览/悬停 + 图例。
+     两张图不再同时铺开——这是"不占空间"的关键。 */
+  if (mapMode === 'region') {
+    h += renderRegionPanel(s);
+    h += '<details class="wlegend-box"><summary>图例与说明</summary><div class="wlegend">' +
+      '<span class="lg"><i class="sw ic">📍</i>当前所在</span>' +
+      '<span class="lg"><i class="sw go-sw"></i>能开车过去（框色变绿）</span>' +
+      '<span class="lg"><i class="sw no-sw"></i>去不了（没车 / 油或行动力不够）</span>' +
+      '<span class="hint">区域名一直可见（地理常识）；每个区域的描述要亲自去过才解锁。跨区消耗行动力与燃油，车况也会掉。</span>' +
+      '</div></details>';
+    return h;
+  }
 
   // C10/R4：预览条与悬停详情放在**地图上方**（用户反馈：放地图下面等于藏到屏幕最底部，
   // 而这两行恰恰是"这格是谁、去一趟多少钱"的关键信息，必须一眼看到）。
@@ -540,6 +581,8 @@ function runTrip(target: { x: number; y: number }, t: Trip) {
 }
 
 export const V4World = {
+  /** M16：本地地图 / 大区地图切换（内联 onclick：V4World.mapMode('region')） */
+  mapMode(m: string) { return setMapMode(m); },
   /** C10：点格子 = 先出路线预览（第一次），同一个目标再点一次才出发（手机 tap 等价路径） */
   click(x: number, y: number) {
     const s = sw(), w = worldOf(s.seed, s.region);

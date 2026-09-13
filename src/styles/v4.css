@@ -118,10 +118,23 @@
 .b-city{background:#3b4152}.b-suburb{background:#33403a}.b-industrial{background:#4a4038}.b-forest{background:#2b3a2c}
 .b-farm{background:#3d3a24}.b-water{background:#1d2c3e}.b-ruins{background:#3a3138}.b-military{background:#40352c}.b-highway{background:#2e3238}
 
+/* ── M16：地图视图切换（本地 24×24 ⇄ 大区 3×3）──
+   两张图合成一块、默认只显示一张 —— 这就是"不占空间"的来源。
+   按钮做成 segmented control：当前视图实心，另一个空心。 */
+.v4world .wmtabs{display:flex;gap:6px;margin:8px 0 6px}
+.v4world .wmtab{flex:1 1 0;min-height:32px;padding:5px 8px;border:1px solid var(--line);border-radius:var(--r);
+  background:#0d1015;color:var(--dim);font-size:12.5px;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:5px}
+.v4world .wmtab:hover{border-color:var(--accent);color:var(--ink)}
+.v4world .wmtab.on{background:#121a22;border-color:var(--accent);color:var(--bone);box-shadow:inset 0 0 0 1px rgba(92,200,255,.2)}
+.v4world .wmtab .mbadge{font-size:10.5px;color:var(--dim);border:1px solid var(--line);border-radius:3px;padding:0 3px}
+.v4world .wmtab.on .mbadge{color:var(--accent);border-color:#2c4a5e}
+.wlegend .go-sw{background:#3f7d4f;border-color:#2f5c46}
+.wlegend .no-sw{background:#15171c;border-color:#262a33}
+
 /* ── M12 区域元地图（3×3）：当前所在 / 能开车去 / 去不了 三态一眼分清 ── */
-.v4world .rgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:8px 0}
+.v4world .rgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin:8px 0;max-width:560px}
 .v4world .rcell{border:1px solid var(--line);border-radius:6px;padding:6px 4px;text-align:center;background:#0d1015;
-  display:flex;flex-direction:column;gap:2px;align-items:center;min-height:62px;justify-content:center}
+  display:flex;flex-direction:column;gap:2px;align-items:center;min-height:74px;justify-content:center}
 .v4world .rcell .ricon{font-size:16px;line-height:1}
 .v4world .rcell .rname{font-size:12px;color:var(--ink)}
 .v4world .rcell .rmeta{font-size:10px;color:var(--dim)}
