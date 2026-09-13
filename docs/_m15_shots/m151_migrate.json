@@ -13,7 +13,7 @@
       true
     ],
     [
-      "地形进度已清空（visited/left/stock/firstPoi/chop/intel/evac/trail）",
+      "地形进度已清空（visited 只剩脚下那格；left/stock/firstPoi/chop/intel/evac/trail 全清）",
       true
     ],
     [
@@ -58,7 +58,7 @@
     "endings": [
       "ash"
     ],
-    "visited": 0,
+    "visited": 1,
     "left": 0,
     "stock": 0,
     "firstPoi": 0,
@@ -78,7 +78,7 @@
     "logKeep": true
   },
   "again": {
-    "visited": 1,
+    "visited": 2,
     "logMigrate": false
   }
 }

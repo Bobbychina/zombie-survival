@@ -253,10 +253,12 @@ describe('M17.1 城市逻辑（评审 #2：约束规则）', () => {
          相邻两格绝不重名，同名块也被推到远处。100% 不重样做不到（方位字受几何限制：
          北半边只剩"北"这一个前缀，143 格共用 5×14 个组合），所以门槛定在 130/144。 */
       const uniq = new Set(list.map(r => r.short)).size;
-      expect(uniq, seed + ' 的短名重复太多（' + uniq + '/144）').toBeGreaterThanOrEqual(130);
+      expect(uniq, seed + ' 的短名重复太多（' + uniq + '/144）').toBeGreaterThanOrEqual(134);
       for (const r of list) {
         for (const nb of list.filter(x => x.id !== r.id && Math.max(Math.abs(x.col - r.col), Math.abs(x.row - r.row)) === 1)) {
           expect(nb.short, seed + '：' + r.short + ' 旁边又是一格 ' + nb.short).not.toBe(r.short);
+          /* 评审 #4：「北天井/南天井、北胡洞/南胡洞」——同一个地貌词也不该挨着 */
+          expect(nb.short.slice(1), seed + '：' + r.short + ' 旁边是同一个地貌词 ' + nb.short).not.toBe(r.short.slice(1));
         }
       }
     }

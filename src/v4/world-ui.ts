@@ -13,6 +13,8 @@ import {
   metaGrid, planRegionTrip, regionById, regionName, typeColor, typeLabel, type RegionDef,
 } from './regions-core';
 import { poiLeft, searchPoi } from './search';
+import { lastRegionEvent, onEnterRegion } from './region-events';
+import { regionHazardTitles } from './region-events-core';
 import { pendingFragKeys, takeFragment } from './fragments';
 import { apMaxOf, isBloodMoonDay, rest, restOptions, tierAt, syncApMax } from './night';
 import { ensureEvac, evacAvailable, fireFlare } from './evac';
@@ -200,6 +202,9 @@ function renderRegionDetail(s: SaveWorld, here: RegionDef, sel: RegionDef, trip:
     '</div>';
   h += '<div class="hint">' + esc(sel.desc) + '</div>';
   h += '<div class="rtags">这儿能弄到：' + sel.resources.map(r => '<span class="tag">' + esc(r) + '</span>').join('') + '</div>';
+  /* M18：把该类型的区域事件摆出来——出发前就知道会撞上什么，地貌分区才不只是颜色 */
+  const hazards = regionHazardTitles(sel.type, 3);
+  if (hazards.length) h += '<div class="rtags">这一带的状况：' + hazards.map(t => '<span class="tag">' + esc(t) + '</span>').join('') + '</div>';
   if (trip.ok) {
     const via = trip.path.slice(0, -1).map(id => regionName(id));
     h += '<div class="rgo ok">🧭 开过去 <b>' + trip.hops + ' 格</b> · ⚡' + trip.ap + ' · ⛽' + trip.fuel +
@@ -777,6 +782,9 @@ export const V4World = {
   /** M17 只读：某个区域的行车报价（含途经路线），探针用它挑"多跳目标"来验收 */
   trip(id: string) { return regionTripFor(sw(), id); },
 
+  /** M18 只读：最近一次区域事件（探针/UI 显示"刚才撞上了什么"） */
+  regionEvent() { return lastRegionEvent(); },
+
   /** M12 跨区域：先判定（没车/没油/行动力不够都给理由），通过才扣成本再换图 */
   travelRegion(id: string) {
     const S = L.S, s = sw();
@@ -800,6 +808,9 @@ export const V4World = {
     s.trail = s.trail.slice(-24);
     L.log('🚗 你上了高速，往「' + regionName(id) + '」去了（行动力 -' + apCost + '，油 -' + fuelCost + '）。', 'success');
     if (r.firstEnter) L.log('📖 ' + r.firstEnter, 'dim');
+    /* M18：落地就掷一次区域事件（工业区可能漏毒气、军管区可能捡到军械箱…）。
+       主城不掷——安全屋是唯一"绝对安全"的地方。 */
+    onEnterRegion(regionById(id));
     if (s.veh && s.veh.hp <= 0) L.log('🔧 车在半路就开始冒烟了——得找地方修车，不然回不去。', 'danger');
     preview = null;
     selectedRegion = null; selectedNote = '';        // 落地了就别继续高亮"上一个目标"

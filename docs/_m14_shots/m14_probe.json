@@ -200,8 +200,8 @@
     "contractsDay": 6,
     "hasCar": false,
     "farTitle": "居民区的清单",
-    "farRegion": "r5-5",
-    "farMetric": "rzone:r5-5:*",
+    "farRegion": "r6-5",
+    "farMetric": "rzone:r6-5:*",
     "boardKeys": [
       "story:6",
       "far:6",
@@ -212,33 +212,32 @@
   },
   "farDone": {
     "okAccept": true,
-    "far": "废墟里的旧图",
-    "farMetric": "rzone:r8-6:*",
-    "farNeed": 3,
-    "region": "r8-6",
-    "regionAfter": "r8-6",
+    "far": "居民区的清单",
+    "farMetric": "rzone:r4-5:*",
+    "farNeed": 2,
+    "region": "r4-5",
+    "regionAfter": "r4-5",
     "activeMid": 1,
     "justThereProg": 0,
     "oneProg": 1,
     "searchReturns": [
-      null,
       null,
       null
     ],
     "activeAfter": 0,
     "done": 2,
     "rzones": {
-      "r8-6": {
-        "office": 3
+      "r4-5": {
+        "depot": 2
       }
     },
     "visits": {
       "r5-6": 1,
-      "r8-6": 1
+      "r4-5": 1
     },
     "log": [
-      "第 6 天接了委托：废墟里的旧图",
-      "第 6 天完成委托：废墟里的旧图"
+      "第 6 天接了委托：居民区的清单",
+      "第 6 天完成委托：居民区的清单"
     ]
   },
   "day": {
@@ -250,9 +249,9 @@
     "active": 0,
     "board": 3,
     "log": [
-      "第 6 天完成委托：废墟里的旧图",
-      "第 12 天接了委托：九分局的枪柜",
-      "第 17 天委托过期：九分局的枪柜"
+      "第 6 天完成委托：居民区的清单",
+      "第 12 天接了委托：医院里的线索",
+      "第 17 天委托过期：医院里的线索"
     ]
   },
   "misc": {
@@ -264,7 +263,7 @@
     "sanChapter": 1,
     "sanZoneCntKeys": [
       "hospital",
-      "office",
+      "depot",
       "pharmacy"
     ],
     "poiKeySurvives": true

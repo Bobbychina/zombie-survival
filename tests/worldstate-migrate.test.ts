@@ -45,8 +45,8 @@ describe('M15.1 地图重画迁移', () => {
     const { S, HOME } = oldSave();
     const out = ensureSaveWorld(S);
     expect(out.wv).toBe(WORLD_VER);
-    // 地形相关：全清
-    expect(out.visited).toEqual({});
+    // 地形相关：全清（**只剩脚下那一格**——用户报过"迁移完整张图全黑，一步都走不了"）
+    expect(Object.keys(out.visited)).toEqual([bkey(out.cur.x, out.cur.y)]);
     expect(out.left).toEqual({});
     expect(out.stock).toEqual({});
     expect(out.firstPoi).toEqual({});
@@ -81,16 +81,39 @@ describe('M15.1 地图重画迁移', () => {
     expect(takeWorldMigration()).toBe(false);   // 只报一次
   });
 
-  it('同一版本不会重复迁移（第二次调用什么都不动）', () => {
+  it('同一版本不会重复迁移（第二次调用只补脚下那格，不动已有进度）', () => {
     const { S } = oldSave();
     const first = ensureSaveWorld(S);
     takeWorldMigration();                       // 第一次迁移的标记先消费掉
     first.visited = { [bkey(6, 6)]: 1 };
     first.left = { [bkey(6, 6)]: 3 };
     const again = ensureSaveWorld(S);
-    expect(again.visited).toEqual({ [bkey(6, 6)]: 1 });
+    /* 第 6,6 格的进度必须原样活着；额外的 12,12 是"脚下永远点亮"的兜底，不是迁移 */
+    expect(again.visited[bkey(6, 6)]).toBe(1);
+    expect(Object.keys(again.visited).sort()).toEqual([bkey(6, 6), bkey(again.cur.x, again.cur.y)].sort());
     expect(again.left).toEqual({ [bkey(6, 6)]: 3 });
     expect(takeWorldMigration()).toBe(false);
+  });
+
+  it('脚下那格永远是亮的（用户报的 bug：迁移后整张图全黑、一步都走不了）', () => {
+    /* 只能点"已点亮"的格子 → 只要脚下不亮，玩家就真的动不了。
+       这里两种情况都钉住：① 刚迁移完的老档 ② visited 被写坏的档。 */
+    takeWorldMigration();                       // 先把上一条测试留下的迁移标记清掉
+    const { S } = oldSave();
+    const out = ensureSaveWorld(S);
+    let w = worldOf(out.seed, out.region);
+    let here = w.blocks[bkey(out.cur.x, out.cur.y)];
+    expect(here.revealed, '迁移后脚下没点亮').toBe(true);
+    const lit = Object.keys(w.blocks).filter(k => w.blocks[k].revealed).length;
+    expect(lit, '只有脚下亮着还不够——周围也得能看见，不然没地方可点').toBeGreaterThanOrEqual(6);
+    takeWorldMigration();                       // 别把标记留给后面的测试
+
+    const S2: any = { seed: 'broken-save', world: { ...defaultSaveWorld('broken-save'), visited: {} } };
+    const out2 = ensureSaveWorld(S2);
+    w = worldOf(out2.seed, out2.region);
+    here = w.blocks[bkey(out2.cur.x, out2.cur.y)];
+    expect(here.revealed, 'visited 被清空后脚下也没点亮').toBe(true);
+    expect(Object.keys(w.blocks).filter(k => w.blocks[k].revealed).length).toBeGreaterThanOrEqual(6);
   });
 
   it('新档直接就是当前版本，不需要迁移', () => {

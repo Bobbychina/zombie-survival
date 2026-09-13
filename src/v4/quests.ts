@@ -5,6 +5,7 @@
    换日与进度推送由 legacy 的 rollBounties()/bountyTick() 调用点转进来（见 game.ts 的桥），
    所以睡觉、击杀、搜刮这些老路径一行都不用改。 */
 import { L } from '../main';
+import { onDayInRegion } from './region-events';
 import {
   MAX_ACTIVE, accept as acceptCore, abandon as abandonCore, activeLine, ensureContracts, metricLabel,
   metricNow, progressOf, regionHint, rollOffers, settle,
@@ -93,6 +94,9 @@ export function newDay() {
   ensureQuests();
   tickQuiet();
   refresh();
+  /* M18：换日时如果人在外面，再掷一次区域事件——在危险区过夜本来就该有代价。
+     放在换日而不是每帧：一天一次，玩家看得见因果。 */
+  try { onDayInRegion(); } catch (e) { console.warn('[v4] 区域事件结算失败', e); }
   L.render?.();
   L.autosave?.();
 }

@@ -50,7 +50,9 @@ describe('大世界状态', () => {
     const fake: SaveWorld = { ...defaultSaveWorld('test-seed-1'), visited: { '1,1': 1, '2,2': 1 } };
     const S2: any = { world: fake };
     const sw2 = ensureSaveWorld(S2);
-    expect(Object.keys(sw2.visited).sort()).toEqual(['1,1', '2,2']);
+    /* 除了手写的那两格，还会多一格：**玩家当前站着的那格**（安全屋 12,12）。
+       这是"脚下永远点亮"的兜底——只能点已点亮的格子，脚下不亮就彻底动不了。 */
+    expect(Object.keys(sw2.visited).sort()).toEqual(['1,1', '12,12', '2,2']);
     expect(blockAt(w, 1, 1)!.revealed).toBe(true);
     expect(blockAt(w, 2, 2)!.revealed).toBe(true);
     expect(blockAt(w, 20, 20)!.revealed).toBe(false);

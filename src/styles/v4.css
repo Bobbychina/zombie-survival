@@ -115,10 +115,12 @@
 .v4world .wlegend .sw{width:9px;height:9px;border-radius:2px;display:inline-block;border:1px solid rgba(255,255,255,.12)}
 .v4world .wpoi{margin-top:6px}
 .v4world .trail{font-size:11px;color:var(--dim);line-height:1.7;font-family:var(--mono,monospace)}
-/* 地表配色：和元地图的 TYPE_INFO 同一套（M17.1 拉开色相、M17.2 降一点饱和度——
-   评审说"高饱和色块看久了眼瞎"，但九种地貌还是得能分辨；只想看危险度就切"危险度上色"图层） */
-.b-city{background:#53596c}.b-suburb{background:#3b4f47}.b-industrial{background:#654733}.b-forest{background:#35513b}
-.b-farm{background:#666337}.b-water{background:#27486c}.b-ruins{background:#57485a}.b-military{background:#66363a}.b-highway{background:#2e3238}
+/* 地表配色：和元地图的 TYPE_INFO 同一套。
+   M17.2 拉开色相 → M17.3 把"废土系"（居民/城郊/废墟）压成低饱和灰调，
+   饱和度只留给**有信息量**的这几类：水域（蓝）、林地（绿）、工业（褐）、军管（暗红）。
+   评审原话："给废墟和荒地加一点灰暗的滤镜，把高饱和度留给特殊资源点或危险区。" */
+.b-city{background:#4e5566}.b-suburb{background:#404b47}.b-industrial{background:#5f452f}.b-forest{background:#33503a}
+.b-farm{background:#5e5b34}.b-water{background:#2a4a6d}.b-ruins{background:#4b4650}.b-military{background:#5f3336}.b-highway{background:#2e3238}
 
 /* ── M16：地图视图切换（本地 24×24 ⇄ 大区 3×3）──
    两张图合成一块、默认只显示一张 —— 这就是"不占空间"的来源。

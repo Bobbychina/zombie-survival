@@ -79,8 +79,8 @@ console.log('  迁移后: ' + after)
 const AF = JSON.parse(after)
 ok('世界版本号补上了', AF.wv >= 2, 'wv=' + AF.wv)
 ok('日志明确说明"地图重画了"', AF.logMigrate && AF.logKeep, JSON.stringify({ a: AF.logMigrate, b: AF.logKeep }))
-ok('地形进度已清空（visited/left/stock/firstPoi/chop/intel/evac/trail）',
-  AF.visited === 0 && AF.left === 0 && AF.stock === 0 && AF.firstPoi === 0 && AF.chop === 0 && AF.intel === false && AF.evac === null && AF.trail === 0,
+ok('地形进度已清空（visited 只剩脚下那格；left/stock/firstPoi/chop/intel/evac/trail 全清）',
+  AF.visited === 1 && AF.left === 0 && AF.stock === 0 && AF.firstPoi === 0 && AF.chop === 0 && AF.intel === false && AF.evac === null && AF.trail === 0,
   JSON.stringify(AF))
 ok('人物进度一项不少（天/材料/血/背包/主线/抉择/结局档案/车）',
   AF.day === 42 && AF.mat === 321 && AF.hp === 66 && AF.inv && Object.keys(AF.inv).length > 0 && AF.quest === 4 &&
@@ -99,7 +99,7 @@ const again = await ev(`(() => {
 })()`)
 console.log('  二次加载: ' + again)
 const AG = JSON.parse(again)
-ok('同版本不会重复迁移（探索进度保住了，也不再提示）', AG.visited === 1 && AG.logMigrate === false, JSON.stringify(AG))
+ok('同版本不会重复迁移（探索进度保住了，也不再提示）', AG.visited === 2 && AG.logMigrate === false, JSON.stringify(AG))
 
 const pageErrs = errs.filter(e => !/favicon/.test(e))
 ok('全程无 console 报错 / 未捕获异常', pageErrs.length === 0, pageErrs.slice(0, 3).join(' | '))

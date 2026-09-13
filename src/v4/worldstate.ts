@@ -221,6 +221,14 @@ export function ensureSaveWorld(S: any): SaveWorld {
     sw.regionZones[rid] = out;
   }
   sw.cur = validPos(sw.cur) ? { x: sw.cur.x, y: sw.cur.y } : { x: w.home.x, y: w.home.y };
+  /* 兜底不变量：**玩家站在哪，哪一格就必须是"去过"**。
+     起因（用户报的 bug）：M17.1 的地图重画迁移把 visited 清空了却没补上落脚点，
+     于是迷雾重放之后整张图全黑——连安全屋自己那格都不亮，玩家一步都走不了。
+     这里无条件补一次，老档/坏档/迁移档都修得回来。 */
+  {
+    const here = bkey(sw.cur.x, sw.cur.y);
+    if (!sw.visited[here]) sw.visited[here] = 1;
+  }
   // M7：水块现在是合法落脚点（可以游过去、可以潜水），所以**不再**把站在水里的玩家挪回陆地——
   // 以前那条"坏档防卡死"的兜底会把刚游下水的玩家瞬移回岸边（潜水功能因此完全失效，探针抓到过）。
   // 只有坐标非法或落在地图外才回安全屋（上面那行已经处理）。
@@ -255,6 +263,12 @@ export function ensureSaveWorld(S: any): SaveWorld {
   for (const k in sw.visited) {
     const p = k.split(',').map(Number);
     if (validPos({ x: p[0], y: p[1] })) markVisited(w, sw, p[0], p[1]);
+  }
+  /* 重放完再确认一次"脚下是亮的"：visited 表被清空/写坏时，这一步是玩家唯一的行动入口
+     （只能点已点亮的格子），漏掉它整局就卡死在黑屏上。 */
+  if (!blockAt(w, sw.cur.x, sw.cur.y)?.revealed) {
+    sw.visited[bkey(sw.cur.x, sw.cur.y)] = 1;
+    markVisited(w, sw, sw.cur.x, sw.cur.y);
   }
   // 无线电架好 = 拿到实验室坐标：那一格永远点亮（否则玩家在迷雾里根本点不到终点）
   if (radio) {

@@ -26,7 +26,7 @@ export const V4: Record<string, unknown> = {};
 (window as any).V4 = V4;
 
 async function main() {
-  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi, integrity, betaNotice] = await Promise.all([
+  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi, integrity, betaNotice, regionEventsCore, regionEvents, regionsCore] = await Promise.all([
     import('./v4/worldgen'),
     import('./v4/pois'),
     import('./v4/combat'),
@@ -44,9 +44,15 @@ async function main() {
     import('./v4/account-ui'),
     import('./v4/integrity'),
     import('./v4/beta-notice'),
+    import('./v4/region-events-core'),
+    import('./v4/region-events'),
+    import('./v4/regions-core'),
   ]);
   // BETA 声明条：整站/整游戏最上面那一条（本站所有子页面都要有）
   betaNotice.installBetaNotice();
+  const { REGION_EVENTS } = regionEventsCore;
+  const { applyRegionEvent } = regionEvents;
+  const { regionById } = regionsCore;
   Object.assign(V4, {
     worldgen: { generateWorld: worldgen.generateWorld, WORLD_W: worldgen.WORLD_W, WORLD_H: worldgen.WORLD_H },
     POIS: pois.POIS,
@@ -188,7 +194,7 @@ async function main() {
     L.log('💾 直接双击打开的（file://）：存档写在本浏览器本地，换浏览器或清缓存会丢；想更稳可以跑 start.bat 起本地服务。', 'dim');
   }
 
-  runDevHook(battleUi, worldState);
+  runDevHook(battleUi, worldState, regionById, REGION_EVENTS as any, applyRegionEvent);
 }
 
 /** 验证钩子：?dev=fresh,battle / dev=battle / dev=none —— 供 playwright 截图脚本用，正式玩法不受影响。
@@ -196,6 +202,9 @@ async function main() {
 function runDevHook(
   battleUi: { startV4Combat(f: any[], o?: any): void },
   worldState: typeof import('./v4/worldstate'),
+  regionById: (id: string) => any,
+  REGION_EVENTS: Record<string, Array<Record<string, any>>>,
+  applyRegionEvent: (ev: any, regionId: string) => void,
 ) {
   const raw = new URLSearchParams(location.search).get('dev');
   if (!raw) return;
@@ -235,6 +244,19 @@ function runDevHook(
       (window as any).V4World.teleport(best.x, best.y);
       return { x: best.x, y: best.y, poi: best.poi, zone: best.zone, biome: best.biome };
     },
+    /** M18 探针用：强制按指定/当前区域类型掷一次区域事件（不看概率，直接结算并写日志） */
+    forceRegionEvent: (type?: string) => {
+      const s = worldState.ensureSaveWorld(L.S);
+      const def = regionById(s.region);
+      const t = (type || def?.type || 'ruins') as keyof typeof REGION_EVENTS;
+      const pool = REGION_EVENTS[t] ?? REGION_EVENTS.ruins;
+      const ev = { ...pool[0] };
+      applyRegionEvent(ev, s.region);
+      return { id: ev.id, title: ev.title, kind: ev.kind, hp: ev.hp ?? 0, mat: ev.mat ?? 0,
+        item: ev.item ?? '', n: ev.n ?? 0, region: s.region, type: t };
+    },
+    /** 当前区域类型（探针挑"该测哪一类事件"用） */
+    regionType: () => (regionById(worldState.ensureSaveWorld(L.S).region)?.type ?? ''),
   };
   setTimeout(() => {
     if (tokens.includes('battle')) battleUi.startV4Combat(['walker', 'runner'], { title: '冒烟遭遇' });

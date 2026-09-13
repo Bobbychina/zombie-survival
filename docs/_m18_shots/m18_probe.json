@@ -1,0 +1,127 @@
+{
+  "checks": [
+    [
+      "小地图上安全屋所在格是亮的（不是黑的）",
+      true
+    ],
+    [
+      "安全屋周围一圈都点亮了（≥7 格可见，玩家有地方可走）",
+      true
+    ],
+    [
+      "点亮=可点：能走的格子都带点击事件（≥7）",
+      true
+    ],
+    [
+      "点相邻的亮格子真的能走（坐标变了）",
+      true
+    ],
+    [
+      "老档（visited 被清空 + 版本对不上）打开后依然点亮脚下与周围（玩家不会被卡死）",
+      true
+    ],
+    [
+      "按当前区域的地貌类型抽到了对应事件（工业区漏毒气/军管区捡军械箱…）",
+      true
+    ],
+    [
+      "事件结算写进现场日志（玩家能在日志里看到）",
+      true
+    ],
+    [
+      "V4World.regionEvent() 记录最近一次事件（UI/探针可查）",
+      true
+    ],
+    [
+      "地图上存在\"危险 4~5 的工业区\"（毒气泄漏那类事件有地方发生）",
+      true
+    ],
+    [
+      "区域详情里预告\"这一带的状况\"（出发前就知道会撞上什么）",
+      true
+    ],
+    [
+      "全程无 console 报错 / 未捕获异常",
+      true
+    ]
+  ],
+  "errs": [],
+  "fresh": {
+    "total": 576,
+    "lit": 9,
+    "clickable": 9,
+    "curLit": true,
+    "curPos": "(12,12) 城郊住宅",
+    "snap": {
+      "seed": "ember-01",
+      "region": "r5-6",
+      "cur": {
+        "x": 12,
+        "y": 12
+      },
+      "seenRegions": [
+        "r5-6"
+      ],
+      "frozenRegions": [],
+      "visitedKeys": 1,
+      "veh": null,
+      "ap": 9
+    }
+  },
+  "broken": {
+    "total": 576,
+    "lit": 9,
+    "clickable": 9,
+    "curLit": true,
+    "curPos": "(12,12) 城郊住宅",
+    "snap": {
+      "seed": "ember-01",
+      "region": "r5-6",
+      "cur": {
+        "x": 12,
+        "y": 12
+      },
+      "seenRegions": [
+        "r5-6"
+      ],
+      "frozenRegions": [],
+      "visitedKeys": 1,
+      "veh": null,
+      "ap": 8
+    }
+  },
+  "event": {
+    "t": "core",
+    "e": {
+      "id": "core-supermarket",
+      "title": "超市残货",
+      "kind": "loot",
+      "hp": 0,
+      "mat": 0,
+      "item": "can",
+      "n": 2,
+      "region": "r5-6",
+      "type": "core"
+    },
+    "before": {
+      "hp": 100,
+      "mat": 12
+    },
+    "after": {
+      "hp": 100,
+      "mat": 12
+    },
+    "log": "🧪 v4 引擎已接管战斗：4 招式槽 / 速度出手 / 属性克制。 | 📦 获得 罐头 ×2 | 📌 余烬市区 · 超市残货：一家被翻过三遍的超市，货架底下还压着没拆封的东西。（罐头 ×2）",
+    "last": {
+      "id": "core-supermarket",
+      "title": "超市残货",
+      "kind": "loot",
+      "day": 1,
+      "region": "r5-6"
+    }
+  },
+  "hurt": {
+    "target": "西工业区",
+    "ok": false
+  }
+}

@@ -286,8 +286,8 @@
   "multi": {
     "target": {
       "id": "r2-3",
-      "name": "北西林场 2 号",
-      "short": "北山道",
+      "name": "北西山区 4 号",
+      "short": "北火道",
       "type": "forest",
       "tier": 3,
       "col": 2,
