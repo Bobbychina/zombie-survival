@@ -3,10 +3,18 @@
 /* ── 世界 ── */
 export type Biome = 'city' | 'suburb' | 'industrial' | 'forest' | 'farm' | 'water' | 'ruins' | 'military' | 'highway';
 
+/** M15 土地利用：biome 决定地表（渲染/移动成本），zone 决定这一格"是什么区"（POI 类型/危险度/命名）。
+ *  真实城市是分区的——工业扎堆、居民区成片，所以生成器先定 zone，再把 zone 映射成 biome。 */
+export type Zone = 'cbd' | 'residential' | 'suburb' | 'industry' | 'military' | 'farmland' | 'forest' | 'ruins' | 'water' | 'open';
+
 export interface Block {
   x: number;
   y: number;
   biome: Biome;
+  zone?: Zone;             // 老存档/老世界没有这个字段（默认按 biome 推断）
+  /** M15：这一格有没有路（主干道/环线/市内街道）。biome 只有 highway 一种"路"，而真实城市里
+      大部分街区是"挨着路"而不是"整格都是路"——所以路网单独一个标记，开车速度按它算。 */
+  road?: boolean;
   name: string;
   poi: string | null;      // POI 类型 id
   danger: number;          // 1..5

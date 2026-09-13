@@ -202,15 +202,13 @@ const farDone = await ev(`(() => {
   const justThere = V4Quest.summary();
   const progOf = () => { const s = V4Quest.summary(); return s.active[0] ? s.active[0].current : null; };
   /* 在这个区真搜刮（V4World.search 会写 regionZones）。
-     gopoi() 每次跳到"最近的有 POI 的格子"——如果那处已经被搜空（left=0），
-     searchPoi 会走"只剩材料"的早退分支、不计数（实测踩过：进度一直是 0）。
-     探针把目标格子的剩余次数补上，保证走的是真正计数的分支。 */
+     用 DEV.gotoPoi()（走玩家真正在玩的那张区域图，跳过实验室/沉没基地/水格），
+     并把该格剩余次数补上——searchPoi 对"已搜空"的点会走早退分支、不计数（踩过两次）。 */
   const searchOnce = () => {
     const S2 = DEV.state();
     S2.ap = 9;
-    DEV.gopoi();
-    const c = S2.world.cur, k = c.x + ',' + c.y;
-    S2.world.left[k] = 5;
+    const spot = DEV.gotoPoi();
+    if (spot) S2.world.left[spot.x + ',' + spot.y] = 5;
     return V4World.search(0);
   };
   const r1 = searchOnce();

@@ -65,6 +65,7 @@ async function main() {
     npc: await import('./v4/npc'),
     quest4: await import('./v4/quest4'),
     quests: await import('./v4/quests'),
+    endings: await import('./v4/endings'),
   });
   /* M13：委托（接单制）+ 大故事（章节制）。legacy 里那几个桥（rollBounties / bountyTick /
      renderBounties）和任务页渲染都按这几个名字取函数——名字必须与 quests.ts 的导出一致。 */
@@ -79,6 +80,15 @@ async function main() {
   (window as any).__v4StoryHtml = quests.storyHtml;
   (window as any).__v4ContractsHtml = quests.contractsHtml;
   (window as any).__v4QuestTeaser = quests.teaser;
+  /* M15：多结局。legacy 的 finalVictory / rescueEnding / gameOver / enterEndless 各调一次，
+     任务页用 __v4EndingsHtml 铺"结局档案"。 */
+  const endings = (V4 as any).endings as typeof import('./v4/endings');
+  (window as any).__v4Ending = (kind: string, extra?: { inLab?: boolean }) => endings.showEnding(kind as any, extra);
+  (window as any).__v4EndingsHtml = endings.endingsHtml;
+  (window as any).V4Endings = {
+    show: endings.showEnding, list: endings.V4Endings.list, html: endings.endingsHtml,
+    peek: endings.peekEnding, all: endings.V4Endings.all,
+  };
   // 内联 onclick 只认 window 上的名字：今夜（过夜）与撤离
   (window as any).V4Night = { rest: night.rest, options: night.restOptions, apMaxOf: night.apMaxOf };
   (window as any).V4Farm = { plant: farm.plant, harvest: farm.harvest, plots: farm.plotSlots, summary: farm.farmSummary };
@@ -171,12 +181,15 @@ async function main() {
     L.log('💾 直接双击打开的（file://）：存档写在本浏览器本地，换浏览器或清缓存会丢；想更稳可以跑 start.bat 起本地服务。', 'dim');
   }
 
-  runDevHook(battleUi);
+  runDevHook(battleUi, worldState);
 }
 
 /** 验证钩子：?dev=fresh,battle / dev=battle / dev=none —— 供 playwright 截图脚本用，正式玩法不受影响。
  *  fresh 会清档并重载一次（用 sessionStorage 防止无限重载）。 */
-function runDevHook(battleUi: { startV4Combat(f: any[], o?: any): void }) {
+function runDevHook(
+  battleUi: { startV4Combat(f: any[], o?: any): void },
+  worldState: typeof import('./v4/worldstate'),
+) {
   const raw = new URLSearchParams(location.search).get('dev');
   if (!raw) return;
   const tokens = raw.split(',').filter(Boolean);
@@ -193,19 +206,24 @@ function runDevHook(battleUi: { startV4Combat(f: any[], o?: any): void }) {
     battle: (ids: string[] = ['walker', 'runner']) => battleUi.startV4Combat(ids, { title: '冒烟遭遇' }),
     ui: (window as any).V4UI,
     world: (window as any).V4World,
-    /** 跳到最近的带 POI 的区块（截图/冒烟用） */
-    gopoi: () => {
-      const w = (V4 as any).worldgen.generateWorld(L.S.world.seed);
-      const cur = L.S.world.cur;
-      let best: any = null, bd = 1e9;
-      for (const k in w.blocks) {
-        const b = w.blocks[k];
-        if (!b.poi || b.poi === 'lab') continue;
-        const d = Math.max(Math.abs(b.x - cur.x), Math.abs(b.y - cur.y));
-        if (d < bd) { bd = d; best = b; }
-      }
-      if (best) (window as any).V4World.teleport(best.x, best.y);
-      return best ? best.poi : null;
+    /** 当前区域的一格（探针用：不靠 DOM 拿 zone/road/poi；走的是玩家真正在玩的那张图） */
+    block: (x: number, y: number) => {
+      const s = worldState.ensureSaveWorld(L.S);
+      const b = worldState.worldOf(s.seed, s.region).blocks[x + ',' + y];
+      return b ? { x: b.x, y: b.y, biome: b.biome, zone: b.zone, road: !!b.road, poi: b.poi, name: b.name, danger: b.danger } : null;
+    },
+    /** 在当前区域找一格"能搜刮的 POI"（跳过实验室和沉没基地），并把人挪过去 */
+    gotoPoi: (opts: { zone?: string; skipWater?: boolean } = {}) => {
+      const s = worldState.ensureSaveWorld(L.S);
+      const w = worldState.worldOf(s.seed, s.region);
+      const cands = Object.keys(w.blocks).map(k => w.blocks[k])
+        .filter(b => b.poi && b.poi !== 'lab' && b.poi !== 'sunken' && b.biome !== 'water')
+        .filter(b => !opts.zone || b.zone === opts.zone)
+        .sort((a, b) => (Math.max(Math.abs(a.x - s.cur.x), Math.abs(a.y - s.cur.y))) - (Math.max(Math.abs(b.x - s.cur.x), Math.abs(b.y - s.cur.y))));
+      const best = cands[0];
+      if (!best) return null;
+      (window as any).V4World.teleport(best.x, best.y);
+      return { x: best.x, y: best.y, poi: best.poi, zone: best.zone, biome: best.biome };
     },
   };
   setTimeout(() => {

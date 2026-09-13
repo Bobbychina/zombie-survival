@@ -3,7 +3,7 @@
    其余探索页内容（今日行动 / 委托板 / 日历）保持原样。 */
 import { L } from '../main';
 import { POIS, BIOME_INFO } from './pois';
-import { blockAt, bkey, WORLD_W, WORLD_H } from './worldgen';
+import { blockAt, bkey, WORLD_W, WORLD_H, zoneLabel } from './worldgen';
 import {
   ensureSaveWorld, markVisited, planTrip, rollTravelEncounter, switchRegion, worldOf, zoneOfPoi,
   type SaveWorld, type Trip,
@@ -70,6 +70,8 @@ function cellHtml(b: Block, s: SaveWorld, frags: Record<string, 1>): string {
   if (isEvac) cls.push('evac');
   if (onPath) cls.push('path');
   if (isTarget) cls.push('target');
+  // M15：有路的格子加一个角标（真实城市的"沿街"比"整格都是路"常见得多）
+  if (b.revealed && b.road && b.biome !== 'water') cls.push(b.biome === 'highway' ? 'arterial' : 'road');
   let icon = '';
   if (b.revealed) {
     if (isHome) icon = '🏠';
@@ -81,8 +83,9 @@ function cellHtml(b: Block, s: SaveWorld, frags: Record<string, 1>): string {
     else if (b.visited && b.poi) icon = POIS[b.poi].icon;
   }
   const tip = !b.revealed ? '未探索区域'
-    : biomeName(b) + ' · 危险 ' + b.danger + (b.visited && b.poi ? ' · ' + POIS[b.poi].name : '')
-      + (b.biome === 'water' ? ' · 水域：可以游过去（2 行动力/格），水边能钓鱼' : '')
+    : (b.zone ? zoneLabel(b.zone) + ' · ' : '') + biomeName(b) + ' · 危险 ' + b.danger
+      + (b.visited && b.poi ? ' · ' + POIS[b.poi].name : '')
+      + (b.biome === 'water' ? ' · 水域：可以游过去（2 行动力/格），水边能钓鱼' : b.biome === 'highway' ? ' · 主干道：开车最快' : b.road ? ' · 沿街：开车比越野快' : '')
       + (b.poi === 'sunken' ? ' · 沉没基地：需要潜水（氧气瓶）' : '')
       + (isFrag ? ' · 疑似门禁卡碎片' : '')
       + (isEvac ? ' · 撤离点' : '')

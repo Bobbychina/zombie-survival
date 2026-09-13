@@ -70,11 +70,12 @@ export function worldOf(seed: string, region: string): WorldState {
   return cache.w;
 }
 
-/** 生成某个区域的 24×24 世界。地形/POI 完全沿用原来的生成器（只换 seed），
-    危险度按区域层级整体上浮（主城 tier=1 → 与旧版逐格一致，不动老档的平衡）。 */
+/** 生成某个区域的 24×24 世界：地形按该区域的主题（biomeBias）生成——
+ *  "东郊农场带"真的是连片农田、"江北工业区"真的是成片厂房（M15 起偏置真正参与生成）；
+ *  危险度按区域层级整体上浮（主城 tier=1 → 与旧版逐格一致，不动老档的平衡）。 */
 function buildRegionWorld(seed: string, region: string): WorldState {
-  const w = generateWorld(regionSeed(seed, region));
   const def = regionById(region);
+  const w = generateWorld(regionSeed(seed, region), { bias: def?.biomeBias, label: def?.name });
   const bump = def ? Math.max(0, def.tier - 1) : 0;
   if (bump > 0) {
     for (const k in w.blocks) {
@@ -304,7 +305,7 @@ export function findPath(w: WorldState, from: { x: number; y: number }, to: { x:
       const nk = key(nb);
       if (done[nk]) continue;
       let step = 1;
-      if (mode === 'car') step = nb.biome === 'highway' ? 0.55 : (dx && dy ? 1.35 : 1);
+      if (mode === 'car') step = nb.biome === 'highway' ? 0.55 : nb.road ? 0.8 : (dx && dy ? 1.35 : 1);
       // 水路很贵（每格相当于 3 格陆路），所以能绕就绕；只有确实更近时才会下水
       if (nb.biome === 'water') step = 3;
       const nc = cost[cur] + step;

@@ -342,6 +342,8 @@ function newState(){
     // 这里只留两个字段做存档容器；老档没有它们 → 由 v4 侧 ensure 补齐。
     contracts:{ day:1, board:[], active:[], done:0, failed:0, log:[] },
     story:{ chapter:0, done:[], log:[] },
+    // M15：已解锁的结局 id（跨周目累计，任务页「结局档案」显示）
+    endings:[],
     // M6：季节/天气/体温（env）与菜园地块（plots）——数值与公式全在 src/v4/env-core.ts
     env:{ weather:'clear', tomorrow:'cloudy', temp:50, rainToday:0, coldTier:0 },
     plots:[],
@@ -448,7 +450,10 @@ function sanitizeSave(d){
     chapter: Math.floor(num(sy.chapter, 0, 0, 6)),
     done: Array.isArray(sy.done) ? sy.done.filter(x => typeof x === 'string').slice(0, 60) : [],
     log: Array.isArray(sy.log) ? sy.log.slice(-40) : [],
+    choices: (sy.choices && typeof sy.choices === 'object') ? sy.choices : {},
   };
+  /* M15：结局档案。细粒度校验（只留真实存在的结局 id）在 v4 侧 ensureEndings 里做。 */
+  out.endings = Array.isArray(out.endings) ? out.endings.filter(x => typeof x === 'string').slice(0, 16) : [];
   const md = out.mods || {};
   out.mods = {}; for(const w in md){
     if(ITEMS[w] && ITEMS[w].t === 'wpn' && Array.isArray(md[w])) out.mods[w] = md[w].filter(x => MODS[x]).slice(0, 2);
@@ -1189,6 +1194,8 @@ function rescueEnding(){
     body:'<p class="muted">' + (radio ? '救援直升机把你带离了城市。' : '没人来接你，但你活下来了。') + '</p>' +
       recapHtml(sc),
     footer:'<button class="btn warn" onclick="enterEndless()">♾️ 继续活下去（无尽）</button><button class="btn" data-close>看看日志</button>' });
+  /* M15：救援结局（把消息播出去过 → 「频率上的名字」，否则「第 100 天」） */
+  if(window.__v4Ending) window.__v4Ending('rescue');
   render(); autosave();
 }
 function recapHtml(sc){
@@ -1814,6 +1821,8 @@ function gameOver(msg, opts){
     footer:'<button class="btn warn" onclick="restart()">🔄 重新开始</button>' +
       '<button class="btn" onclick="loadGame()">📂 读取存档</button>' +
       '<button class="btn ghost" data-close>看看日志</button>' });
+  /* M15：死亡结局（死在实验室 / 死在别处是两种不同的收束） */
+  if(window.__v4Ending) window.__v4Ending('dead');
   render();
 }
 function restart(){
@@ -2408,6 +2417,7 @@ function renderQuest(){
      前两块由 v4 渲染（src/v4/quests.ts），legacy 只负责把它们插进来。 */
   let h = window.__v4StoryHtml ? window.__v4StoryHtml() : '';
   h += window.__v4ContractsHtml ? window.__v4ContractsHtml() : '';
+  h += window.__v4EndingsHtml ? window.__v4EndingsHtml() : '';
   h += '<div class="sect-title">主线 · 寻找解药</div>';
   h += '<div class="card"><h3>' + s.n + ' <span class="sub">阶段 ' + (stage + 1) + '/7</span></h3>' +
     '<p style="font-size:13px;line-height:1.7">' + s.d + '</p>' +
@@ -2781,6 +2791,7 @@ function startFinalBattle(){
   if(S.quest.stage < 5){ log('❌ 你还没有实验室的坐标。','dim'); return; }
   closeAllModals();
   S.flags.usedGunFinal = false;
+  S.flags.finalTried = true;      // M15：进过实验室 → 死在这儿算「第六层以下」那个结局
   hr();
   log('☣️ 你撬开地下三层的气密门。方舟实验室的应急灯还亮着，像一口没闭上的眼睛。','danger');
   log('走廊尽头有东西在呼吸——不像人，也不像丧尸。','narrative');
@@ -2807,6 +2818,8 @@ function finalVictory(){
   if(!S.flags.usedGunFinal) award('a_naked');
   sfx('win');
   musicSting('win');
+  /* M15：多结局——取回解药是"通关"，但具体是哪一个结局由抉择决定（v4 endings） */
+  if(window.__v4Ending) window.__v4Ending('won');
   hr();
   log('🏆🏆🏆 解药到手 🏆🏆🏆', 'success');
   log('第 7 层的冷柜里整整齐齐码着四十支淡蓝色的液体。标签上写着一行小字：', 'narrative');
@@ -2831,6 +2844,8 @@ function enterEndless(){
   award('a_endless');
   log('♾️ 无尽模式开启：它们会一直进化下去。活得越久，越不像人。','system');
   toast('无尽模式','难度随天数继续上升。','bad');
+  /* M15：无尽结局（活过第 150 天会换成「活得比城市久」） */
+  if(window.__v4Ending) window.__v4Ending('endless');
   S.tab = 'explore'; render(); autosave();
 }
 

@@ -30,6 +30,12 @@ await sleep(4500)
 const checks = []
 const ok = (n, c, extra = '') => { checks.push([n, !!c]); console.log((c ? 'PASS ' : 'FAIL ') + n + (extra ? '  ' + extra : '')) }
 
+/* 干净起步：这个探针假定"新档、没车、在主城"。不清档的话，前一个探针留下的存档会让
+   "没车被拦 / 有车能跨"这几条失真（实测：跑完 M15 再跑它会 6/13，因为从"北岭+有车"开始）。 */
+await ev(`localStorage.removeItem('zombie_survival_save_v2'); sessionStorage.clear(); 1`)
+await send('Page.navigate', { url })
+await sleep(4200)
+
 // 打开探索页（区域面板在那一页）
 await ev(`(() => { const b = [...document.querySelectorAll('.tab, button')].find(e => /探索/.test(e.textContent||'')); if (b) b.click(); })()`)
 await sleep(900)

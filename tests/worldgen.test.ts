@@ -46,9 +46,13 @@ describe('大世界生成', () => {
   it('地图上有足够多的 POI（世界不是空的）', () => {
     const w = generateWorld('density');
     const withPoi = Object.values(w.blocks).filter(b => b.poi).length;
-    expect(withPoi).toBeGreaterThan(120);
+    /* M15 起 POI 按 zone 分配 + 稀有建筑有上限（真实城市不会八个医院），
+       所以数量从旧的 120+ 降到 ~100；这里改成"区间 + 种类"双条件：
+       数量够多，而且种类要丰富（比单一阈值更能反映"世界不空"）。 */
+    expect(withPoi).toBeGreaterThan(60);
+    expect(withPoi).toBeLessThan(200);
     const kinds = new Set(Object.values(w.blocks).map(b => b.poi).filter(Boolean));
-    expect(kinds.size).toBeGreaterThanOrEqual(12);
+    expect(kinds.size).toBeGreaterThanOrEqual(16);
   });
 
   it('迷雾：到过一个区块会点亮周围 3×3', () => {

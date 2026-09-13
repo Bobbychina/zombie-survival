@@ -120,7 +120,7 @@
     "hasBoardTitle": true,
     "hasStoryTitle": true,
     "hasAccept": 3,
-    "budget": 21,
+    "budget": 20,
     "day": 1,
     "region": "ember",
     "chapter": 0,
@@ -199,9 +199,9 @@
     "day": 6,
     "contractsDay": 6,
     "hasCar": false,
-    "farTitle": "江北的托运",
-    "farRegion": "jiangbei",
-    "farMetric": "rzone:jiangbei:*",
+    "farTitle": "跨江的桥面",
+    "farRegion": "kuajiang",
+    "farMetric": "rzone:kuajiang:*",
     "boardKeys": [
       "story:6",
       "far:6",
@@ -228,7 +228,7 @@
     "done": 2,
     "rzones": {
       "dongjiao": {
-        "lumber": 2
+        "appliance": 2
       }
     },
     "visits": {
@@ -250,8 +250,8 @@
     "board": 3,
     "log": [
       "第 6 天完成委托：东郊的一趟",
-      "第 12 天接了委托：医院里的线索",
-      "第 17 天委托过期：医院里的线索"
+      "第 12 天接了委托：九分局的枪柜",
+      "第 17 天委托过期：九分局的枪柜"
     ]
   },
   "misc": {
@@ -263,7 +263,7 @@
     "sanChapter": 1,
     "sanZoneCntKeys": [
       "hospital",
-      "lumber",
+      "appliance",
       "pharmacy"
     ],
     "poiKeySurvives": true

@@ -1,0 +1,106 @@
+{
+  "checks": [
+    [
+      "大地图渲染出 24×24 格子（576）",
+      true
+    ],
+    [
+      "地图上有多种地表（≥4 种，不是一种刷满）",
+      true
+    ],
+    [
+      "同用途的格子连成片（相邻同类占比 ≥ 0.55；随机打散约 0.15）",
+      true
+    ],
+    [
+      "路网画在地图上（主干道/沿街角标）",
+      true
+    ],
+    [
+      "8 个结局全部可达（判定矩阵与单测一致）",
+      true
+    ],
+    [
+      "同一类收束因抉择不同而不同（独占 vs 分享）",
+      true
+    ],
+    [
+      "死在实验室 ≠ 死在荒野",
+      true
+    ],
+    [
+      "结局记进存档（8/8 解锁）",
+      true
+    ],
+    [
+      "任务页有「结局档案」，8 格全解锁",
+      true
+    ],
+    [
+      "结局写进存档并过 sanitizeSave",
+      true
+    ],
+    [
+      "全程无 console 报错 / 未捕获异常",
+      true
+    ]
+  ],
+  "errs": [],
+  "zone": {
+    "cells": 576,
+    "sameRatio": 0.63,
+    "tally": {
+      "ruins": 41,
+      "city": 198,
+      "suburb": 23,
+      "highway": 64,
+      "farm": 73,
+      "forest": 86,
+      "water": 78,
+      "industrial": 9,
+      "military": 4
+    },
+    "road": 6
+  },
+  "endings": {
+    "ids": [
+      "alone",
+      "dawn",
+      "rescue",
+      "keeper",
+      "ash",
+      "martyr",
+      "endless",
+      "wanderer"
+    ],
+    "titles": {
+      "keepWon": "一个人的黎明",
+      "shareWon": "黎明",
+      "rescueKeep": "第 100 天",
+      "rescueShare": "频率上的名字",
+      "ash": "余烬",
+      "martyr": "第六层以下",
+      "endless": "无尽",
+      "wanderer": "活得比城市久"
+    },
+    "list": [
+      "martyr",
+      "ash",
+      "dawn",
+      "alone",
+      "keeper",
+      "rescue",
+      "wanderer",
+      "endless"
+    ],
+    "count": 8,
+    "logTail": 3
+  },
+  "archive": {
+    "boxes": 8,
+    "unlocked": 8,
+    "title": "结局档案",
+    "saveEndings": 8,
+    "sanEndings": 8
+  }
+}

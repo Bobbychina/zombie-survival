@@ -182,7 +182,9 @@ describe('M11 特殊机制', () => {
     let g2 = 0;
     while (b2.foes[0].hp > 0 && g2++ < 20) { if (!advance(b2, p2, 10)) break; playerAct(b2, p2, 'molotov', 0); }   // fire → 不炸
     expect(b2.foes[0].hp).toBe(0);
-    expect(p2.hp).toBe(100);
+    /* 爆炸一下是 max(4, 55% 最大生命) = 22 点；被打一下是 1 点（atk 0 也会保底 1）。
+       所以用"掉血 ≤2"来判定"没炸"，比精确等 100 稳（投掷 miss 时它会挠你一下）。 */
+    expect(p2.hp).toBeGreaterThan(96);
     expect(b2.log.map(e => (e as { text?: string }).text ?? '').join(' ')).toContain('没来得及炸');
   });
 
