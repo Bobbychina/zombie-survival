@@ -120,7 +120,7 @@
     "hasBoardTitle": true,
     "hasStoryTitle": true,
     "hasAccept": 3,
-    "budget": 22,
+    "budget": 19,
     "day": 1,
     "region": "r5-6",
     "chapter": 0,
@@ -199,9 +199,9 @@
     "day": 6,
     "contractsDay": 6,
     "hasCar": false,
-    "farTitle": "居民区的清单",
-    "farRegion": "r6-5",
-    "farMetric": "rzone:r6-5:*",
+    "farTitle": "山里的木料",
+    "farRegion": "r2-3",
+    "farMetric": "rzone:r2-3:*",
     "boardKeys": [
       "story:6",
       "far:6",
@@ -212,32 +212,33 @@
   },
   "farDone": {
     "okAccept": true,
-    "far": "居民区的清单",
-    "farMetric": "rzone:r4-5:*",
-    "farNeed": 2,
-    "region": "r4-5",
-    "regionAfter": "r4-5",
+    "far": "工业区的托运",
+    "farMetric": "rzone:r2-4:*",
+    "farNeed": 3,
+    "region": "r2-4",
+    "regionAfter": "r2-4",
     "activeMid": 1,
     "justThereProg": 0,
     "oneProg": 1,
     "searchReturns": [
+      null,
       null,
       null
     ],
     "activeAfter": 0,
     "done": 2,
     "rzones": {
-      "r4-5": {
-        "depot": 2
+      "r2-4": {
+        "hardware": 3
       }
     },
     "visits": {
       "r5-6": 1,
-      "r4-5": 1
+      "r2-4": 1
     },
     "log": [
-      "第 6 天接了委托：居民区的清单",
-      "第 6 天完成委托：居民区的清单"
+      "第 6 天接了委托：工业区的托运",
+      "第 6 天完成委托：工业区的托运"
     ]
   },
   "day": {
@@ -249,7 +250,7 @@
     "active": 0,
     "board": 3,
     "log": [
-      "第 6 天完成委托：居民区的清单",
+      "第 6 天完成委托：工业区的托运",
       "第 12 天接了委托：医院里的线索",
       "第 17 天委托过期：医院里的线索"
     ]
@@ -263,7 +264,7 @@
     "sanChapter": 1,
     "sanZoneCntKeys": [
       "hospital",
-      "depot",
+      "hardware",
       "pharmacy"
     ],
     "poiKeySurvives": true

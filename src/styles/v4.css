@@ -160,6 +160,11 @@
 .v4world .rcell2.sel{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
 .v4world .rcell2.onpath{box-shadow:inset 0 0 0 2px rgba(92,200,255,.75)}
 .v4world .rcell2.none{background:#0b0e12;border-style:dashed;opacity:.2;cursor:default}
+/* M19：本地地图的危险度图层（越深越红）。格子用 dg1..dg5 上色，迷雾格照旧压暗 */
+.wcell.dlayer.dg1{background:#78c98a}.wcell.dlayer.dg2{background:#c6d06a}.wcell.dlayer.dg3{background:#e0b45c}
+.wcell.dlayer.dg4{background:#e08a5c}.wcell.dlayer.dg5{background:#ef6f6f}
+.wcell.dlayer.fog{background:#141a22}
+.sw.dg1{background:#78c98a}.sw.dg2{background:#c6d06a}.sw.dg3{background:#e0b45c}.sw.dg4{background:#e08a5c}.sw.dg5{background:#ef6f6f}
 /* 危险度：数字与底色都用同一套梯度色（绿→黄→红），角落与中心一眼分得开 */
 .v4world .rnum.d1{color:#78c98a}.v4world .rnum.d2{color:#c6d06a}.v4world .rnum.d3{color:#e0b45c}
 .v4world .rnum.d4{color:#e08a5c}.v4world .rnum.d5{color:#ef6f6f}

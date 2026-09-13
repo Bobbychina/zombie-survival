@@ -124,8 +124,7 @@ const hurt = JSON.parse(await ev(`(() => {
 console.log('  危险区: ' + JSON.stringify(hurt))
 ok('地图上存在"危险 4~5 的工业区"（毒气泄漏那类事件有地方发生）', !!hurt.target, hurt.target || 'none')
 
-/* ── 4) 详情面板会预告"这一带的状况" ── */
-await ev(`(() => { const b = [...document.querySelectorAll('#v4world .wmtab')].find(x => /大区/.test(x.textContent||'')); if (b && !b.className.includes('on')) b.click(); return 1; })()`)
+/* ── 4) 详情面板会预告"这一带的状况" ── */await ev(`(() => { const b = [...document.querySelectorAll('#v4world .wmtab')].find(x => /大区/.test(x.textContent||'')); if (b && !b.className.includes('on')) b.click(); return 1; })()`)
 await sleep(600)
 const detail = await ev(`(() => {
   const id = V4World.meta().regions.find(r => r.type === 'industry').id;

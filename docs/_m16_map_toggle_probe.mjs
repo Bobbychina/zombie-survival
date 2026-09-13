@@ -47,7 +47,9 @@ const probeState = `(() => {
   const card = document.querySelector('#v4world') || document.body;
   const cells = document.querySelectorAll('#v4world .wcell').length;
   const rcells = document.querySelectorAll('#v4world .rcell2').length;
-  const tabs = [...document.querySelectorAll('#v4world .wmtab')].map(b => ({ t: b.textContent.trim(), on: b.className.includes('on') }));
+  /* M19 起面板里有两组 segmented control：地图视图（.wmtabs）和上色图层（.wmtabs.rlayers），
+     必须只取视图那一组，不然"地貌/危险度"两个按钮也会被算成地图标签 */
+  const tabs = [...document.querySelectorAll('#v4world .wmtabs:not(.rlayers) .wmtab')].map(b => ({ t: b.textContent.trim(), on: b.className.includes('on') }));
   const text = (card.textContent || '');
   return JSON.stringify({
     cells, rcells, tabs,

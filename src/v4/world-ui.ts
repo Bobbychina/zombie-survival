@@ -54,7 +54,7 @@ const isNight = () => {
 
 /* ── 面板渲染 ── */
 
-function cellHtml(b: Block, s: SaveWorld, frags: Record<string, 1>): string {
+function cellHtml(b: Block, s: SaveWorld, frags: Record<string, 1>, dangerMode = false): string {
   const w = worldOf(s.seed, s.region);
   const cur = b.x === s.cur.x && b.y === s.cur.y;
   const isHome = bkey(b.x, b.y) === bkey(w.home.x, w.home.y);
@@ -64,7 +64,10 @@ function cellHtml(b: Block, s: SaveWorld, frags: Record<string, 1>): string {
   const isEvac = ev.open && ev.site.x === b.x && ev.site.y === b.y;
   const onPath = !!preview && preview.path.includes(bkey(b.x, b.y));
   const isTarget = !!preview && preview.x === b.x && preview.y === b.y;
-  const cls = ['wcell', 'b-' + b.biome];
+  /* M19：危险度图层——格子底色换成"越深越红"的梯度（贴着安全屋是绿的），
+     地貌色让位；其余状态（迷雾/当前格/路线/角标）照旧。 */
+  const cls = ['wcell', dangerMode ? 'dlayer' : 'b-' + b.biome];
+  if (dangerMode && b.revealed) cls.push('dg' + b.danger);
   if (!b.revealed) cls.push('fog');
   else cls.push('seen');
   if (cur) cls.push('cur');
@@ -330,20 +333,26 @@ export function renderMapPanel(): string {
   h += '<div class="whover" id="v4-hover"><span class="hint">鼠标移到格子上（手机点一下）：这里显示那块地的名字、危险、距离和里面有什么。</span></div>';
   h += '</div>';
 
-  h += '<div class="wmapwrap"><div class="wgrid" style="grid-template-columns:repeat(' + WORLD_W + ',1fr)">';
+  /* M19：本地地图也能切"危险度上色"——"越深越红"这件事，一眼就该看得出来 */
+  const localDanger = regionLayer === 'danger';
+  h += layerTabs();
+  h += '<div class="wmapwrap"><div class="wgrid' + (localDanger ? ' rl-danger' : '') + '" style="grid-template-columns:repeat(' + WORLD_W + ',1fr)">';
   for (let y = 0; y < WORLD_H; y++) for (let x = 0; x < WORLD_W; x++) {
     const bb = blockAt(w, x, y);
-    if (bb) h += cellHtml(bb, s, frags);
+    if (bb) h += cellHtml(bb, s, frags, localDanger);
   }
   h += '</div></div>';
   h += '<details class="wlegend-box"><summary>图例与说明</summary><div class="wlegend">' +
-    (['city', 'suburb', 'industrial', 'forest', 'farm', 'ruins', 'military', 'highway', 'water'] as const)
-      .map(k => '<span class="lg"><i class="sw b-' + k + '"></i>' + BIOME_INFO[k].name + '</span>').join('') +
+    (localDanger
+      ? '<span class="lg">危险度上色：</span>' + [1, 2, 3, 4, 5].map(t =>
+          '<span class="lg"><i class="sw dg' + t + '"></i>危险 ' + t + ' · ' + dangerLabel(t) + '</span>').join('')
+      : (['city', 'suburb', 'industrial', 'forest', 'farm', 'ruins', 'military', 'highway', 'water'] as const)
+        .map(k => '<span class="lg"><i class="sw b-' + k + '"></i>' + BIOME_INFO[k].name + '</span>').join('')) +
     '<span class="lg"><i class="sw ic">🏠</i>安全屋</span><span class="lg"><i class="sw ic">☣️</i>方舟实验室</span>' +
     '<span class="lg"><i class="sw ic">🔑</i>门禁卡碎片</span><span class="lg"><i class="sw ic">📡</i>撤离点</span>' +
     '<span class="lg"><i class="sw ic">🌊</i>水域（可游/可钓）</span><span class="lg"><i class="sw ic">🤿</i>沉没基地（要潜水）</span>' +
     '<span class="lg"><i class="sw cur-sw"></i>你所在区块</span><span class="lg"><i class="sw path-sw"></i>预览路线</span>' +
-    '<span class="hint">只有点亮的格子能去。走路 1 行动力/区块（骨折 +1/3），开车 1 行动力/4 区块 + 1 油/6 区块；夜里更容易撞上东西。碎片点与撤离点要在营地买情报、或者架好无线电之后才会出现在图上。</span>' +
+    '<span class="hint">只有点亮的格子能去。**越往深处越危险**（安全屋一圈是 1，最外圈是 5），好东西也在深处：军械、监狱、大型商超、物流园都往外圈跑，日用品（超市/药房/加油站/汽修）就开在家附近。走路 1 行动力/区块（骨折 +1/3），开车 1 行动力/4 区块 + 1 油/6 区块；夜里更容易撞上东西。</span>' +
     '</div></details>';
   return h;
 }
@@ -744,10 +753,13 @@ export const V4World = {
   /** M12 只读快照：探针/自检用（不提供任何写能力；区域、载具、进度计数都在这里） */
   snapshot() {
     const s = sw();
+    const w = worldOf(s.seed, s.region);
     return {
       seed: s.seed,
       region: s.region,
       cur: { x: s.cur.x, y: s.cur.y },
+      home: { x: w.home.x, y: w.home.y },          // M19：危险度是"离家的深度"，探针要拿它算环
+      lab: { x: w.lab.x, y: w.lab.y },
       seenRegions: Object.keys(s.seenRegions),
       frozenRegions: Object.keys(s.regions),
       visitedKeys: Object.keys(s.visited).length,

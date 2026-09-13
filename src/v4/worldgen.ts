@@ -382,17 +382,49 @@ export function generateWorld(seed: string, opts: GenOpts = {}): WorldState {
     }
   }
 
-  /* ── 4) 危险度：人多的地方丧尸多（核心区最危险），工业/军事次之 ── */
+  /* ── 4) 危险度：**越深越危险**（离安全屋越远越危险，用户点名的规则） ──
+     M19 重做：老写法是"1 + 离市中心的距离/3 + 各种 zone 加成"，于是危险度既不跟"家的距离"挂钩、
+     又会在 zone 交界处跳台阶（CBD +2 紧挨着郊区 +0，同一张图上会出现 1 挨着 4）。
+     现在：
+       ① 基准 = 离**安全屋**的切比雪夫距离按最远距离归一化后铺满 1~5（家与紧邻一圈 = 1，最外圈 = 5）；
+       ② 用一张低频噪声给同一圈内加"±1 的局部差异"（不然 24 环全是同心圆，太假）；
+       ③ 再跑几轮**梯度钳制**：任何一格的危险度必须在邻居的 [min-1, max+1] 之内——
+          这一步消掉所有断崖（"越深越难"要能一路走过去，不能是墙）；
+       ④ zone 只做很小的调味（军事 +? 不加，改为靠"深处的军事 POI 更凶"来体现），避免又出现跳变。
+     不变量（单测钉住）：家的 3×3 是 1；环平均值随距离单调不减；相邻差 ≤1；最外圈 ≥4；1~5 都出现过。 */
+  const maxDist = Math.max(home.x, home.y, WORLD_W - 1 - home.x, WORLD_H - 1 - home.y);
+  const nDanger = createNoise2D(seedrandom(seed + ':danger'));
+  const d2home = (b: Block) => Math.max(Math.abs(b.x - home.x), Math.abs(b.y - home.y));
   for (const r of raws) {
     const b = r.b;
-    if (b.zone === 'water') { b.danger = 3; continue; }
-    let d = 1 + Math.floor(r.dc / 3);
-    if (b.zone === 'cbd') d += 2;
-    else if (b.zone === 'residential') d += 1;
-    else if (b.zone === 'industry' || b.zone === 'military') d += 1;
-    else if (b.zone === 'ruins') d += 1;
-    b.danger = Math.max(1, Math.min(5, d));
+    const d = d2home(b);
+    const base = d <= 1 ? 1 : 1 + Math.round((d / maxDist) * 4);
+    /* 局部扰动只加在"中段"：最外两圈保持一整片红（深处就该是一片死地），
+       家门口那圈也不动（安全区是硬的）。这样既有不规则的城市形状，又不会在红区里撒黄点。 */
+    const n = nDanger(b.x * 0.22, b.y * 0.22);
+    const wobble = (d >= maxDist - 1 || d <= 1) ? 0 : n > 0.42 ? 1 : n < -0.42 ? -1 : 0;
+    if (b.zone === 'water') { b.danger = Math.max(2, Math.min(5, base)); continue; }   // 水里不安生
+    b.danger = Math.max(1, Math.min(5, base + wobble));
   }
+  /* 梯度钳制：任何一格必须落在邻居的 ±1 之内（**两侧都管**：比邻居高一档的要压下来，
+     比邻居低一档的要抬上去——只压不抬会留下"实验室 5 挨着 3"这种台阶）。 */
+  for (let pass = 0; pass < 6; pass++) {
+    let changed = 0;
+    for (const r of raws) {
+      const b = r.b;
+      let lo = 5, hi = 1;
+      for (const [dx, dy] of NEIGHBORS) {
+        const nb = at(b.x + dx, b.y + dy);
+        if (!nb) continue;
+        lo = Math.min(lo, nb.b.danger); hi = Math.max(hi, nb.b.danger);
+      }
+      const clamped = Math.max(hi - 1, Math.min(lo + 1, b.danger));
+      if (clamped !== b.danger) { b.danger = clamped; changed++; }
+    }
+    if (!changed) break;
+  }
+  /* 家与紧邻一圈永远是安全区：钳制可能把它拱起来，最后再按回来 */
+  for (const r of raws) if (d2home(r.b) <= 1) r.b.danger = 1;
 
   /* ── 5) 保底修复：每种地表至少 N 格 ──
      纯噪声 + 距离衰减偶尔会刷出"整张图只有工业"这种没法玩的图（试玩反馈过：
@@ -425,11 +457,21 @@ export function generateWorld(seed: string, opts: GenOpts = {}): WorldState {
     }
   }
 
-  /* ── 6) 撒 POI：按 zone 的偏好加权、沿街的概率更高、稀有建筑有上限 ── */
+  /* ── 6) 撒 POI：**建筑密度用噪声场 + 深度偏置**（M19，用户让我自己定的部分）──
+     思路（"像真城市，又让深度有意义"）：
+       ① 密度场 = 低频噪声（成片的城区/村镇，而不是均匀撒点）× 距离衰减（越靠外越稀）
+          × 沿街加成（现实里店铺都在路边）——这一条决定"哪里有房子"；
+       ② **深度偏置**决定"哪里有什么房子"：日用品（超市/药房/加油站/汽修）往家附近靠，
+          高价值硬货（军械/监狱/大型商超/物流园/地下掩体）往深处靠 ——
+          于是"越深越难"不只是难度，也是**收益**：深处才有好货。
+       ③ 保底：修车点/医院必须在家附近能找到（主线与载具都靠它），稀有建筑有数量上限。 */
   const blocks: Record<string, Block> = {};
   const poiCount: Record<string, number> = {};
   const roadAdj = (r: Raw) => NEIGHBORS.some(([dx, dy]) => at(r.b.x + dx, r.b.y + dy)?.b.road);
-  const d2home = (b: Block) => Math.max(Math.abs(b.x - home.x), Math.abs(b.y - home.y));
+  const nDens = createNoise2D(seedrandom(seed + ':density'));
+  /* 高价值（深处才划算）与日用品（近处就该有）——名单按玩法价值分，不按稀有度 */
+  const DEEP_LOOT = new Set(['military', 'prison', 'megamart', 'mall', 'bunker', 'depot', 'buildmart', 'warehouse', 'waterworks', 'radio', 'outpost']);
+  const DAILY = new Set(['market', 'pharmacy', 'gas', 'garage', 'hospital', 'clinic', 'school', 'farm', 'camp']);
   for (const r of raws) {
     const b = r.b;
     b.name = blockName(b.x, b.y, b.zone ?? 'open');
@@ -452,11 +494,20 @@ export function generateWorld(seed: string, opts: GenOpts = {}): WorldState {
       if (id === 'gas' || id === 'garage') w *= b.biome === ('highway' as Biome) ? 3 : 1.2;
       if (MODERN_POIS.has(id)) w *= 1.5;
       if (roadAdj(r)) w *= 2.2;                               // 商业沿街：真实城市里店铺都在路边
+      /* M19 深度偏置：硬货在深处（最多 ×2.6），日用品在近处（最多 ×2.6） */
+      const deep = d / maxDist;
+      if (DEEP_LOOT.has(id)) w *= 0.7 + deep * 1.9;
+      if (DAILY.has(id)) w *= 1.4 - deep * 0.9;
       if (w > 0) pool.push({ id, w });
     }
     if (!pool.length) continue;
     const nearRoad = roadAdj(r);
-    const chance = Math.min(0.85, (b.zone === 'cbd' ? 0.72 : b.zone === 'residential' ? 0.55 : 0.4) + (nearRoad ? 0.2 : 0) + d * 0.012);
+    /* 建筑密度：噪声成片 + 距离衰减 + 沿街 + zone 基数。
+       老写法只有 zone 基数 + 沿街，所以"城郊"和"市中心"的建筑密度几乎一样，地图上到处都是房子。 */
+    const densNoise = nDens(b.x * 0.11, b.y * 0.11) * 0.32;
+    const zoneBase = b.zone === 'cbd' ? 0.62 : b.zone === 'residential' ? 0.46 : b.zone === 'suburb' ? 0.30 : 0.18;
+    const chance = Math.max(0.04, Math.min(0.86,
+      zoneBase + densNoise - (d / maxDist) * 0.22 + (nearRoad ? 0.18 : 0) + (b.zone === 'industry' ? 0.06 : 0)));
     if (rng() > chance) continue;
     const total = pool.reduce((a, x) => a + x.w, 0);
     let rr = rng() * total, chosen = pool[pool.length - 1].id;
@@ -493,6 +544,34 @@ export function generateWorld(seed: string, opts: GenOpts = {}): WorldState {
   lb.zone = 'industry';
   lb.road = true;                                   // 实验室通公路（不然车开不进去）
   lb.name = blockName(lab.x, lab.y, 'industry');
+
+  /* ── 9) 收尾不变量（M19）：后面的步骤（POI 危险 +1、实验室 5、沉没基地 ≥4）会破坏前面的平滑，
+     所以"越深越难"的两条硬规则必须**最后**再压一遍：
+       · 相邻差 ≤1（梯度钳制）——"越深越难"要能一路走过去；
+       · 家的 3×3 = 1（安全区）——玩家总得有个能喘气的地方。
+     两者互相影响（钳制会把安全区边上抬起来），所以各跑几轮直到稳定。 */
+  for (let pass = 0; pass < 8; pass++) {
+    let changed = 0;
+    /* 顺序很关键：先按安全区，再钳制梯度。反过来（先钳制后按安全区）会留下
+       "安全圈边上还挂着 3"的台阶——最后一次操作必须是钳制，它不会破坏安全区
+       （安全圈外的邻居被钳到 ≤2，所以圈内那 1 站得住）。 */
+    for (const r of raws) if (d2home(r.b) <= 1 && r.b.danger !== 1) { r.b.danger = 1; changed++; }
+    /* 第二圈封在 2：不然"外面那一圈"会顶到 3，梯度钳制又会把安全圈抬起来，
+       两条不变量互相打架（实测过：安全圈边上挂着 3，对角那格被抬成 2）。 */
+    for (const r of raws) if (d2home(r.b) === 2 && r.b.danger > 2) { r.b.danger = 2; changed++; }
+    for (const r of raws) {
+      const b = r.b;
+      let lo = 5, hi = 1;
+      for (const [dx, dy] of NEIGHBORS) {
+        const nb = at(b.x + dx, b.y + dy);
+        if (!nb) continue;
+        lo = Math.min(lo, nb.b.danger); hi = Math.max(hi, nb.b.danger);
+      }
+      const clamped = Math.max(hi - 1, Math.min(lo + 1, b.danger));
+      if (clamped !== b.danger) { b.danger = clamped; changed++; }
+    }
+    if (!changed) break;
+  }
 
   return { seed, w: WORLD_W, h: WORLD_H, home, lab, blocks };
 }
