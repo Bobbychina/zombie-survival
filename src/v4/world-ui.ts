@@ -15,6 +15,8 @@ import {
 import { poiLeft, searchPoi } from './search';
 import { lastRegionEvent, onEnterRegion } from './region-events';
 import { regionHazardTitles } from './region-events-core';
+import { ghostAt, placeGhosts, raidGhost } from './ghosts';
+import { ghostFoes } from './ghosts-core';
 import { pendingFragKeys, takeFragment } from './fragments';
 import { apMaxOf, isBloodMoonDay, rest, restOptions, tierAt, syncApMax } from './night';
 import { ensureEvac, evacAvailable, fireFlare } from './evac';
@@ -24,7 +26,7 @@ import { farmSummary, cropList, harvest, plant, plotSlots } from './farm';
 import { chopInfo, forageInfo, salvageInfo } from './gather';
 import { diveInfo, fishInfo, intakeInfo, canSwim, pondSummary, swimStep, waterNearby, fish as doFish, dive as doDive } from './water';
 import { accountSummary, currentUser as accountUser } from './account-ui';
-import type { Block } from '../types';
+import type { Block, WorldState } from '../types';
 
 /** 面板用的薄包装：默认参数与图标都在 water.ts 里 */
 const swimCan = () => waterNearby().any;
@@ -41,7 +43,17 @@ const poiOf = (b: Block | null) => (b && b.poi ? POIS[b.poi] : null);
 const homeKey = (sw: SaveWorld) => { const w = worldOf(sw.seed, sw.region); return bkey(w.home.x, w.home.y); };
 
 function sw(): SaveWorld { return ensureSaveWorld(L.S); }
-function curBlock(): Block { const s = sw(); const w = worldOf(s.seed, s.region); return blockAt(w, s.cur.x, s.cur.y) as Block; }
+function curBlock(): Block { const s = sw(); const w = localWorld(s); return blockAt(w, s.cur.x, s.cur.y) as Block; }
+
+/** M20：把导入的幽灵据点钉到当前世界上（幂等，每个世界只钉一次） */
+const ghostPlaced: Record<string, true> = {};
+function withGhosts(w: WorldState): WorldState {
+  const key = w.seed;
+  if (!ghostPlaced[key]) { ghostPlaced[key] = true; try { placeGhosts(w); } catch (e) { console.warn('[v4] 幽灵据点放置失败', e); } }
+  return w;
+}
+/** 取"当前区域那张图"（带上幽灵据点） */
+const localWorld = (s: SaveWorld): WorldState => withGhosts(worldOf(s.seed, s.region));
 
 /** 骨折：走路要额外花行动力（legacy 的伤口系统里叫 fracture） */
 function fractured(): boolean {
@@ -81,6 +93,7 @@ function cellHtml(b: Block, s: SaveWorld, frags: Record<string, 1>, dangerMode =
   let icon = '';
   if (b.revealed) {
     if (isHome) icon = '🏠';
+    else if (b.poi === 'ghost') icon = '👻';          // M20：幽灵据点一眼可见（不要求已到访）
     else if (isEvac) icon = '📡';
     else if (labKnown) icon = '☣️';
     else if (isFrag) icon = '🔑';
@@ -284,7 +297,7 @@ export function renderRegionPanel(s: SaveWorld): string {
 }
 
 export function renderMapPanel(): string {
-  const s = sw(), w = worldOf(s.seed, s.region), b = curBlock();
+  const s = sw(), w = localWorld(s), b = curBlock();
   const poi = poiOf(b);
   const home = bkey(b.x, b.y) === homeKey(s);
   const dLab = Math.max(Math.abs(b.x - w.lab.x), Math.abs(b.y - w.lab.y));
@@ -868,6 +881,18 @@ export const V4World = {
 
   search(deep: number) {
     const b = curBlock();
+    /* M20：幽灵据点不是普通 POI——踩上去就是一场守卫战，赢了才结算战利品。
+       （不打就不给东西，所以这里先拦截，不走 searchPoi 的掉落表。） */
+    const gh = ghostAt(localWorld(sw()), b.x, b.y);
+    if (gh) {
+      L.log('👻 ' + gh.spec.owner + ' 的幽灵据点：' + gh.spec.tag + '（威胁 ' + gh.spec.threat + '）', 'lore');
+      L.toast('遭遇幽灵守卫', gh.spec.owner + ' · 威胁 ' + gh.spec.threat, 'bad');
+      L.startCombat(ghostFoes(gh.spec), {
+        title: gh.spec.owner + ' 的幽灵据点',
+        onWin: () => raidGhost(localWorld(sw()), b),
+      });
+      return;
+    }
     const got = takeFragment(b);          // 碎片先结算，再走搜刮（避免战斗中拿不到）
     searchPoi(b, sw(), !!deep);
     if (got) L.render();

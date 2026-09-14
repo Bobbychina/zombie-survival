@@ -35,3 +35,4 @@ docs/_commits.json
 docs/_tree*.json
 _*.log
 docs/_*_profile/
+docs/_*_profile*/

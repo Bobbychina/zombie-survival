@@ -18,7 +18,18 @@ export interface PoiDef {
 
 const P = (d: PoiDef) => d;
 
+/* M20：幽灵据点——不是生成器刷出来的，是玩家导入"幽灵码"后由 ghosts.ts 钉到地图上的。
+   放在 POIS 表里是为了让地图渲染 / tooltip / 图标 / 判定文案全都能复用它。 */
+export const GHOST_POI_ID = 'ghost';
+const GHOST_POI: PoiDef = P({
+  id: 'ghost', name: '幽灵据点', icon: '👻',
+  biomes: ['city', 'suburb', 'industrial', 'ruins', 'military', 'farm'],
+  danger: 1, searches: 1, loot: {}, enemies: ['walker', 'runner'],
+  desc: '别人的安全屋，现在只剩一个抱着枪的影子。打赢能拿走他的仓库——那是他分享出来的快照。',
+});
+
 export const POIS: Record<string, PoiDef> = {
+  [GHOST_POI_ID]: GHOST_POI,
   market: P({ id:'market', name:'超市', icon:'🛒', biomes:['city','suburb'], danger:0, searches:6,
     loot:{ can:.4, water:.3, biscuit:.3, cola:.2, dirty:.12, choco:.12 }, enemies:['walker','runner','crawler'],
     feat:'food', desc:'货架被扫过一遍，但仓库深处还有东西。' }),

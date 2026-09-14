@@ -484,6 +484,7 @@ export function generateWorld(seed: string, opts: GenOpts = {}): WorldState {
       const p = POIS[id];
       if (!p.biomes.includes(b.biome)) continue;              // 硬约束：建筑必须长在合适的地表上
       if (id === 'lab') continue;                             // 实验室单独强放
+      if (id === 'ghost') continue;                           // M20：幽灵据点只由"幽灵码"注入，生成器不许刷
       if ((poiCount[id] ?? 0) >= (POI_CAP[id] ?? POI_CAP_DEFAULT)) continue;
       let w = 1;
       const idx = pref.indexOf(id);

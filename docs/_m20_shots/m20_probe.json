@@ -1,0 +1,135 @@
+{
+  "checks": [
+    [
+      "DEV 钩子可用（?dev=ready）",
+      true
+    ],
+    [
+      "「世界」面板能打开并列出当前世界（名字/种子/预设/天数）",
+      true
+    ],
+    [
+      "老档被自动认领成第 1 个世界（种子取自现有存档）",
+      true
+    ],
+    [
+      "面板里能拿到自己的挑战码（ZS1-…）",
+      true
+    ],
+    [
+      "挑战码能解回同一个种子；改一位就被拒（校验和）",
+      true
+    ],
+    [
+      "粘贴挑战码能建出同种子的新世界（含开局预设），并切过去",
+      true
+    ],
+    [
+      "幽灵码能导入（合法接受 / 重复被拒 / 改一位被拒）",
+      true
+    ],
+    [
+      "导入的幽灵据点真的长在本地地图上（👻 标记 + tooltip 写明是谁的据点）",
+      true
+    ],
+    [
+      "打赢幽灵据点拿到材料（不超过对方快照、不超过 60）",
+      true
+    ],
+    [
+      "守卫按威胁度生成（3 档 → 6 只以上）",
+      true
+    ],
+    [
+      "打完标记为已清（同一个幽灵不会被刷第二遍）",
+      true
+    ],
+    [
+      "死亡会记进本机台账，并聚合成\"哪类地貌在吃人\"",
+      true
+    ],
+    [
+      "导出的是匿名 JSON（无账号/存档字段，击杀与材料分桶）",
+      true
+    ],
+    [
+      "面板三块齐全（世界 / 幽灵据点 / 开发者统计），统计里带结论",
+      true
+    ],
+    [
+      "改名/删除世界正常，且当前世界的槽位不动",
+      true
+    ],
+    [
+      "全程无 console 报错 / 未捕获异常",
+      true
+    ]
+  ],
+  "errs": [],
+  "panel": {
+    "has": true,
+    "text": "🌍 世界 1 个当前：余烬世界 · 种子 ember-01 · 标准开局 · 第 1 天▶ 余烬世界第 1 天 · 种子 ember-01 · 还没死过进行中改名＋ 新建世界复制我的挑战码粘贴挑战码挑战码 = 种子 + 开局预设（标准开局 / 清贫开局 / 地狱开局）。发给朋友，他粘进去就能开一张跟你一模一样的地图。",
+    "reg": {
+      "v": 1,
+      "activeId": "wmu0lyb8kln",
+      "worlds": [
+        {
+          "id": "wmu0lyb8kln",
+          "name": "余烬世界",
+          "seed": "ember-01",
+          "preset": "normal",
+          "createdAt": 1789351952996,
+          "lastPlayed": 1789351952996,
+          "day": 1,
+          "deaths": 0
+        }
+      ]
+    },
+    "code": "ZS1-eyJzIjoiZW1iZXItMDEiLCJwIjoibm9ybWFsIiwiYiI6IuS9meeDrOS4lueVjCJ9-0f9q7ub"
+  },
+  "newWorld": {
+    "before": 1,
+    "after": 2,
+    "seed": "hell-ember-01",
+    "preset": "bleak",
+    "name": "朋友的挑战",
+    "active": true,
+    "why": ""
+  },
+  "imported": {
+    "ok": true,
+    "n": 1,
+    "owner": "老周",
+    "dupOk": false,
+    "badOk": false,
+    "why": "这个幽灵已经在你的地图上了"
+  },
+  "placed": {
+    "found": true,
+    "title": "(19,15) 居民区 · 市区 · 危险 4 · 幽灵据点"
+  },
+  "raid": {
+    "x": 19,
+    "y": 15,
+    "mat": 65,
+    "loot": {
+      "mat": 60,
+      "item": "medkit",
+      "n": 1
+    },
+    "cleared": true,
+    "foes": 8,
+    "specMat": 200
+  },
+  "tel": {
+    "n": 2,
+    "verdict": "最容易吃人的是「工业区」（1 次，平均第 12 天）；最常见的死因是「你在战斗里流干了最后一滴血。」"
+  },
+  "manage": {
+    "renameOk": true,
+    "renamed": "改名测试",
+    "n0": 2,
+    "n1": 1,
+    "activeKept": true
+  }
+}

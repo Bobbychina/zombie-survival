@@ -26,7 +26,7 @@ export const V4: Record<string, unknown> = {};
 (window as any).V4 = V4;
 
 async function main() {
-  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi, integrity, betaNotice, regionEventsCore, regionEvents, regionsCore] = await Promise.all([
+  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi, integrity, betaNotice, regionEventsCore, regionEvents, regionsCore, worldsUi] = await Promise.all([
     import('./v4/worldgen'),
     import('./v4/pois'),
     import('./v4/combat'),
@@ -47,12 +47,17 @@ async function main() {
     import('./v4/region-events-core'),
     import('./v4/region-events'),
     import('./v4/regions-core'),
+    import('./v4/worlds-ui'),
   ]);
   // BETA 声明条：整站/整游戏最上面那一条（本站所有子页面都要有）
   betaNotice.installBetaNotice();
   const { REGION_EVENTS } = regionEventsCore;
   const { applyRegionEvent } = regionEvents;
   const { regionById } = regionsCore;
+  const ghosts = await import('./v4/ghosts');
+  const ghostCore = await import('./v4/ghosts-core');
+  const telemetry = await import('./v4/telemetry-core');
+  const shareCore = await import('./v4/share-core');
   Object.assign(V4, {
     worldgen: { generateWorld: worldgen.generateWorld, WORLD_W: worldgen.WORLD_W, WORLD_H: worldgen.WORLD_H },
     POIS: pois.POIS,
@@ -97,6 +102,31 @@ async function main() {
   };
   // 内联 onclick 只认 window 上的名字：今夜（过夜）与撤离
   (window as any).V4Night = { rest: night.rest, options: night.restOptions, apMaxOf: night.apMaxOf };
+  /* M20：世界管理 / 挑战码 / 幽灵据点 / 开发者统计（一个面板） */
+  (window as any).V4Worlds = worldsUi.V4Worlds;
+  worldsUi.ensureWorlds();
+  /* M20：死亡与结局都记一笔台账（**只存本机**，玩家点导出才离开这台机器）。
+     legacy 的 gameOver 是所有死亡路径的汇聚点（战斗/搜刮/落水/感染…），所以在这里包一层。 */
+  const wireRunLog = () => {
+    const origGameOver = L.gameOver;
+    if (typeof origGameOver !== 'function' || (L as any).__runLogWired) return;
+    (L as any).__runLogWired = true;
+    L.gameOver = (msg?: string, opts?: any) => {
+      try {
+        const s = L.S as any;
+        const sw2 = worldState.ensureSaveWorld(s);
+        const def = regionsCore.regionById(sw2.region);
+        worldsUi.recordRun({
+          kind: 'death', day: Math.max(1, Number(s.day) || 1), cause: String(msg || '死亡').slice(0, 60),
+          region: sw2.region, rtype: (def?.type ?? '') as any, tier: def?.tier ?? 1,
+          kills: Number(s.stats?.kills) || 0, mat: Number(s.mat) || 0, at: Date.now(),
+        });
+        worldsUi.syncActive();
+      } catch (e) { console.warn('[v4] 记录死亡台账失败', e); }
+      return origGameOver.call(L, msg, opts);
+    };
+  };
+  wireRunLog();
   (window as any).V4Farm = { plant: farm.plant, harvest: farm.harvest, plots: farm.plotSlots, summary: farm.farmSummary };
   (window as any).V4Gather = { forage: gather.forage, salvage: gather.salvage, chop: gather.chop };
   (window as any).V4Water = { fish: water.fish, intake: water.intake, dive: water.dive, swim: worldUi.V4World.swim, pond: water.pondSummary };
@@ -194,7 +224,17 @@ async function main() {
     L.log('💾 直接双击打开的（file://）：存档写在本浏览器本地，换浏览器或清缓存会丢；想更稳可以跑 start.bat 起本地服务。', 'dim');
   }
 
-  runDevHook(battleUi, worldState, regionById, REGION_EVENTS as any, applyRegionEvent);
+  runDevHook(battleUi, worldState, regionById, REGION_EVENTS as any, applyRegionEvent, {
+    worlds: worldsUi,
+    ghosts: { ...ghosts, GHOST_KEY: ghosts.GHOST_KEY },
+    ghostCore,
+    runs: telemetry,
+    share: shareCore,
+    localWorld: () => {
+      const s = worldState.ensureSaveWorld(L.S);
+      return worldState.worldOf(s.seed, s.region);
+    },
+  });
 }
 
 /** 验证钩子：?dev=fresh,battle / dev=battle / dev=none —— 供 playwright 截图脚本用，正式玩法不受影响。
@@ -205,6 +245,7 @@ function runDevHook(
   regionById: (id: string) => any,
   REGION_EVENTS: Record<string, Array<Record<string, any>>>,
   applyRegionEvent: (ev: any, regionId: string) => void,
+  m20: { worlds: any; ghosts: any; ghostCore: any; runs: any; share: any; localWorld: () => any },
 ) {
   const raw = new URLSearchParams(location.search).get('dev');
   if (!raw) return;
@@ -257,6 +298,13 @@ function runDevHook(
     },
     /** 当前区域类型（探针挑"该测哪一类事件"用） */
     regionType: () => (regionById(worldState.ensureSaveWorld(L.S).region)?.type ?? ''),
+    /* M20：世界 / 幽灵 / 台账三套系统的探针入口（只读 + 玩家可用动作，不额外开后门） */
+    worlds: m20.worlds,
+    ghosts: m20.ghosts,
+    ghostCore: m20.ghostCore,
+    runs: m20.runs,
+    share: m20.share,
+    localWorld: m20.localWorld,
   };
   setTimeout(() => {
     if (tokens.includes('battle')) battleUi.startV4Combat(['walker', 'runner'], { title: '冒烟遭遇' });
