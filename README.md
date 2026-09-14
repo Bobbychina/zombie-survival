@@ -185,6 +185,23 @@ npx wrangler deploy     # 绑定/开关都写在 wrangler.toml 里，不用点�
 
 **边界（必须在同一条里说清）**：会写代码的人可以重算指纹，所以这套拦不住蓄意造假，它拦的是"顺手改一下"和"存档写坏了"。真要不可伪造，得让中继（Cloudflare Worker）用只有它知道的密钥做 HMAC 签名——已经有中继了，需要就能加。
 
+### 设备码在当前网络被挡？（`*.workers.dev` 被 DNS 黑洞）
+
+实测（2026-09-14）：有些网络（校园网/运营商）把 `*.workers.dev` **整段**解析到黑洞——连不存在的子域都返回 Facebook 的 IP，
+于是中继连不上，"设备码"这条路必然失败（客户端现在 4 秒内就会说清原因，并给出一颗「改用令牌码」的按钮）。
+
+两个办法：
+
+1. **令牌码**（不依赖任何中继，3 步，随时可用）；
+2. **把中继搬到 `*.pages.dev`**：主页仓库里已经放好 `functions/[[path]].js`（Cloudflare Pages Function 版中继，逻辑与 Worker 版一致）——
+   同一套 Cloudflare 账号、同样免费，实测 `*.pages.dev` 在这些网络能正常解析：
+   ```bash
+   cd <主页仓库>
+   npx wrangler pages deploy . --project-name=bobbychina-games   # 需要先 wrangler login
+   # 把 https://bobbychina-games.pages.dev 填进 games/auth-config.js 的 github.relay
+   ```
+   客户端会先探中继可达性，不通就自动跳过（不会白等一个超时）。
+
 ### 为什么登录是"设备码 / 令牌码"这两条？（M22 + M23 的取舍）
 
 GitHub 的 `login/oauth/access_token` 不给浏览器跨域头 → 纯静态站拿不到响应，所谓"一键授权"在页面上点不通
