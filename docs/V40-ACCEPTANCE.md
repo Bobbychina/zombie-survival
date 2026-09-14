@@ -958,3 +958,13 @@ M12 起探索页是"3×3 区域图 + 24×24 本地图"**上下两块**：区域�
     要么把中继部署到 `*.pages.dev`（或换网络/热点）。代码侧已经做到"4 秒内说清 + 一键改道"，不会再假装在努力。
   - **P2**：中继是否活着只能从能解析 `workers.dev` 的网络验证——本机无法探测，所以线上探针只断言"有结论"，
     不断言"一定出码"。
+### 二十九附：设备码在线上真的通了（M23.3）
+
+上一条的 P1 是"当前网络屏蔽 workers.dev"——已按用户确认的选项**把中继迁到 Cloudflare Pages**：
+
+- 新建 Pages 项目 `bobbychina-games`（账号 bobby_minecraft@qq.com，仅当中继用；静态内容只有一个说明页）；
+- 部署脚本 `bobbychina-pages/tools/deploy-relay.mjs`（把 `functions/[[path]].js` + 说明页 stage 到临时目录再 `wrangler pages deploy`，
+  不把整站传上去），函数源码在主页仓库 `functions/[[path]].js`；
+- `games/auth-config.js` 的 `github.relay` 改成 `https://bobbychina-games.pages.dev`（旧的 workers.dev 地址留成注释备查）；
+- 自测：`OPTIONS /login/device/code` → 204 + CORS 头；`POST /login/device/code` → 真设备码（`user_code: 502E-6BEF`）。
+- **线上探针复跑：20/20，其中设备码拿到真码 `F4D4-291A`**（不再是失败面板）——用户那条网络下设备码现在可用。
