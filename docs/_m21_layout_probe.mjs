@@ -93,7 +93,9 @@ ok('点邻居能真的走一步（动得了）', walk.ok && walk.from !== walk.t
 /* ── 3) 卡片墙版面 ── */
 const layout = JSON.parse(await ev(`(() => {
   const cards = [...document.querySelectorAll('#v4cards > .v4card')];
-  const cols = getComputedStyle(document.getElementById('v4cards')).gridTemplateColumns.split(' ').filter(Boolean).length;
+  /* M24 起卡片墙是**多列流**（CSS columns），没有 grid-template-columns 了：
+     直接数"卡片有几条不同的左边界"，排版换了这条断言也照样成立 */
+  const cols = new Set(cards.map(c => Math.round(c.getBoundingClientRect().left))).size;
   const txt = document.getElementById('view').textContent || '';
   const btns = [...document.querySelectorAll('#view button')].map(b => (b.textContent||'').replace(/\\s+/g,' ').trim());
   const rest = btns.filter(t => /就地休整/.test(t)).length;
@@ -200,7 +202,7 @@ await send('Emulation.setDeviceMetricsOverride', { width: 1056, height: 1151, de
 await ev(`window.dispatchEvent(new Event('resize')); 1`); await sleep(600)
 const narrow = JSON.parse(await ev(`(() => {
   const cards = [...document.querySelectorAll('#v4cards > .v4card')];
-  const cols = getComputedStyle(document.getElementById('v4cards')).gridTemplateColumns.split(' ').filter(Boolean).length;
+  const cols = new Set(cards.map(c => Math.round(c.getBoundingClientRect().left))).size;
   return JSON.stringify({ cols, n: cards.length, scrollW: document.documentElement.scrollWidth, innerW: window.innerWidth,
     rest: [...document.querySelectorAll('#view button')].filter(b => /就地休整/.test(b.textContent||'')).length });
 })()`))
