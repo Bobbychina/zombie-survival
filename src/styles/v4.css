@@ -24,40 +24,42 @@
 .v4world{padding:10px;margin-bottom:0}
 .v4world .sect-title{margin-bottom:6px}
 /* 宽屏布局：把两侧空白用起来。
-   ≥1700px：地图 / 详情 / 原探索卡片 三列并排，整页不用滚（2047×1157 实测三列全装下）
-   1280~1699px：地图在左，右侧详情 + 卡片上下叠（各自内部滚动）
-   <1280px：退回单列（和以前一样整页滚）
-   地图格子 20~28px：24×24 一次看完，不用在地图里滚。 */
+   M21 改成「左地图 + 右卡片墙」：地图是锚点（sticky，一直在视野里），
+   右边是 auto-fill 的卡片网格——卡片自己找平，不再出现"左边一大堆、右边孤零零一张卡"。
+   窄屏（<1024px）自动叠成一列，跟以前一样整页滚。 */
 @media (min-width:1024px){
   #app{width:min(2400px,calc(100vw - 16px));max-height:none}
 }
 @media (min-width:1280px){
   #body{grid-template-columns:minmax(0,1fr) clamp(300px,19vw,430px)}
-  #view.v4-split{display:grid;gap:12px;align-items:start}
-  #view.v4-split>.v4-col{overflow-y:auto;padding-right:6px}
 }
-@media (min-width:1280px) and (max-width:1699px){
-  #view.v4-split{
-    grid-template-columns:minmax(0,auto) minmax(320px,1fr);
-    grid-template-rows:minmax(0,auto) minmax(0,1fr);
-    grid-template-areas:"map detail" "map col";
-  }
-  #v4world{grid-area:map}
-  #v4detail{grid-area:detail;max-height:42vh}
-  #view.v4-split>.v4-col{grid-area:col;max-height:100%}
+@media (min-width:1024px){
+  #view.v4-board{display:grid;gap:12px;align-items:start;grid-template-columns:minmax(0,1fr)}
+  #v4cards{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));align-items:start}
 }
+/* 很宽（≥1700px）才把地图钉在左边当锚点：窄一点的屏幕上 24×24 地图要 620px+，
+   跟卡片墙抢宽度不如让地图独占一行、卡片在下面铺成 3~4 列。 */
 @media (min-width:1700px){
-  #view.v4-split{
-    grid-template-columns:minmax(0,auto) minmax(340px,.85fr) minmax(360px,1fr);
-    grid-template-areas:"map detail col";overflow:hidden;
-  }
-  #v4world{grid-area:map}
-  #v4detail{grid-area:detail;max-height:100%;overflow-y:auto}
-  #view.v4-split>.v4-col{grid-area:col;max-height:100%}
+  #view.v4-board{grid-template-columns:minmax(0,auto) minmax(0,1fr);
+    grid-template-areas:"tools tools" "map cards"}
+  #v4tools{grid-area:tools}
+  #v4world{grid-area:map;position:sticky;top:8px}
+  #v4cards{grid-area:cards}
 }
-@media (min-width:2000px){
-  #view.v4-split{grid-template-columns:minmax(0,auto) minmax(380px,.9fr) minmax(440px,1.1fr)}
-}
+/* 卡片墙本身（窄屏也要能读：单列 + 卡片样式一致） */
+#v4cards{display:grid;gap:12px;align-items:start;min-width:0}
+.v4card{border:1px solid var(--line);border-radius:8px;background:#0d1015;padding:10px 12px;min-width:0}
+.v4card>.card-hd{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px}
+.v4card>.card-hd .card-tt{font-size:13.5px;font-weight:600;color:var(--bone)}
+.v4card>.card-hd .badge{margin-left:0}
+.v4card>.card-bd{min-width:0}
+.v4card[data-card="today"]{border-left:3px solid var(--accent)}
+.v4card[data-card="poi"]{border-left:3px solid var(--warn)}
+.v4card[data-card="night"]{border-left:3px solid #6a7bd0}
+.v4card[data-card="legacy"]{border-left:3px solid var(--line2)}
+/* 工具条：存档 / 账号 / 世界 / 分享——元操作，不跟玩法卡混在一列 */
+.v4tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:2px 0}
+.v4tools .hint{font-size:11.5px;color:var(--dim)}
 .v4detail{padding:10px 12px}
 .v4world .whead{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;margin-bottom:8px}
 .v4world .wname{font-size:14px;font-weight:600;color:var(--bone)}

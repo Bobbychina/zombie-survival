@@ -14,6 +14,7 @@ import { report, exportLedger, importLedger, normalizeLedger, LEDGER_KEY, type R
 import { ghostCode, ghostLine, parseGhostCode } from './ghosts-core';
 import { clearGhosts, importGhost, loadGhosts, myGhostSpec } from './ghosts';
 import { regionName, type RegionType } from './regions-core';
+import { accountSummary, currentUser as accountUser } from './account-ui';
 
 const esc = (s: unknown) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
 
@@ -199,7 +200,20 @@ export function statsHtml(): string {
 }
 
 export function panelHtml(): string {
-  return '<div class="v4worlds">' + worldsHtml() + ghostsHtml() + statsHtml() + '</div>';
+  return '<div class="v4worlds">' + worldsHtml() + accountHtml() + ghostsHtml() + statsHtml() + '</div>';
+}
+
+/** 账号与云存档（M21：从探索页的玩法区搬进来）。
+    它本来就是"关于存档的元操作"——和世界/挑战码/统计是同一类东西，
+    跟"今天砍几棵树、去哪一格"放在一列才是配置诡异（用户反馈原文）。 */
+export function accountHtml(): string {
+  const who = accountUser();
+  let h = '<div class="wsec"><div class="sect-title">👤 账号与云存档 <span class="badge">' + (who ? '已登录' : '未登录') + '</span></div>';
+  h += '<div class="hint">' + esc(accountSummary()) + '</div>';
+  h += '<div class="wbtns"><button class="btn primary" onclick="V4Account.open()">' +
+    (who ? '👤 账号与云存档' : '👤 注册 / 登录（存档跟账号走）') + '</button></div>';
+  h += '<div class="hint">存档永远以本机为准（断网照玩）；登录后可以往云端存一份，换设备/清缓存都能找回来。</div></div>';
+  return h;
 }
 
 /* ── 交互（内联 onclick 用） ── */
@@ -215,7 +229,7 @@ function copyText(text: string, what: string): void {
 export const V4Worlds = {
   open(): void {
     ensureWorlds();
-    L.modal({ title: '🌍 世界 · 分享 · 幽灵据点 · 统计', body: panelHtml() });
+    L.modal({ title: '🌍 世界 · 存档 · 账号 · 分享 · 幽灵据点 · 统计', body: panelHtml() });
   },
   switch(id: string): void { switchWorld(id); },
   del(id: string): void { if (deleteWorld(id)) { L.toast('已删除世界', '', 'info'); L.render(); } },

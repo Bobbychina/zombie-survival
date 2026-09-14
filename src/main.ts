@@ -230,6 +230,8 @@ async function main() {
     ghostCore,
     runs: telemetry,
     share: shareCore,
+    quests,
+    regions: regionsCore,
     localWorld: () => {
       const s = worldState.ensureSaveWorld(L.S);
       return worldState.worldOf(s.seed, s.region);
@@ -245,7 +247,7 @@ function runDevHook(
   regionById: (id: string) => any,
   REGION_EVENTS: Record<string, Array<Record<string, any>>>,
   applyRegionEvent: (ev: any, regionId: string) => void,
-  m20: { worlds: any; ghosts: any; ghostCore: any; runs: any; share: any; localWorld: () => any },
+  m20: { worlds: any; ghosts: any; ghostCore: any; runs: any; share: any; quests: any; regions: any; localWorld: () => any },
 ) {
   const raw = new URLSearchParams(location.search).get('dev');
   if (!raw) return;
@@ -305,6 +307,16 @@ function runDevHook(
     runs: m20.runs,
     share: m20.share,
     localWorld: m20.localWorld,
+    /* M21 探针：复现"刷委托板扫别区 POI"这条**真实**路径（quests.poisIn → worldOf(别区)）。
+       老实现是单槽世界缓存 + "指纹没变就不重放迷雾"，这条路径会把当前区域的世界挤掉，
+       于是整张图全黑、连脚下都不亮 → 一格都点不了（用户报的"动不了"）。 */
+    scanRegion: (rid?: string) => {
+      const s = worldState.ensureSaveWorld(L.S);
+      const other = rid || (m20.regions.REGIONS.find((r: any) => r.id !== s.region)?.id ?? s.region);
+      let hit = false;
+      try { hit = m20.quests.hasPoiIn(other, 'market'); } catch (e) { console.warn('[v4] 扫区失败', e); }
+      return { region: other, hit };
+    },
   };
   setTimeout(() => {
     if (tokens.includes('battle')) battleUi.startV4Combat(['walker', 'runner'], { title: '冒烟遭遇' });

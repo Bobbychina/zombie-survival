@@ -57,7 +57,13 @@ export interface SaveWorld extends RegionProgress {
   trail: string[];               // 最近若干条旅行/搜刮记录（地图面板显示用）
 }
 
-let cache: { key: string; w: WorldState } | null = null;
+/* 世界实例缓存：**多槽 LRU**（以前只缓存 1 个实例，这是"整张图全黑、一步都动不了"的根因）。
+   为什么：quests.poisIn() 为了扫别区有没有某种 POI 会调 worldOf(seed, 别的区域)，
+   单槽缓存会把当前区域的世界挤掉；紧接着 ensureSaveWorld 又按"指纹没变"跳过迷雾重放，
+   于是渲染拿到的是一个**刚重建、全黑**的世界实例——连脚下那格都不亮 → 一格都点不了。
+   多槽只是减少重建，真正的保险是下面的"实例指纹"：实例换了就一定重放。 */
+const cache = new Map<string, WorldState>();
+const CACHE_MAX = 8;
 /** 地形生成器版本：**改了 worldgen 的产出就 +1**（BETA 阶段允许地图重画）。
     v1 = M12 的噪声撒点；v2 = M15 的土地利用分区生成；v3 = M17 元地图改成 12×12 程序化区域。 */
 export const WORLD_VER = 3;
@@ -66,7 +72,7 @@ let migrated = false;
 export const takeWorldMigration = (): boolean => { const m = migrated; migrated = false; return m; };
 /** C11：迷雾重放很贵（576 格 ×9 邻居），而 ensure 会被每次 render 调到；
     这里记住"上次重放时的状态指纹"，只有读档/情报/无线电/新到过区块才重放一次。 */
-let lastSynced: { S: any; intel: boolean; radio: boolean; visited: number; region: string } | null = null;
+let lastSynced: { S: any; w: WorldState; intel: boolean; radio: boolean; visited: number; region: string } | null = null;
 /** 迷雾重放次数（C11 的性能指标：反复 render 不该把它越推越高） */
 let replays = 0;
 export const replayCount = () => replays;
@@ -78,8 +84,15 @@ export const replayCount = () => replays;
 export function worldOf(seed: string, region: string): WorldState {
   setActiveRegions(seed);
   const key = seed + '::' + region;
-  if (!cache || cache.key !== key) cache = { key, w: buildRegionWorld(seed, region) };
-  return cache.w;
+  const hit = cache.get(key);
+  if (hit) { cache.delete(key); cache.set(key, hit); return hit; }   // LRU：最近用过的挪到队尾
+  const w = buildRegionWorld(seed, region);
+  cache.set(key, w);
+  if (cache.size > CACHE_MAX) {
+    const oldest = cache.keys().next().value as string | undefined;
+    if (oldest !== undefined && oldest !== key) cache.delete(oldest);
+  }
+  return w;
 }
 
 /** 生成某个区域的 24×24 世界：地形按该区域的主题（biomeBias）生成——
@@ -250,13 +263,21 @@ export function ensureSaveWorld(S: any): SaveWorld {
   sw.trail = Array.isArray(sw.trail) ? sw.trail.slice(-24) : [];
   sw.steps = num(sw.steps); sw.fights = num(sw.fights);
   sw.veh = sw.veh && typeof sw.veh === 'object' ? { fuel: num(sw.veh.fuel), hp: num(sw.veh.hp) || 60 } : null;
-  // C11：只有指纹变了才重放迷雾（否则每次 render 都要重放 576 格）
+  // C11：只有指纹变了才重放迷雾（否则每次 render 都要重放 576 格）。
+  // 指纹里必须含**世界实例本身**：实例被挤掉重建过（quests 扫别区 POI 等）时，
+  // 虽然 visited 一条没变，但新实例是全黑的，跳过重放就等于把玩家锁死在黑图上。
+  const hereLit = () => {
+    if (blockAt(w, sw.cur.x, sw.cur.y)?.revealed) return;
+    sw.visited[bkey(sw.cur.x, sw.cur.y)] = 1;
+    markVisited(w, sw, sw.cur.x, sw.cur.y);
+  };
   const radio = !!(S && S.base && S.base.radio);
   const visitedN = Object.keys(sw.visited).length;
-  if (lastSynced && lastSynced.S === S && lastSynced.intel === sw.intel && lastSynced.radio === radio && lastSynced.visited === visitedN && lastSynced.region === sw.region) {
+  if (lastSynced && lastSynced.S === S && lastSynced.w === w && lastSynced.intel === sw.intel && lastSynced.radio === radio && lastSynced.visited === visitedN && lastSynced.region === sw.region) {
+    hereLit();                      // 便宜的一次自检：脚下永远是亮的（玩家的唯一行动入口）
     return sw;
   }
-  lastSynced = { S, intel: sw.intel, radio, visited: visitedN, region: sw.region };
+  lastSynced = { S, w, intel: sw.intel, radio, visited: visitedN, region: sw.region };
   replays++;
   // 迷雾恢复：visited 是唯一的真相源，其余 revealed/visited 全部重放
   for (const k in w.blocks) { w.blocks[k].revealed = false; w.blocks[k].visited = false; }
@@ -266,10 +287,7 @@ export function ensureSaveWorld(S: any): SaveWorld {
   }
   /* 重放完再确认一次"脚下是亮的"：visited 表被清空/写坏时，这一步是玩家唯一的行动入口
      （只能点已点亮的格子），漏掉它整局就卡死在黑屏上。 */
-  if (!blockAt(w, sw.cur.x, sw.cur.y)?.revealed) {
-    sw.visited[bkey(sw.cur.x, sw.cur.y)] = 1;
-    markVisited(w, sw, sw.cur.x, sw.cur.y);
-  }
+  hereLit();
   // 无线电架好 = 拿到实验室坐标：那一格永远点亮（否则玩家在迷雾里根本点不到终点）
   if (radio) {
     const lb = blockAt(w, w.lab.x, w.lab.y);

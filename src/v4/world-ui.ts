@@ -370,26 +370,69 @@ export function renderMapPanel(): string {
   return h;
 }
 
-/** M6 · 环境/食物面板：季节天气体温、采集与拆解、菜园、断粮出路
-    M8：加「🪵 伐木」——放在采集/拆解旁边，可用时显示 1 行动力 / 剩几次 / 约几木 */
-function renderEnvPanel(): string {
+/** M21：一张卡片 = 标题行 + 内容。探索页从"三列大杂烩"改成**卡片墙**——
+    每张卡只讲一件事（今日/环境/采集/水体/菜园/格子/今夜…），窄屏自动退成单列，
+    不再出现"左边一大堆、右边孤零零一张卡"的怪版面。 */
+function card(id: string, title: string, body: string, badges: string[] = []): string {
+  return '<div class="v4card" data-card="' + id + '">' +
+    '<div class="card-hd"><span class="card-tt">' + title + '</span>' +
+    badges.filter(Boolean).map(x => '<span class="badge">' + x + '</span>').join('') + '</div>' +
+    '<div class="card-bd">' + body + '</div></div>';
+}
+
+/** 今日行动：行动力 + 就地把状态补回来 + 商人。**睡觉只有「今夜」卡一个入口**
+    （legacy 那个「睡觉」按钮直连 sleepNight()，会绕过 v4 的睡眠债/环境/夜袭整套结算，是重复入口 + 真 bug）。 */
+function todayCard(): string {
   const S = L.S as any;
-  const b = curBlock();
-  const fi = forageInfo(), si = salvageInfo(), ci = chopInfo();
+  const s = sw();
+  let b = '<div class="row">' +
+    '<button class="btn ok" onclick="restHere()">☕ 就地休整 <span class="mono">(1 行动力)</span></button>' +
+    '<button class="btn" onclick="openMerchant()">🏪 呼叫商人</button>' +
+    '</div>' +
+    '<div class="hint" style="margin-top:6px">行动力 <b>' + S.ap + '/' + apMaxOf(s.debt) + '</b> · 搜索 1 点 · 深度搜索 2 点 · 走路 1 点/区块' +
+    (s.veh ? ' · 开车 1 点/4 区块' : '') + '</div>';
+  b += '<div class="hint">' + (S.ap <= 0
+    ? '⚠️ 今天已经没有行动力了。硬撑着继续只会让饥饿和感染追上来——去「今夜」卡睡觉。'
+    : '搜刮会消耗饱食与水分，战斗会消耗弹药与体力。' + (S.base.radio ? '无线电已架设：方舟实验室坐标已解锁。' : '架设无线电（据点 → 建设）后才能定位方舟实验室。')) + '</div>';
+  return card('today', '🎯 今日行动', b, ['第 ' + L.S.day + ' 天 ' + String(L.phaseName ? L.phaseName()[0] : '')]);
+}
+
+/** M6 · 环境卡：季节天气体温 + 每日系数 + 断粮/缺木的出路（原来混在采集里，说不清是"环境"还是"操作"） */
+function envCard(): string {
+  const S = L.S as any;
   const env = envOf();
   const p = tempPenalty(env.temp);
-  let h = '<div class="wenv">';
-  h += '<div class="sect-title">环境 <span class="badge">' + SEASON_INFO[seasonNow()].name + '季</span>' +
-    '<span class="badge">' + WEATHER[env.weather].icon + WEATHER[env.weather].name + '</span>' +
-    (p.note ? '<span class="badge warn">体温异常</span>' : '') + '</div>';
-  h += '<div class="hint">' + esc(envLine()) + '</div>';
-  if (p.note) h += '<div class="hint" style="color:#e0b06a">' + esc(p.note) + '</div>';
-  h += '<div class="hint">今日：采集 ×' + WEATHER[env.weather].forage + ' · 作物 ×' + WEATHER[env.weather].crop +
+  const fi = forageInfo(), ci = chopInfo();
+  const badges = [SEASON_INFO[seasonNow()].name + '季', WEATHER[env.weather].icon + WEATHER[env.weather].name];
+  if (p.note) badges.push('⚠️ 体温异常');
+  let b = '<div class="hint">' + esc(envLine()) + '</div>';
+  if (p.note) b += '<div class="hint" style="color:#e0b06a">' + esc(p.note) + '</div>';
+  b += '<div class="hint">今日：采集 ×' + WEATHER[env.weather].forage + ' · 作物 ×' + WEATHER[env.weather].crop +
     ' · 腐坏 ×' + (SEASON_INFO[seasonNow()].rot * WEATHER[env.weather].rot).toFixed(2) +
     (WEATHER[env.weather].fire ? '' : ' · ⛔ 生不了火') + '</div>';
+  // X03：断粮/断水时把出路写清楚，别只说"打开背包"
+  if (S.hun < 25 || S.thi < 25) {
+    const ways: string[] = [];
+    if (fi.ok) ways.push('🧺 就地采集（1 行动力）');
+    if (ci.ok) ways.push('🪵 就地伐木（约 ' + ci.est + ' 木：煮沸污水/做夹板都要它）');
+    const fi2 = fishInfo(), ik = intakeInfo();
+    if (fi2.ok) ways.push('🎣 钓鱼（' + Math.round(fi2.chance * 100) + '% 命中）');
+    if (ik.ok) ways.push('💧 就地接水（污水要煮沸或用净化片）');
+    if (L.S.base?.pond) ways.push('🐟 鱼塘收鱼（投喂鱼饵/蔬菜翻倍）');
+    if (plotSlots().length) ways.push('🌱 收菜园 / 播种');
+    if (env.rainToday > 0) ways.push('💧 煮沸雨水（雨水今天收到 ' + env.rainToday + ' 份）');
+    ways.push('🏪 找营地/商人换（营地地图上标着 ⛺）');
+    b += '<div class="hint" style="color:#e0b06a;margin-top:6px">⚠️ ' +
+      (S.hun < 25 ? '饱食 ' + Math.round(S.hun) : '水分 ' + Math.round(S.thi)) + ' 告急，出路：' + ways.join(' · ') + '</div>';
+  }
+  return card('env', '🌦️ 环境', b, badges);
+}
 
-  // 采集 / 拆解 / 伐木
-  h += '<div class="row" style="margin-top:8px">' +
+/** 采集与拆解：采集/拆解/伐木三件事一张卡（都是"花 1 行动力换材料"） */
+function gatherCard(): string {
+  const S = L.S as any;
+  const fi = forageInfo(), si = salvageInfo(), ci = chopInfo();
+  let b = '<div class="row">' +
     '<button class="btn' + (fi.ok ? ' ok' : ' ghost') + '"' + (fi.ok ? '' : ' disabled') +
       ' onclick="V4Gather.forage()" title="' + esc(fi.ok ? '这一带还能采 ' + fi.left + ' 次' : (fi.why ?? '')) + '">🧺 采集 <span class="mono">(1 行动力' + (fi.ok ? ' · 剩 ' + fi.left : '') + ')</span></button>' +
     '<button class="btn' + (si.ok ? '' : ' ghost') + '"' + (si.ok ? '' : ' disabled') +
@@ -398,40 +441,52 @@ function renderEnvPanel(): string {
     '<button class="btn' + (ci.ok ? ' ok' : ' ghost') + '"' + (ci.ok ? '' : ' disabled') +
       ' onclick="V4Gather.chop()" title="' + esc(ci.ok ? '这一带今天还能砍 ' + ci.left + ' 次，一斧约 ' + ci.est + ' 木' : (ci.why ?? '')) + '">🪵 伐木 <span class="mono">(1 行动力' + (ci.ok ? ' · 剩 ' + ci.left + ' · 约 ' + ci.est + ' 木' : '') + ')</span></button>' +
     '</div>';
-  if (!fi.ok && fi.why) h += '<div class="hint">🧺 ' + esc(fi.why) + '</div>';
-  if (!ci.ok && ci.why) h += '<div class="hint">🪵 ' + esc(ci.why) + '</div>';
+  if (!fi.ok && fi.why) b += '<div class="hint">🧺 ' + esc(fi.why) + '</div>';
+  if (!si.ok && si.why) b += '<div class="hint">🔧 ' + esc(si.why) + '</div>';
+  if (!ci.ok && ci.why) b += '<div class="hint">🪵 ' + esc(ci.why) + '</div>';
+  // M8：缺木料（手上有污水要煮沸 / 骨折要夹板）时把伐木这条出路摆出来
+  const needWood = (S.inv?.dirty || 0) > 0 || (L.S.wounds || []).some((w: any) => w.t === 'fracture');
+  if (needWood && L.itemCount('wood') < 2 && ci.ok) {
+    b += '<div class="hint" style="color:#e0b06a">🪵 木料不够：煮沸污水/固定骨折都要它——就地砍几斧（1 行动力 · 约 ' + ci.est + ' 木/次，今天还能砍 ' + ci.left + ' 次）</div>';
+  }
+  return card('gather', '🧺 采集与拆解', b);
+}
 
-  // 菜园
+/** 菜园卡 */
+function farmCard(): string {
   const slots = plotSlots();
-  h += '<div class="sect-title" style="margin-top:10px">🌱 菜园 <span class="badge">' + slots.length + ' 块地</span></div>';
-  h += '<div class="hint">' + esc(farmSummary()) + '</div>';  if (slots.length) {
-    h += '<div class="row" style="margin-top:6px">';
+  let b = '<div class="hint">' + esc(farmSummary()) + '</div>';
+  if (slots.length) {
+    b += '<div class="row" style="margin-top:6px">';
     slots.forEach((pl, i) => {
       if (!pl.crop) {
-        h += '<span class="wplot">地' + (i + 1) + '·空：</span>';
+        b += '<span class="wplot">地' + (i + 1) + '·空：</span>';
         for (const c of cropList()) {
           const have = L.itemCount(c.seed);
-          h += '<button class="btn sm' + (have > 0 ? '' : ' ghost') + '"' + (have > 0 ? '' : ' disabled') +
+          b += '<button class="btn sm' + (have > 0 ? '' : ' ghost') + '"' + (have > 0 ? '' : ' disabled') +
             ' onclick="V4Farm.plant(' + i + ',\'' + c.id + '\')" title="' + esc(c.desc) + '">播' + c.icon + c.name + '（种子 ' + have + '）</button>';
         }
       } else {
         const c = CROPS[pl.crop] ?? { icon: '?', name: pl.crop, seed: '' };
         const need = growthDays(pl.crop, seasonNow());
         const ready = isFinite(need) && (pl.day || 0) >= need;
-        h += '<button class="btn sm' + (ready ? ' ok' : ' ghost') + '"' + (ready ? '' : ' disabled') +
+        b += '<button class="btn sm' + (ready ? ' ok' : ' ghost') + '"' + (ready ? '' : ' disabled') +
           ' onclick="V4Farm.harvest(' + i + ',false)">收地' + (i + 1) + c.icon + '</button>' +
           (ready ? '<button class="btn sm" onclick="V4Farm.harvest(' + i + ',true)" title="留种少收一茬，但拿回 1 份种子">留种收</button>' : '');
       }
     });
-    h += '</div>';
+    b += '</div>';
     const seeds = cropList().filter(c => L.itemCount(c.seed) > 0).map(c => c.icon + c.name + '种子×' + L.itemCount(c.seed));
-    h += '<div class="hint">种子：' + (seeds.length ? seeds.join('、') : '没有（搜农场/超市/学校，或找营地买）') + '</div>';
+    b += '<div class="hint">种子：' + (seeds.length ? seeds.join('、') : '没有（搜农场/超市/学校，或找营地买）') + '</div>';
   }
+  return card('farm', '🌱 菜园', b, [slots.length + ' 块地']);
+}
 
-  // M7：水体互动（钓鱼 / 下水 / 潜水搜沉没基地 / 鱼塘）
-  h += '<div class="sect-title" style="margin-top:10px">🌊 水体 <span class="badge">' + (waterNearby().any ? '旁边有水' : '没有水') + '</span></div>';
+/** M7 · 水体卡：钓鱼 / 下水 / 潜水搜沉没基地 / 鱼塘 */
+function waterCard(): string {
+  const b0 = curBlock();
   const fi2 = fishInfo(), ik = intakeInfo();
-  h += '<div class="row">' +
+  let b = '<div class="row">' +
     '<button class="btn' + (fi2.ok ? '' : ' ghost') + '"' + (fi2.ok ? '' : ' disabled') +
       ' onclick="V4Water.fish()" title="' + esc(fi2.ok ? '今天还能钓 ' + fi2.left + ' 次' : (fi2.why ?? '')) + '">🎣 钓鱼 <span class="mono">(1 行动力 · 命中 ' + Math.round(fi2.chance * 100) + '%' + (fi2.ok ? ' · 剩 ' + fi2.left : '') + ')</span></button>' +
     // M7.1：用户要求"水可以从水体里接"——1 行动力接 2 份污水，回去用净化片或煮沸变净水
@@ -440,44 +495,29 @@ function renderEnvPanel(): string {
     (swimCan() ? '<button class="btn" onclick="V4Water.swim()" title="朝最近的水块游一格：2 行动力，掉体力与体温，没潜水服有风险">🏊 下水 <span class="mono">(2 行动力/格)</span></button>' : '') +
     (diveOk() ? '<button class="btn ok" onclick="V4Water.dive()">🤿 潜水搜索 <span class="mono">(2 行动力 · 氧气 ' + diveLeft() + ')</span></button>' : '') +
     '</div>';
-  h += '<div class="hint">' + esc(canSwim().note) + (fi2.chance < 0.3 ? ' · 🎣 现在鱼口很差（天太冷/天气不好）' : '') + '</div>';
-  if (fi2.why) h += '<div class="hint">🎣 ' + esc(fi2.why) + '</div>';
-  if (ik.why) h += '<div class="hint">💧 ' + esc(ik.why) + '</div>';
-  h += '<div class="hint">💧 污水不能直接喝：背包 → 制作里「煮沸」（污水×2 + 木×1）或「净化片」（污水×1 + 净化片×1，不用生火）都能变成净水。</div>';
-  if (diveInfo().why && b?.poi === 'sunken') h += '<div class="hint">🤿 ' + esc(diveInfo().why ?? '') + '</div>';
-  h += '<div class="hint">🐟 ' + esc(pondSummary()) + '</div>';
-
-  // X03：断粮/断水时把出路写清楚，别只说"打开背包"
-  if (S.hun < 25 || S.thi < 25) {
-    const ways: string[] = [];
-    if (fi.ok) ways.push('🧺 就地采集（1 行动力）');
-    if (ci.ok) ways.push('🪵 就地伐木（约 ' + ci.est + ' 木：煮沸污水/做夹板都要它）');
-    if (fi2.ok) ways.push('🎣 钓鱼（' + Math.round(fi2.chance * 100) + '% 命中）');
-    if (ik.ok) ways.push('💧 就地接水（污水要煮沸或用净化片）');
-    if (L.S.base?.pond) ways.push('🐟 鱼塘收鱼（投喂鱼饵/蔬菜翻倍）');
-    if (slots.length) ways.push('🌱 收菜园 / 播种（' + farmSummary().split('·')[0].trim() + '）');
-    if (env.rainToday > 0) ways.push('💧 煮沸雨水（雨水今天收到 ' + env.rainToday + ' 份）');
-    ways.push('🏪 找营地/商人换（营地地图上标着 ⛺）');
-    h += '<div class="hint" style="color:#e0b06a;margin-top:6px">⚠️ ' +
-      (S.hun < 25 ? '饱食 ' + Math.round(S.hun) : '水分 ' + Math.round(S.thi)) + ' 告急，出路：' + ways.join(' · ') + '</div>';
-  }
-  // M8：缺木料（手上有污水要煮沸 / 骨折要夹板）时把伐木这条出路摆出来，别让玩家只看到"打开背包"
-  const needWood = (S.inv?.dirty || 0) > 0 || (L.S.wounds || []).some((w: any) => w.t === 'fracture');
-  if (needWood && L.itemCount('wood') < 2 && ci.ok) {
-    h += '<div class="hint" style="color:#e0b06a">🪵 木料不够：煮沸污水/固定骨折都要它——就地砍几斧（1 行动力 · 约 ' + ci.est + ' 木/次，今天还能砍 ' + ci.left + ' 次）</div>';
-  }
-  // M8：账号与云存档（放在面板最下面一格，不抢生存信息的位置）
-  h += '<div class="sect-title" style="margin-top:10px">👤 账号 <span class="badge">' +
-    esc(accountUser() ? '已登录' : '未登录') + '</span></div>';
-  h += '<div class="hint">' + esc(accountSummary()) + '</div>';
-  h += '<div class="row"><button class="btn" onclick="V4Account.open()">' +
-    (accountUser() ? '👤 账号与云存档' : '👤 注册 / 登录（存档跟账号走）') + '</button></div>';
-  h += '</div>';
-  return h;
+  b += '<div class="hint">' + esc(canSwim().note) + (fi2.chance < 0.3 ? ' · 🎣 现在鱼口很差（天太冷/天气不好）' : '') + '</div>';
+  if (fi2.why) b += '<div class="hint">🎣 ' + esc(fi2.why) + '</div>';
+  if (ik.why) b += '<div class="hint">💧 ' + esc(ik.why) + '</div>';
+  b += '<div class="hint">💧 污水不能直接喝：背包 → 制作里「煮沸」（污水×2 + 木×1）或「净化片」（污水×1 + 净化片×1，不用生火）都能变成净水。</div>';
+  if (diveInfo().why && b0?.poi === 'sunken') b += '<div class="hint">🤿 ' + esc(diveInfo().why ?? '') + '</div>';
+  b += '<div class="hint">🐟 ' + esc(pondSummary()) + '</div>';
+  return card('water', '🌊 水体', b, [waterNearby().any ? '旁边有水' : '没有水']);
+}
+/** 工具条（不是玩法卡）：世界 / 账号云存档 / 分享 / 统计都在这儿。
+    用户原话："为什么这个操作面板的配置这么诡异……为什么和云存档放一起"——
+    云存档是"关于存档的元操作"，跟"今天砍几棵树"不是一回事，所以从玩法区搬出来。 */
+function toolsStrip(): string {
+  const who = accountUser();
+  return '<div class="v4tools" id="v4tools">' +
+    '<button class="btn sm" onclick="V4Worlds.open()" title="多世界 / 挑战码 / 幽灵据点 / 本机统计">🌍 世界 · 分享</button>' +
+    '<button class="btn sm" onclick="V4Account.open()" title="' + esc(accountSummary()) + '">' +
+      (who ? '👤 ' + esc(String(who).slice(0, 14)) : '👤 注册 / 登录') + '</button>' +
+    '<span class="hint">存档、账号、挑战码、统计都在这一行——不占玩法版面</span></div>';
 }
 
-/** 详情块（POI / 今夜 / 撤离点 / 旅途记录）——宽屏时和地图并排，避免上下堆到要滚 */
-export function renderDetailPanel(): string {
+/** 当前区块卡（原来的"POI 面板"）：这一格有什么、能搜什么、有什么活儿可干。
+    「就地休整」只留在「今日行动」卡里（用户反馈：同一个操作出现在两处就是重复）。 */
+function poiCard(): string {
   const s = sw(), b = curBlock();
   const poi = poiOf(b);
   const zone = zoneOfPoi(b.poi);
@@ -485,19 +525,13 @@ export function renderDetailPanel(): string {
   const left = poi ? poiLeft(b, s) : 0;
   const frags = pendingFragKeys();
   const hereFrag = !!frags[bkey(b.x, b.y)];
-  let h = '';
-
-  // M6：环境（季节/天气/体温）+ 采集/拆解 + 菜园 + 断粮出路（X03）
-  h += renderEnvPanel();
-
-  // 当前区块的 POI 面板
-  h += '<div class="wpoi">';
+  const gh = ghostAt(localWorld(s), b.x, b.y);
+  let body = '';
   if (poi) {
-    h += '<div class="sect-title">' + poi.icon + ' ' + poi.name + ' <span class="badge">危险 ' + (b.danger + poi.danger) + '</span>' +
-      '<span class="badge ' + (left > 0 ? '' : 'warn') + '">可搜 ' + left + '/' + poi.searches + ' 次</span></div>' +
-      '<p class="muted">' + esc(poi.desc) + '</p>' +
+    body += '<p class="muted">' + esc(poi.desc) + '</p>' +
       (hereFrag ? '<div class="hint" style="color:#d8c07a">🔑 情报说这一带藏着门禁卡碎片——搜一次就能拿到。</div>' : '') +
-      (poi.feat === 'npc' ? '<div class="hint" style="color:#7fd6a8">🧑\u200d🤝\u200d🧑 里面有活人：能换东西、买情报、也可能想抢你。</div>' : '') +
+      (poi.feat === 'npc' ? '<div class="hint" style="color:#7fd6a8">里面有活人：能换东西、买情报、也可能想抢你。</div>' : '') +
+      (gh ? '<div class="hint" style="color:#c9a6ff">👻 ' + esc(gh.spec.owner) + ' 的幽灵据点就在这一格：搜刮＝打一场守卫战，赢了抢他仓库的一部分。</div>' : '') +
       '<div class="hint">可能遇上：' + poi.enemies.map(e => esc(L.ZOMBIES?.[e]?.n ?? e)).join('、') + '</div>' +
       '<div class="row" style="margin-top:10px">' +
         '<button class="btn primary" onclick="V4World.search(0)">🔍 搜索 <span class="mono">(1 行动力)</span></button>' +
@@ -507,49 +541,69 @@ export function renderDetailPanel(): string {
         (poi.feat === 'vehicle' && s.veh && s.veh.hp < 100 ? '<button class="btn ok" onclick="V4World.repairCar()">🔧 修车况 <span class="mono">(6 材料 → +40%)</span></button>' : '') +
         ((poi.feat === 'fuel' || poi.id === 'gas') && s.veh ? '<button class="btn" onclick="V4World.refuel()">⛽ 加油 <span class="mono">(1 汽油 → 3 油)</span></button>' : '') +
       '</div>' +
-      '<div class="hint" style="margin-top:6px">行动力 ' + L.S.ap + '/' + apMaxOf(s.debt) + ' · 负重 ' + L.carryWeight() + '/' + L.capWeight() +
+      '<div class="hint" style="margin-top:6px">负重 ' + L.carryWeight() + '/' + L.capWeight() +
         (zone ? ' · 这里算作「' + (L.ZONES?.[zone]?.n ?? zone) + '」，主线与悬赏都认' : '') + '</div>';
   } else {
-    h += '<div class="sect-title">📍 ' + esc(b.name) + ' <span class="badge">空地</span></div>' +
-      '<p class="muted">' + (home ? '这里是你的安全屋。' : '这一带什么都没有——只有风、灰和远处拖行的声音。') +
+    body += '<p class="muted">' + (home ? '这里是你的安全屋。' : '这一带什么都没有——只有风、灰和远处拖行的声音。') +
       '往相邻的点亮区块走，找一个有东西的地方。</p>' +
-      (home ? '<div class="row" style="margin-top:8px"><button class="btn ok" onclick="restHere()">☕ 就地休整（1 行动力）</button></div>' : '') +
-      '<div class="hint" style="margin-top:6px">行动力 ' + L.S.ap + '/' + apMaxOf(s.debt) + ' · 走路 1 行动力/区块' + (s.veh ? ' · 开车 1 行动力/4 区块' : '') + '</div>';
+      (gh ? '<div class="hint" style="color:#c9a6ff">👻 ' + esc(gh.spec.owner) + ' 的幽灵据点就在这一格。</div>' : '') +
+      '<div class="hint">在上面那张图里点一个亮着的格子就能走：走路 1 行动力/区块' + (s.veh ? ' · 开车 1 行动力/4 区块' : '') + '</div>';
   }
-  h += '</div>';
+  return card('poi', '📍 格子详情 (' + b.x + ',' + b.y + ') · ' + esc(b.name), body,
+    [poi ? '危险 ' + (b.danger + poi.danger) : '危险 ' + b.danger, poi ? '可搜 ' + left + '/' + poi.searches + ' 次' : '空地']);
+}
 
-  // C01/C02：今夜怎么睡（安全屋满额零风险；野睡打折 + 必掷夜袭）
+/** C01/C02：今夜怎么睡（安全屋满额零风险；野睡打折 + 必掷夜袭）。
+    **全游戏唯一的睡觉入口**：legacy 那个「睡觉」按钮直连 sleepNight()，会绕过 v4 的
+    睡眠债/环境结算/野睡夜袭/据点被啃这一整套账（重复入口 + 真 bug），已从探索页摘掉。 */
+function nightCard(): string {
+  const s = sw(), b = curBlock();
   const restOpts = restOptions(b);
-  h += '<div class="wnight"><div class="sect-title">今夜 <span class="badge">第 ' + L.S.day + ' 天 → ' + (L.S.day + 1) + ' 天</span>' +
-    (isBloodMoonDay(L.S.day) ? '<span class="badge warn">血月：不在家会被啃据点</span>' : '') + '</div>' +
-    '<div class="row">' + restOpts.map(o =>
+  const badges = ['第 ' + L.S.day + ' 天 → ' + (L.S.day + 1) + ' 天'];
+  if (isBloodMoonDay(L.S.day)) badges.push('⚠️ 血月：不在家会被啃据点');
+  const body = '<div class="row">' + restOpts.map(o =>
       '<button class="btn sm' + (o.ok ? (o.kind === 'base' ? ' ok' : '') : ' ghost') + '"' + (o.ok ? '' : ' disabled') +
       ' onclick="V4Night.rest(\'' + o.kind + '\')" title="' + esc(o.why ?? o.detail) + '">' + o.icon + ' ' + esc(o.name) + '</button>').join('') +
     '</div>' +
-    '<div class="hint" style="margin-top:6px">' + restOpts.filter(o => o.kind === tierAt(b, !!s.veh && s.veh.fuel > 0 && s.veh.hp > 0))
-      .map(o => esc(o.detail))[0] + '</div>' +
-    '<div class="hint">睡在野外恢复 65% 行动力并涨半档睡眠债（上限 9 → 最低 6，且必掷夜袭）；回家睡满格、还 2 档债、不掷夜袭。</div>' +
-  '</div>';
+    '<div class="hint" style="margin-top:6px">' + esc(restOpts.filter(o => o.kind === tierAt(b, !!s.veh && s.veh.fuel > 0 && s.veh.hp > 0))
+      .map(o => o.detail)[0] ?? '') + '</div>' +
+    '<div class="hint">睡在野外恢复 65% 行动力并涨半档睡眠债（上限 9 → 最低 6，且必掷夜袭）；回家睡满格、还 2 档债、不掷夜袭。</div>';
+  return card('night', '🌙 今夜', body, badges);
+}
 
-  // C07：撤离点
+/** C07 撤离点卡（只在窗口开着时出现） */
+function evacCard(): string {
+  const b = curBlock();
   const ev = ensureEvac();
-  if (ev.open) {
-    const here = ev.site.x === b.x && ev.site.y === b.y;
-    h += '<div class="wevac"><div class="sect-title">📡 撤离点 <span class="badge">(' + ev.site.x + ',' + ev.site.y + ')</span></div>' +
-      '<div class="hint">' + (evacAvailable(L.S.day)
-        ? (here ? '你已经站在撤离点上了：打出一发信号枪，救援就回来。' : '窗口已开：带上信号枪走到撤离点。')
-        : '今天是血月——撤离窗口顺延（明天再发信号）。') +
-      (L.itemCount('flare') > 0 ? ' 身上的信号枪：' + L.itemCount('flare') + ' 发。' : ' 你还没有信号枪（军事哨所/地下掩体/隧道里能搜到）。') +
-      '</div>' +
-      (here ? '<div class="row"><button class="btn ok" onclick="V4World.flare()">🔴 打出信号弹（救援结局）</button></div>' : '') +
-    '</div>';
-  }
+  if (!ev.open) return '';
+  const here = ev.site.x === b.x && ev.site.y === b.y;
+  const body = '<div class="hint">' + (evacAvailable(L.S.day)
+      ? (here ? '你已经站在撤离点上了：打出一发信号枪，救援就回来。' : '窗口已开：带上信号枪走到撤离点。')
+      : '今天是血月——撤离窗口顺延（明天再发信号）。') +
+    (L.itemCount('flare') > 0 ? ' 身上的信号枪：' + L.itemCount('flare') + ' 发。' : ' 你还没有信号枪（军事哨所/地下掩体/隧道里能搜到）。') +
+    '</div>' +
+    (here ? '<div class="row"><button class="btn ok" onclick="V4World.flare()">🔴 打出信号弹（救援结局）</button></div>' : '');
+  return card('evac', '📡 撤离点', body, ['(' + ev.site.x + ',' + ev.site.y + ')']);
+}
 
-  if (s.trail.length) {
-    h += '<div class="sect-title">旅途记录</div><div class="trail">' +
-      s.trail.slice(-5).reverse().map(t => '<div>' + esc(t) + '</div>').join('') + '</div>';
-  }
-  return h;
+/** 旅途记录卡 */
+function trailCard(): string {
+  const s = sw();
+  if (!s.trail.length) return '';
+  return card('trail', '🧭 旅途记录', '<div class="trail">' +
+    s.trail.slice(-5).reverse().map(t => '<div>' + esc(t) + '</div>').join('') + '</div>');
+}
+
+/** 探索页卡片墙（除地图卡以外的全部玩法卡）。顺序＝用到的频率：
+    今日 → 这一格 → 环境 → 采集 → 水体 → 菜园 → 今夜 → 撤离 → 旅途；委托板与日历由 legacy 拼在后面。 */
+export function renderCards(): string {
+  return todayCard() + poiCard() + envCard() + gatherCard() + waterCard() + farmCard() +
+    nightCard() + evacCard() + trailCard();
+}
+
+/** 兼容旧调用点：M21 之前这里是"一整块详情面板"，现在拆成卡片墙（地图卡在上方单列） */
+export function renderDetailPanel(): string {
+  return renderCards();
 }
 
 /* ── 与 legacy 探索页拼接 ── */
@@ -559,7 +613,9 @@ function pruneLegacy(view: HTMLElement) {
   const titles = Array.from(view.querySelectorAll('.sect-title')) as HTMLElement[];
   for (const t of titles) {
     const txt = (t.textContent || '').trim();
-    if (txt.startsWith('城市地图') || txt.startsWith('可搜刮区域')) {
+    // 这两块被大世界地图取代（M17），今日行动被 v4 的卡片取代（M21：里面的「睡觉」按钮
+    // 直连 sleepNight()，会绕过 v4 的睡眠债/环境/夜袭结算，且和「今夜」卡重复）
+    if (txt.startsWith('城市地图') || txt.startsWith('可搜刮区域') || txt.startsWith('今日行动')) {
       const next = t.nextElementSibling;
       t.remove();
       if (next) next.remove();
@@ -567,63 +623,97 @@ function pruneLegacy(view: HTMLElement) {
   }
 }
 
+/** 把 legacy 自己的卡片（委托板 / 日历…）包成 v4 卡片：探索页只剩一种卡片语言 */
+function adoptLegacy(view: HTMLElement, board: HTMLElement) {
+  const keep: Element[] = [];
+  for (const child of Array.from(view.children)) {
+    if (child === board || child.id === 'v4world' || child.id === 'v4tools') continue;
+    if ((child as HTMLElement).classList.contains('v4board')) continue;
+    keep.push(child);
+  }
+  for (const el of keep) {
+    const e = el as HTMLElement;
+    if (e.tagName === 'DIV' && e.classList.contains('v4card')) { board.appendChild(e); continue; }
+    // sect-title + 紧随其后的 .card/.grid = 一段完整的 legacy 区块 → 一句话标题 + 内容
+    if (e.classList.contains('sect-title')) {
+      const next = e.nextElementSibling as HTMLElement | null;
+      const title = (e.textContent || '').trim();
+      const badges = Array.from(e.querySelectorAll('.badge')).map(b => (b.textContent || '').trim());
+      const bodyEl = next && (next.classList.contains('card') || next.classList.contains('grid')) ? next : null;
+      const body = bodyEl ? bodyEl.outerHTML : '';
+      const wrap = document.createElement('div');
+      wrap.className = 'v4card';
+      wrap.dataset.card = 'legacy';
+      wrap.innerHTML = '<div class="card-hd"><span class="card-tt">' + title + '</span>' +
+        badges.map(b => '<span class="badge">' + b + '</span>').join('') + '</div><div class="card-bd">' + body + '</div>';
+      board.appendChild(wrap);
+      e.remove();
+      if (bodyEl) bodyEl.remove();
+      continue;
+    }
+    board.appendChild(e);            // 其它散件（提示行等）原样搬进卡片墙
+  }
+}
+
 export function mountWorldPanel() {
   const S = L.S;
   const view = document.getElementById('view');
   if (!view) return;
-  // 切到别的页签（背包/任务…）时必须撤掉三列网格，否则那些内容会被塞进地图的三列里
+  // 切到别的页签（背包/任务…）时必须撤掉卡片墙，否则那些内容会被塞进探索页的网格里
   if (!S || S.tab !== 'explore' || S.over) {
-    view.classList.remove('v4-split');
+    view.classList.remove('v4-board');
     return;
   }
   syncApMax();                  // 读档/换日之后把 AP 上限与睡眠债对齐（R5：债是唯一真值）
   ensureEvac();                 // 第 90 天进入撤离窗口时落盘并提示
   pruneLegacy(view);
 
-  // 宽屏布局：地图 / 详情 / 原探索卡片 三列并排（CSS 生效在 ≥1400px），
-  // 窄屏自动退回单列（就是以前的样子）。地图和详情分开两块，才能各占一列。
+  /* M21 版面：左地图 + 右卡片墙（CSS `#view.v4-board`，≥1024px 生效；窄屏自动叠成一列）。
+     用户反馈原文："配置不平衡（左边一大堆右边就一个）……为什么不多搞一些卡片"——
+     所以详情面板被拆成 9 张卡，卡片墙用 auto-fill 网格自己找平，不再有"三列高矮不一"。 */
   const mapHtml = renderMapPanel();
-  const detailHtml = renderDetailPanel();
+  const cardsHtml = renderCards();
+  const toolsHtml = toolsStrip();
+  let tools = document.getElementById('v4tools') as HTMLElement | null;
   let map = document.getElementById('v4world') as HTMLElement | null;
-  let detail = document.getElementById('v4detail') as HTMLElement | null;
+  let board = view.querySelector(':scope > .v4board') as HTMLElement | null;
   if (!map) { map = document.createElement('div'); map.id = 'v4world'; map.className = 'card v4world v4-mapcol'; }
-  if (!detail) { detail = document.createElement('div'); detail.id = 'v4detail'; detail.className = 'card v4detail v4-detcol'; }
+  if (!board) { board = document.createElement('div'); board.id = 'v4cards'; board.className = 'v4board'; }
+  if (!tools) { tools = document.createElement('div'); tools.id = 'v4tools'; tools.className = 'v4tools'; }
   // 内容没变就别重写 innerHTML（否则每次 render 都会重置地图滚动位置/悬停态）
   if (map.dataset.sig !== mapHtml) { map.innerHTML = mapHtml; map.dataset.sig = mapHtml; }
-  if (detail.dataset.sig !== detailHtml) { detail.innerHTML = detailHtml; detail.dataset.sig = detailHtml; }
-
-  let col = view.querySelector(':scope > .v4-col') as HTMLElement | null;
-  if (!col) {
-    col = document.createElement('div');
-    col.className = 'v4-col';
-    // 把 legacy 自己的卡片（今日行动/委托板/日历…）整体挪进第三列
-    for (const child of Array.from(view.children)) {
-      if (child === map || child === detail) continue;
-      col.appendChild(child);
-    }
+  if (board.dataset.sig !== cardsHtml) {
+    board.innerHTML = cardsHtml;
+    board.dataset.sig = cardsHtml;
+    adoptLegacy(view, board);          // 卡片墙重建后，把 legacy 那几张（委托板/日历）重新认领进来
   }
-  if (view.firstChild !== map) view.insertBefore(map, view.firstChild);
-  if (map.nextSibling !== detail) view.insertBefore(detail, map.nextSibling);
-  // 只有位置不对才挪动：无脑 appendChild 会持续产生 childList 变更，把 MutationObserver 拖成死循环
-  if (col.parentElement !== view || view.lastElementChild !== col) view.appendChild(col);
-  view.classList.add('v4-split');
+  if (tools.dataset.sig !== toolsHtml) { tools.innerHTML = toolsHtml; tools.dataset.sig = toolsHtml; }
+
+  if (view.firstChild !== tools) view.insertBefore(tools, view.firstChild);
+  if (tools.nextSibling !== map) view.insertBefore(map, tools.nextSibling);
+  if (map.nextSibling !== board) view.insertBefore(board, map.nextSibling);
+  view.classList.add('v4-board');
   requestAnimationFrame(fitMap);        // 按可用高度定格子尺寸：能放大就放大，能放下就不滚
 }
 
-/** 地图格子尺寸自适应：算「这一列的内容总高（含上方标题）」，超了就缩格子，直到整列不用滚。
+/** 地图格子尺寸自适应：算「整列内容总高（含上方标题与工具条）」，超了就缩格子，直到不用滚。
     下限 24px（R4 定的点击命中区），上限 28px（再大就顶出屏幕）。 */
 function fitMap() {
   const view = document.getElementById('view');
   const card = document.getElementById('v4world');
   const wrap = card ? card.querySelector('.wmapwrap') as HTMLElement | null : null;
   const grid = card ? card.querySelector('.wgrid') as HTMLElement | null : null;
-  if (!view || !card || !wrap || !grid || !view.classList.contains('v4-split')) return;
+  if (!view || !card || !wrap || !grid || !view.classList.contains('v4-board')) return;
   const cardBox = card.getBoundingClientRect();
   const viewBox = view.getBoundingClientRect();
   const chrome = cardBox.height - wrap.getBoundingClientRect().height;   // 标题行/预览条/悬停行/图例/内边距
   const avail = viewBox.bottom - cardBox.top - chrome - 8;
   if (avail < 300) return;                                             // 太窄就不折腾，交给容器自己滚
-  let cell = Math.max(24, Math.min(28, Math.floor((avail - 46) / 24)));
+  // M21：格子尺寸同时受**宽**约束（左列一旦是固定宽度，高度算出来的 28px 会把地图撑到横向滚动）。
+  // 另外给卡片墙留 ~150px「露头」：地图再大也是 24×24，操作卡片一张都看不见才是真问题。
+  const availW = wrap.clientWidth - 14;                                 // 减去 .wmapwrap 的内边距与边框
+  const byW = Math.floor((availW - 23 * 2) / 24);
+  let cell = Math.max(24, Math.min(28, Math.floor((avail - 150 - 46) / 24), byW));
   const apply = (c: number) => {
     const tpl = 'repeat(24, ' + c + 'px)';
     if (grid.style.gridTemplateColumns !== tpl) {
