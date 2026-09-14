@@ -868,3 +868,33 @@ M12 起探索页是"3×3 区域图 + 24×24 本地图"**上下两块**：区域�
   - 1440×1000：卡片 724 ≤ 798 → 一屏装下（详情在右侧并排）；
   - 973×867：卡片 825 > 视图 665（这一档确实放不下），但**详情与「出发/走不了」都在地图上方首屏可见**——用户报障的那截不再被切。
 - 探针 `docs/_m21_layout_probe.mjs` 加到 **30/30**（新增 4 条：详情首屏可见 / 报价行首屏可见 / 整卡一屏装下 / 无横向溢出）。
+---
+
+## 二十六、M22：云存档只剩"贴令牌码"（用户第四张截图）
+
+- 截图事实：用户点「绑定 GitHub」后看到的是**失败补救面板**（"一键授权被 GitHub 挡住了"＋方式一设备码／方式二令牌＋诊断连接）。
+  他的原话：**"好何意味的绑定，改成直接用令牌码"**。
+- 判断：他说得对，这三条路的复杂度完全不值——一键授权在纯静态站**结构上就走不通**
+  （GitHub 的 `code → token` 接口不给浏览器跨域头，除非自建带 `client_secret` 的中继），
+  设备码要多跳两次页面、还只在勾了 Device Flow 的 OAuth App 上可用；能用的其实一直是"贴令牌"。
+  把三条路摊在一个报错面板里让玩家选，是把实现难度转嫁给了玩家。
+- 改法（`src/v4/account-ui.ts` + `src/main.ts`）：
+  - 删掉 `bindGitHub()`（OAuth 入口）、`bindGitHubConfirm()`、`consentHtml()`、`bindGitHubDevice()`、`deviceCodeModal()`、
+    `oauthFailHelp()`、`diagnose()` 与 `V4Account` 上对应的四个 key；
+  - 新增 `openTokenBind()`：**一个弹窗三步**（打开令牌页 → Generate token → 粘贴保存），
+    里面仍然写清"给什么权限（`gist` 全量授权的粒度限制）、存在哪（Worker / 本机 localStorage）、怎么收回
+    （Developer settings → Tokens 删掉，或面板解绑）、不想给令牌的退路（导出存档文件）"；
+  - 面板的「云账号绑定」段改成「云存档（GitHub 私有 Gist）」：未启用时只有一颗「🔑 贴令牌码开启云存档」，
+    启用后显示 `GitHub @你 ✕`（解绑）＋ 令牌存哪（顺带修掉 M8 那行把本机模式也说成"令牌存在 Worker 里"的错话）。
+  - `src/account/account.js`（游戏厅共用库）**不动**：`bindGitHubOAuth/bindGitHubDevice/diagnoseGitHub` 仍在，
+    将来想接回一键授权时不用重写（README 里留了 5 行接回说明）。
+- 文档同步：README（功能行 + 新增「为什么没有一键授权？」一节）、`PRIVACY.md` 第 3 节重写
+  （权限表只剩 `gist`；撤销入口从 Authorized OAuth Apps 改成 Developer settings → Tokens）、第 4 节撤销行同步。
+- 实测：`docs/_m22_account_token_probe.mjs` **17/17 通过**（本地）：旧入口从 `V4Account` 上消失、页面里没有任何指向它们的
+  `onclick`、面板只剩「贴令牌码开启云存档」、弹窗有输入框＋「保存并启用」且**一屏装得下**（365px @900 高）、
+  乱填的令牌当场被拒（"这不像 GitHub 令牌"）、**形状正确但无效的令牌真的打到了 GitHub**
+  （`令牌无效或缺少权限：Bad credentials`，证明这条路是通的）；`npx tsc --noEmit` 干净、单测 264/264。
+- 已知问题：
+  - **P2**：一键授权这条路从游戏 UI 上撤了；若要恢复，需要先部署中继并配 `GH_CLIENT_SECRET`（库函数与 Worker 都还在）。
+  - **P3**：令牌默认勾 `gist` 是全量授权（GitHub 的粒度限制，收不窄）——已在弹窗与 PRIVACY.md 明写；
+    想要更小权限只能改用「导出存档文件」这条离线路。

@@ -164,10 +164,10 @@ function loggedInHtml(u: NonNullable<ReturnType<typeof currentUser>>, a: NonNull
         : '已解锁（密钥只在本标签页内存里，关掉即失效）') + '</div>';
   }
   if (g && g.serverSide !== false) h += '<div class="hint">GitHub 令牌保存在 Worker 里（前端拿不到），中继只允许读写你名下那一个存档 Gist。</div>';
-  h += '<div class="sect-title" style="margin-top:12px">云账号绑定</div><div class="row">';
+  h += '<div class="sect-title" style="margin-top:12px">云存档（GitHub 私有 Gist）</div><div class="row">';
   h += g
     ? '<button class="btn ok" onclick="V4Account.unbind(\'github\')">GitHub @' + esc(g.login) + ' ✕</button>'
-    : '<button class="btn" onclick="V4Account.bindGitHub()">🐙 绑定 GitHub 账号</button>';
+    : '<button class="btn" onclick="V4Account.openTokenBind()">🔑 贴令牌码开启云存档</button>';
   // 微软这条要先在 Azure 注册应用，而个人微软账号会被要求绑信用卡 —— 没配 clientId 就干脆不显示按钮，
   // 免得点了一下只看到错误（见 auth-config.js 顶部记录）。
   if (a.config().microsoft.clientId) {
@@ -176,10 +176,12 @@ function loggedInHtml(u: NonNullable<ReturnType<typeof currentUser>>, a: NonNull
       : '<button class="btn" onclick="V4Account.bindMicrosoft()">🪟 绑定微软账号</button>';
   }
   h += '</div>';
-  if (!g && !m) h += '<div class="hint">没绑云账号也能用：存档按账号存在这台设备的浏览器里，用下面的「导出存档文件」能拷到别的设备。' +
-    '绑 GitHub 之后存档会同步到你自己账号下的私有 Gist，随时能删。</div>';
-  if (!a.config().microsoft.clientId) h += '<div class="hint">微软登录这条路暂时没有：它要求在 Azure 注册应用，而个人微软账号走注册流程时被要求绑信用卡。' +
-    'GitHub 一条就够用（免费、无额度限制）。</div>';
+  if (!g && !m) h += '<div class="hint">没启用云存档也能玩：进度就在这台设备的浏览器里，下面的「导出存档文件」能拷到别的设备。' +
+    '想跨设备就贴一次 GitHub 令牌码——存档会写进你自己账号下的一个私有 Gist，随时能删。</div>';
+  if (!a.config().microsoft.clientId) h += '<div class="hint">微软那条路暂时没有：它要求在 Azure 注册应用，' +
+    '而个人微软账号走注册流程时被要求绑信用卡。GitHub 一条够用（免费、无额度限制），不想给令牌就导出存档文件。</div>';
+  if (g && g.serverSide) h += '<div class="hint">令牌保存在你自己的 Worker 里（前端拿不到），中继只允许读写你名下那一个存档 Gist。</div>';
+  if (g && !g.serverSide) h += '<div class="hint">令牌只存在这台设备（浏览器 localStorage），除了 api.github.com 不向别处发请求；随时可在 GitHub 设置里撤销。</div>';
   if (g) h += '<div class="hint">GitHub 云盘 = 一个私有 Gist（描述里写着 bobbychina.github.io/games），删除 gist 就等于删云端存档。</div>';
   if (m) h += '<div class="hint">微软云盘 = OneDrive 的「应用文件夹 /dsh-saves」，不占用你可见的文档目录。</div>';
   /* 今日上传额度：服务端每账号每天 10 次（免费版 KV 每天只有 1000 次写），挂载后异步填进来 */
@@ -270,105 +272,46 @@ export function logout(): void {
   toastMsg('已退出登录', '存档还在这台设备上，重新登录就能继续用。', 'info');
 }
 
-/* ── 云账号绑定 ── */
-export async function bindGitHub(): Promise<void> {
+/* ── 云存档 = 贴一次令牌码（M22） ──
+   用户原话："好何意味的绑定，改成直接用令牌码"——所以 OAuth 一键授权、设备码、诊断三种入口全删：
+     · 一键授权在纯静态站（GitHub Pages）本来就走不通：GitHub 的 code 换 token 接口不给跨域头，
+       除非自建带 client_secret 的中继——为存个档搭服务端不值得；
+     · 设备码要多跳两次页面，还只在勾了 Device Flow 的 OAuth App 上可用；
+     · 令牌码 3 步就能用，而且"给什么权限、存在哪、怎么收回"都能在一个弹窗里说清。
+   权限披露没有省：gist 是全量授权这件事仍然明写在弹窗里。 */
+const TOKEN_URL = 'https://github.com/settings/tokens/new?scopes=gist&description=' +
+  encodeURIComponent('bobbychina.github.io/games 云存档');
+
+/** 令牌码弹窗（云存档唯一的开启方式） */
+export function openTokenBind(): void {
   const a = A(); if (!a) return;
-  const c = a.config();
-  if (!c.github.clientId) {
-    // 没配 client_id 时给出"零注册"的兜底路：浏览器里生成一个只带 gist 权限的令牌
-    L.modal({
-      title: '🐙 绑定 GitHub',
-      sticky: true,
-      body: '<p class="muted">两条路都行，任选一条：</p>' +
-        '<div class="sect-title" style="margin-top:10px">A · 一键授权（推荐）</div>' +
-        '<div class="hint">还没配置 client_id，所以一键授权暂时不可用——把 OAuth App 的 client_id 填进 ' +
-        '<span class="mono">/games/auth-config.js</span> 就会自动启用（README 有 3 步图文）。</div>' +
-        '<div class="sect-title" style="margin-top:10px">B · 令牌绑定（现在就能用，2 次点击）</div>' +
-        '<div class="hint">点下面的按钮 → GitHub 会打开「新建令牌」页并勾好 <span class="mono">gist</span> 权限 → ' +
-        '点 Generate token → 复制粘贴到下面。令牌只存在你这台设备的浏览器里，随时可在 GitHub 设置里撤销。</div>' +
-        '<div class="hint" style="color:#e0b06a">⚠️ 权限说明：<span class="mono">gist</span> 是<b>全量</b>授权——' +
-        '拿到令牌的人能读写你账号下所有 Gist（碰不到仓库与代码）；<span class="mono">read:user</span> 只读一次用户名/头像。' +
-        '撤销地址：github.com/settings/applications。详见 PRIVACY.md。</div>' +
-        '<div class="row" style="margin-top:8px">' +
-        '<button class="btn" onclick="window.open(\'https://github.com/settings/tokens/new?scopes=gist&description=bobbychina.github.io%2Fgames%20%E4%BA%91%E5%AD%98%E6%A1%A3\',\'_blank\')">🔗 打开 GitHub 令牌页</button></div>' +
-        '<input id="acc-gh-token" placeholder="粘贴令牌（ghp_… 或 github_pat_…）" style="width:100%;margin-top:8px">' +
-        '<div class="hint" id="acc-msg" style="margin-top:8px"></div>',
-      footer: '<button class="btn ok" onclick="V4Account.bindGitHubToken()">绑定</button>' +
-        '<button class="btn ghost" onclick="V4Account.bindGitHubDevice()">用设备码绑定</button>' +
-        '<button class="btn" data-close>取消</button>',
-    });
-    return;
-  }
-  // 两步走：先让玩家看清"这次授权要什么"，确认后才开 GitHub 授权页
+  const serverSide = !!a.config().api;      // 配了中继 = 令牌交给自己的 Worker 保存，前端不留
   L.modal({
-    title: '🔒 绑定前确认：这次要什么权限',
+    title: '🔑 贴令牌码，开启云存档',
     sticky: true,
-    body: consentHtml(),
-    footer: '<button class="btn ok" onclick="V4Account.bindGitHubConfirm()">我明白，继续授权</button>' +
+    body: '<div class="hint">云存档 = 你 GitHub 账号下的<b>一个私有 Gist</b>。三步：' +
+      '① 点下面按钮打开令牌页（<span class="mono">gist</span> 权限已勾好）→ ② 点 <b>Generate token</b> 复制 → ③ 粘进框里点「保存并启用」。</div>' +
+      '<div class="row" style="margin-top:8px"><button class="btn" onclick="window.open(\'' + TOKEN_URL + '\',\'_blank\')">🔗 打开 GitHub 令牌页</button></div>' +
+      '<input id="acc-gh-token" placeholder="粘贴令牌码（ghp_… / github_pat_…）" style="width:100%;margin-top:8px">' +
+      '<div class="hint" style="margin-top:8px">权限只有 <span class="mono">gist</span>：读写你账号下的 Gist。' +
+      'GitHub 没有"只授权某一个 Gist"的粒度，但令牌碰不到你的仓库、代码、issue 与密码。</div>' +
+      '<div class="hint">存在哪：' + (serverSide
+        ? '发给<b>你自己的 Cloudflare Worker</b>保存（前端不留令牌），中继只允许读写你名下那一个存档 Gist。'
+        : '只在这台设备的浏览器（localStorage）——本站没有后端，除了 api.github.com 不向别处发请求；公用电脑上别贴。') + '</div>' +
+      '<div class="hint">怎么收回：GitHub → Settings → Developer settings → Tokens 里删掉它（本地存档不受影响）；云端存档就是那个 Gist。' +
+      '面板上点「GitHub @你 ✕」也能解绑。</div>' +
+      '<div class="hint" style="color:#e0b06a">⚠️ 不想给令牌？关掉窗口：用「💾 导出存档文件 / 📂 从文件导入」换设备，完全不需要第三方账号。</div>' +
+      '<div class="hint" id="acc-msg" style="margin-top:8px"></div>',
+    footer: '<button class="btn ok" onclick="V4Account.bindGitHubToken()">保存并启用</button>' +
       '<button class="btn" data-close>取消</button>',
-  });
-}
-/** 授权前的权限披露（和 PRIVACY.md 一致；玩家不看文档也能知道自己在给什么） */
-function consentHtml(): string {
-  return '<p class="muted">绑定 GitHub 只为了把存档放进<b>你自己账号下的私有 Gist</b>。授权页上会看到两项：</p>' +
-    '<div class="sect-title" style="margin-top:10px">① Gists — 读写</div>' +
-    '<div class="hint">用来创建/读写那一个私有 Gist（描述写着 bobbychina.github.io/games 云存档）。' +
-    '<b>注意：GitHub 没有"只授权一个 Gist"的粒度</b>，所以这个权限理论上能读写你账号下所有 Gist——但碰不到你的仓库、issue、Actions 和代码。</div>' +
-    '<div class="sect-title" style="margin-top:10px">② Personal user data — 只读</div>' +
-    '<div class="hint">只在绑定那一刻读一次用户名与头像用于显示（例如 GitHub @你的名字），之后同步存档不再调用。</div>' +
-    '<div class="sect-title" style="margin-top:10px">令牌存在哪</div>' +
-    '<div class="hint">只存在<b>你这台设备的浏览器 localStorage</b>——本站没有后端，也没有任何服务器保存你的数据；除了 api.github.com 之外没有别的请求。' +
-    '所以别在公用电脑上绑定。</div>' +
-    '<div class="sect-title" style="margin-top:10px">怎么收回</div>' +
-    '<div class="hint">撤销授权：github.com/settings/applications → Authorized OAuth Apps → bobbychina\'s games → Revoke（本地存档不受影响）；' +
-    '删云端存档：面板里的「删除」或直接删掉那个 Gist；清本机一切：面板 →「🗑️ 注销账号」。完整说明见仓库里的 PRIVACY.md。</div>' +
-    '<div class="hint" style="color:#e0b06a">⚠️ 不想给这些权限？关掉本窗口，用下面的「💾 导出存档文件 / 📂 从文件导入」也能换设备，完全不需要第三方账号。</div>';
-}
-export async function bindGitHubConfirm(): Promise<void> {
-  const a = A(); if (!a) return;
-  L.closeAllModals();
-  L.log('🐙 正在打开 GitHub 授权页…（权限：gist 读写 + 只读个人资料）', 'info');
-  const r = await a.bindGitHubOAuth();
-  /* 中继连通但还没放 client_secret 时，GitHub 会回 incorrect_client_credentials：
-     与其让用户再点一次，不如直接自动改用设备码（不需要任何密钥）。 */
-  if (!r.ok && /incorrect_client_credentials/.test(String(r.err))) {
-    L.log('ℹ️ 中继还没配 client_secret，自动改用设备码绑定（不需要密钥）。', 'info');
-    const d = await a.bindGitHubDevice(info => { deviceCodeModal(info); });
-    if (!d.ok) { oauthFailHelp(d.err ?? ''); return; }
-    afterBind(d, 'github');
-    return;
-  }
-  afterBind(r, 'github');
-}
-/** 设备码提示框：把 9 位码放到最显眼处，并自动打开 GitHub 的授权页 */
-function deviceCodeModal(info: { user_code: string; verification_uri: string }): void {
-  L.modal({
-    title: '🔢 在 GitHub 输入这 9 位',
-    sticky: true,
-    body: '<p class="muted">已自动打开 GitHub 的授权页；把下面这串输进去并点 <b>Authorize</b>，这边会自动完成绑定（不用回来点任何东西）。</p>' +
-      '<div class="mono" style="font-size:30px;letter-spacing:5px;text-align:center;color:#7fd6a5;margin:16px 0">' + esc(info.user_code) + '</div>' +
-      '<div class="hint">页面没自动打开？手动访问：' + esc(info.verification_uri) + '</div>' +
-      '<div class="hint" id="acc-msg"></div>',
-    footer: '<button class="btn" onclick="window.open(\'' + esc(info.verification_uri) + '\',\'_blank\')">打开 GitHub 授权页</button>' +
-      '<button class="btn" data-close>稍后再说</button>',
   });
 }
 export async function bindGitHubToken(): Promise<void> {
   const a = A(); if (!a) return;
   const t = val('#acc-gh-token');
-  if (!t) { msg('先把令牌粘进来', true); return; }
+  if (!t) { msg('先把令牌码粘进来', true); return; }
   msg('正在校验令牌……');
   const r = await a.bindGitHubToken(t);
-  afterBind(r, 'github');
-}
-export async function bindGitHubDevice(): Promise<void> {
-  const a = A(); if (!a) return;
-  msg('正在申请设备码……');
-  const r = await a.bindGitHubDevice(info => {
-    msg('请在打开的页面上输入设备码：' + info.user_code);
-    try { window.open(info.verification_uri, '_blank'); } catch { /* ignore */ }
-  });
-  if (!r.ok) { msg(r.err ?? '设备码绑定失败', true); return; }
   afterBind(r, 'github');
 }
 export async function bindMicrosoft(): Promise<void> {
@@ -384,63 +327,14 @@ export async function bindMicrosoft(): Promise<void> {
 }
 function afterBind(r: { ok: boolean; err?: string }, provider: string) {
   if (!r.ok) {
-    // 一键授权失败大多是 GitHub 换 token 接口没有 CORS 头（静态站绕不过去）——
-    // 直接把"现在就能用"的令牌路摆到面前，而不是只丢一句错误。
-    toastMsg('一键授权被挡住了', r.err ?? '换 token 失败', 'bad');
-    if (provider === 'github') { oauthFailHelp(r.err ?? ''); return; }
+    toastMsg(provider === 'github' ? '云存档没启用' : '绑定失败', r.err ?? '', 'bad');
     msg(r.err ?? '绑定失败', true);
     return;
   }
-  L.log('☁️ 已绑定' + (provider === 'github' ? ' GitHub' : ' 微软') + '账号，存档可以同步到云端了。', 'success');
+  L.log('☁️ 已' + (provider === 'github' ? '开启 GitHub 云存档' : '绑定微软账号') + '，存档可以同步到云端了。', 'success');
   L.closeAllModals(); openPanel(); L.render();
 }
-/** 一键授权失败后的补救面板：令牌路（实测可用）放主位，设备码放备位 */
-function oauthFailHelp(err: string): void {
-  const noSecret = /incorrect_client_credentials/.test(err);
-  L.modal({
-    title: '🐙 一键授权被 GitHub 挡住了',
-    sticky: true,
-    body: '<p class="muted">原因：GitHub 的换 token 接口 <span class="mono">login/oauth/access_token</span> 不给浏览器跨域头，' +
-      '纯静态站（GitHub Pages）读不到它的响应——这是 GitHub 的限制，跟你的操作无关。刚才那一步<b>没有拿到任何令牌</b>，' +
-      '你可以在 GitHub 设置里随时撤销那次授权。</p>' +
-      '<div class="hint">原始错误：' + esc(err) + '</div>' +
-      (noSecret
-        ? '<div class="hint" style="color:#e0b06a">这条错误说明：中继已经连通，但中继里还没配 <span class="mono">client_secret</span>' +
-          '（GitHub 的 code 换 token 强制要它）。给 Worker 加一个名为 <span class="mono">GH_CLIENT_SECRET</span> 的 Secret 变量即可启用真一键；' +
-          '不加也行——用下面的「设备码」照样能绑。</div>'
-        : '') +
-      '<div class="sect-title" style="margin-top:12px">方式一：设备码（点一下就出码，浏览器里输 9 位）</div>' +
-      '<div class="hint">点「用设备码试试」→ 面板会给出 <span class="mono">XXXX-XXXX</span> 并自动打开 GitHub 的授权页 → 输入码 → 完成。' +
-      '这条通道已经实测可用（不需要任何密钥）。</div>' +
-      '<div class="sect-title" style="margin-top:12px">方式二：令牌绑定（2 步，任何情况下都能用）</div>' +
-      '<div class="hint">1. 点下面按钮 → GitHub 打开「新建令牌」页，权限已勾好 <span class="mono">gist</span> → 点 <b>Generate token</b> → 复制；<br>' +
-      '2. 粘到下面的框里，点「绑定」。令牌只存在你这台设备的浏览器里，随时可在 GitHub 设置里撤销。</div>' +
-      '<div class="row" style="margin-top:8px"><button class="btn" onclick="window.open(\'https://github.com/settings/tokens/new?scopes=gist&description=bobbychina.github.io%2Fgames%20%E4%BA%91%E5%AD%98%E6%A1%A3\',\'_blank\')">🔗 打开 GitHub 令牌页</button></div>' +
-      '<input id="acc-gh-token" placeholder="粘贴令牌（ghp_… 或 github_pat_…）" style="width:100%;margin-top:8px">' +
-      '<div class="sect-title" style="margin-top:12px">查清楚到底被什么挡住（可选）</div>' +
-      '<div class="hint">点一下会空跑四种请求（用假 code，不会产生任何令牌），把结果贴给作者就能定位。</div>' +
-      '<div id="acc-diag"></div>' +
-      '<div class="hint">不想给任何权限也行：用「💾 导出存档文件 / 📂 从文件导入」照样换设备。</div>' +
-      '<div class="hint" id="acc-msg" style="margin-top:8px"></div>',
-    footer: '<button class="btn ok" onclick="V4Account.bindGitHubToken()">绑定</button>' +
-      '<button class="btn' + (noSecret ? ' ok' : ' ghost') + '" onclick="V4Account.bindGitHubDevice()">用设备码试试</button>' +
-      '<button class="btn ghost" onclick="V4Account.diagnose()">🔍 诊断连接</button>' +
-      '<button class="btn" data-close>取消</button>',
-  });
-}
-/** 诊断结果直接画进面板（复制给别人看很方便） */
-export async function diagnose(): Promise<void> {
-  const a = A(); if (!a) return;
-  const box = L.$('#acc-diag') as HTMLElement | null;
-  if (box) box.innerHTML = '<div class="hint">正在空跑四种请求…（约几秒）</div>';
-  const rows = await a.diagnoseGitHub();
-  const html = '<div class="hint mono" style="white-space:pre-wrap;line-height:1.7">' +
-    rows.map(r => (r.ok ? '✅ ' : '⛔ ') + esc(r.name) + ' → ' + (r.ok ? 'HTTP ' + r.status + ' ' + esc(r.body) : esc(r.body))).join('\n') +
-    '</div><div class="hint">把上面几行发给作者即可（不含任何令牌）。</div>';
-  if (box) box.innerHTML = html;
-  L.log('🔍 GitHub 通道诊断：' + rows.map(r => (r.ok ? '通' : '挡') + '=' + r.name.split(' ')[0]).join(' '), 'info');
-  console.log('[account] diagnose', rows);
-}
+
 export function unbind(provider: 'github' | 'microsoft'): void {
   void (async () => {
     const r = await A()?.unbind(provider);

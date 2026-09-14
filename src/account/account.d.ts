@@ -45,7 +45,12 @@ export interface DshAccount {
   bindMicrosoft(): Promise<AccountResult>;
   diagnoseGitHub(): Promise<{ name: string; ok: boolean; status: number; body: string }[]>;
   unbind(provider: 'github' | 'microsoft'): AccountResult;
-  config(): { github: { clientId: string }; microsoft: { clientId: string } };
+  /** 运行期配置（auth-config.js 注入 / 默认值）：api 配了就是"中继模式"（令牌存 Worker） */
+  config(): {
+    api?: string; redirect?: string;
+    github: { clientId: string; scope: string };
+    microsoft: { clientId: string; tenant?: string; scope?: string };
+  };
   slots(game: string): SaveSlot[];
   saveGet(game: string, slot: string): unknown;
   saveInfo(game: string, slot: string): { updatedAt: string; bytes: number; cloud?: unknown } | null;

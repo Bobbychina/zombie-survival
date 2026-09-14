@@ -64,33 +64,30 @@
 - **每日上传配额：每个账号每天 10 次**（以 UTC+8 零点为界），超了返回 `429 quota_exceeded`，面板上会显示"今天还剩几次"。原因是 KV 免费额度每天只有 1000 次写：不设配额的话，一个脚本就能把整天的额度刷光，让所有人的云存档都写不进去。删除存档不占用配额。
 - 自动同步有两段节流（先合并 8 秒内的连续保存，再保证距上次写云至少 60 秒），避免把 KV/Gist 当高频存储刷。
 
-## 3. 绑定 GitHub 时申请的权限（只有你主动点绑定时才会发生）
+## 3. 云存档用的 GitHub 令牌（只有你自己贴上来时才会发生）
 
-申请范围写死在 `games/auth-config.js` 的 `scope: 'gist read:user'`。
+**没有授权页这一步**（M22 起）：你自己在 GitHub 建一个只勾 `gist` 的令牌，贴进游戏即可。
+OAuth 一键授权在纯静态站走不通——GitHub 的 `code → token` 接口不给浏览器跨域头，除非自建带 `client_secret` 的中继；
+设备码流程要多跳两次页面。贴令牌码 3 步就能用，权限也更容易说清。
 
-| 权限 | 授权页上的说法 | 我们用它做什么 | 我们**不做**什么 |
+| 权限 | 令牌页上的勾选 | 我们用它做什么 | 我们**不做**什么 |
 |---|---|---|---|
-| `gist` | Gists — Read and write access | 创建**一个私有 Gist**（描述为 `bobbychina.github.io/games 云存档`），在里面按 `<游戏>__<槽位>.json` 读写存档 | 不读你的仓库、issue/PR/Actions，不改你的代码 |
-| `read:user` | Personal user data — Profile information (read-only) | **只在绑定那一刻**读一次用户名与头像用于界面显示 | 不读邮箱、不读关注列表、不写任何资料 |
+| `gist` | Gists — Read and write | 创建**一个私有 Gist**（描述为 `bobbychina.github.io/games 云存档`），在里面按 `<游戏>__<槽位>.json` 读写存档 | 不读你的仓库、issue/PR/Actions，不改你的代码，读不到你的密码 |
 
-**令牌不再进入浏览器**：云模式下，`code → token` 的交换在 Worker 里完成（带 PKCE + `client_secret`），
-令牌以 **AES-GCM 加密后存进 KV**，前端只拿到用户名和头像；所有 Gist 读写都通过 Worker 代理，
-且只允许操作**它自己创建的那一个 Gist** 里形如 `<game>__<slot>.json` 的文件（文件名另有白名单校验）。
-点「解绑」时 Worker 会顺手调用 GitHub 的撤销接口把令牌作废。
-只有**没配云后端的本机模式**才会在前端换 token，那种情况令牌只放 `sessionStorage`（关掉标签页即消失），
-并在界面上写明风险。
+**令牌存在哪**：配了云后端（中继）时，令牌只发给**你自己的 Worker**，以 AES-GCM 加密后存进 KV，
+前端拿不到；所有 Gist 读写都通过 Worker 代理，且只允许操作**它自己创建的那一个 Gist** 里
+形如 `<game>__<slot>.json` 的文件（文件名另有白名单校验）。点「解绑」时 Worker 会顺手调用 GitHub 的撤销接口把令牌作废。
+没配云后端的**本机模式**下，令牌只存在这台设备浏览器的 `localStorage`，除了 `api.github.com` 不发任何请求——
+所以别在公用电脑上贴。
 
 代价（GitHub 的粒度限制，不是我们能收窄的）：`gist` 是**全量**授权——令牌若泄漏，理论上能读写你账号下所有 Gist
-（**碰不到仓库与代码**）。这正是把它关在服务端、且不返回前端的原因。
-
-代价（GitHub 的粒度限制，不是我们能收窄的）：`gist` 是**全量**授权——令牌若泄漏，理论上能读写你账号下所有 Gist
-（**碰不到仓库与代码**）。这正是把它关在服务端、且不返回前端的原因。
+（**碰不到仓库与代码**）。这正是云模式下把它关在服务端、不返回前端的原因。
 
 ## 4. 你随时能收回
 
 | 想做什么 | 怎么做 |
 |---|---|
-| 撤销 GitHub 授权 | <https://github.com/settings/applications> → Authorized OAuth Apps → `bobbychina's games` → **Revoke** |
+| 撤销 GitHub 令牌 | <https://github.com/settings/tokens> → 删掉那个令牌（面板上点「GitHub @你 ✕」解绑也可以） |
 | 删云端存档 | 账号面板里的「删除」，或直接删掉那个私有 Gist |
 | **删云账号（含服务端数据）** | 账号面板 → **🗑️ 注销账号**：会同时删掉 Cloudflare KV 里这个账号的用户名记录、会话与全部存档 |
 | 清掉本机一切 | 注销账号，或清空该站点的浏览器数据 |
