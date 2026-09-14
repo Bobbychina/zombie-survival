@@ -81,6 +81,27 @@ describe('配方 / 建造 / 掉落表只引用存在的物品', () => {
     expect(cost.filter(id => !known(id))).toEqual([]);
   });
 
+  /* M25：配方分两处定义（顶部字面量 + 后面的 RECIPES.push），老的那批只有 `bench`（工作台等级）、
+     没有 st/lv —— 漏掉归一化就是 `lv >= undefined` 恒 false：**那些配方永远做不了**，
+     界面还显示 Lv.undefined（玩家实测就是这样）。所以必须有一条测试盯着两处都被补上。 */
+  it('每条配方最终都有 st（工作站）与数字 lv（等级）—— 两处定义都要被 normalizeRecipes 覆盖', () => {
+    expect(legacy).toMatch(/function normalizeRecipes\(\)/);
+    expect(legacy).toMatch(/normalizeRecipes\(\);\s*$/m);
+    const recipes = blocks(legacy, /^(?:const RECIPES = \[|RECIPES\.push\()/);
+    const st = [...recipes.matchAll(/st:\s*'([^']+)'/g)].map(m => m[1]);
+    const lv = [...recipes.matchAll(/\blv:\s*(\d+)/g)].map(m => Number(m[1]));
+    const bench = [...recipes.matchAll(/\bbench:\s*(\d+)/g)].map(m => Number(m[1]));
+    // 新写法（st+lv）与老写法（bench）都得有：老写法靠归一化补，新写法直接写
+    expect(st.length).toBeGreaterThan(15);
+    expect(lv.length).toBeGreaterThan(15);
+    expect(bench.length).toBeGreaterThan(5);
+    // 归一化里必须同时认 st / lv / bench 三个字段
+    const fn = /function normalizeRecipes\(\)\{([\s\S]*?)\n\}/.exec(legacy)?.[1] ?? '';
+    expect(fn).toContain('r.bench');
+    expect(fn).toContain("r.st = 'bench'");
+    expect(fn).toContain('r.lv');
+  });
+
   it('POI 掉落表（含 M7.1 新增的家具城/建材市场等）只掉存在的物品', () => {
     const lootKeys: string[] = [];
     for (const m of poisSrc.matchAll(/loot:\s*\{([^}]*)\}/g)) lootKeys.push(...keysIn(m[1]));
