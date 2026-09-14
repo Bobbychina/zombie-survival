@@ -1,7 +1,7 @@
 /* 大世界层的单元测试：旅行报价、迷雾恢复、搜刮纯逻辑。
    这些是"玩家每天都点"的路径，出错会直接卡住主线，所以用测试钉住。 */
 import { describe, expect, it } from 'vitest';
-import { zombieIds } from './legacy-tables';
+import { itemIds, zombieIds } from './legacy-tables';
 import { bkey, blockAt, generateWorld } from '../src/v4/worldgen';
 import {
   defaultSaveWorld, ensureSaveWorld, findPath, markVisited, planTrip, rollTravelEncounter, switchRegion, zoneOfPoi, worldOf,
@@ -154,14 +154,9 @@ describe('搜刮与 POI', () => {
   });
 
   it('掉落表里的 id 全部真实存在（否则玩家会抽到空气）', () => {
-    const VALID = new Set(['ammo',   // ammo 是独立计数（S.ammo），不在 ITEMS 里但 grant() 认它
-      'flare',  // v4.0 C07：信号枪（撤离结局用），已加进 legacy ITEMS
-      'fish', 'fish_cooked', 'rod', 'bait', 'wetsuit', 'o2', 'purify',   // M7/M7.1：水体互动的物品 + 净化片
-      'berry', 'mushroom', 'grain', 'dried', 'pickle', 'seed_veg', 'seed_grain',   // M6：农业/采集/加工
-      'can', 'biscuit', 'jerky', 'choco', 'water', 'dirty', 'cola', 'bandage', 'medkit', 'painkiller', 'anti',
-      'serum', 'antitoxin', 'cloth', 'metal', 'tape', 'powder', 'wood', 'chip', 'chem', 'fuel', 'bottle', 'molotov', 'grenade',
-      'smoke', 'crowbar', 'machete', 'axe', 'pistol', 'shotgun', 'rifle', 'marksman', 'gasmask', 'hazmat', 'vest', 'kevlar',
-      'helmet', 'boots', 'backpack', 'keycard', 'data', 'cure']);
+    /* M25：这份名单原来手写，加弹种/新物品就会误报（M25 加了 10 种弹，一次报 5 条假失败）。
+       改成直接解析 legacy 的 ITEMS 表 + 极少数非物品 id（grant 认得但不在 ITEMS 里的）。 */
+    const VALID = new Set<string>([...itemIds(), 'ammo']);
     const bad: string[] = [];
     for (const id in POIS) for (const it in POIS[id].loot) if (!VALID.has(it)) bad.push(id + ':' + it);
     expect(bad).toEqual([]);

@@ -22,10 +22,17 @@
   ::-webkit-scrollbar-thumb{background:#2c313b;border-radius:4px}
   ::-webkit-scrollbar-thumb:hover{background:#3c424f}
 
-  /* ─── App shell ─── */
-  #app{position:relative;z-index:1;width:min(1200px,100vw);height:100vh;max-height:1040px;margin:0 auto;
+  /* ─── App shell ───
+     M25 根因修复：站点 BETA 声明条 / 手机提醒条是 body 里的**流内** sticky 节点（实测 33px），
+     而 #app 原本写死 100vh + 从那条下面开始 → 文档正好比视口高 33px，**整个页面能滚**
+     （用户报「为什么整个页面还能滚动」）。用 :has() 把这两条的高度从 #app 里扣掉；
+     --beta-h / --mobile-h 是给站点脚本按实测高度覆盖用的兜底（字号或换行一变，33px 就不准了）。 */
+  #app{position:relative;z-index:1;width:min(1200px,100vw);height:calc(100vh - var(--beta-h,0px));
+    max-height:1040px;margin:0 auto;
     display:grid;grid-template-rows:3px auto auto auto 1fr;background:var(--panel);
     border-left:1px solid var(--line);border-right:1px solid var(--line);overflow:hidden}
+  body:has(> #beta-notice) #app{height:calc(100vh - var(--beta-h,33px))}
+  body:has(> #mobile-warn) #app{height:calc(100vh - var(--beta-h,0px) - var(--mobile-h,46px))}
   #hazard{background:repeating-linear-gradient(45deg,var(--warn) 0 9px,#141414 9px 18px);opacity:.55}
   .shake{animation:shake .28s}
   @keyframes shake{10%,90%{transform:translateX(-2px)}30%,70%{transform:translateX(3px)}50%{transform:translateX(-4px)}}
@@ -237,7 +244,10 @@
   #daytint.no-t{transition:none}
 
   @media (max-width:860px){
-    #app{max-height:none;border:none}
+    /* M25：这里原来只写了 max-height:none（想去掉 1040px 上限），但 #app 现在是
+       height:calc(100vh - BETA 条高)，max-height 盖不住 height —— 窄屏必须显式放开高度，
+       让内容撑高、由 body 滚（手机端"整页滚"是预期行为，桌面才是 shell 固定）。 */
+    #app{height:auto;min-height:calc(100vh - var(--beta-h,0px));max-height:none;border:none}
     /* 顶栏不换行会把 #app 的隐式列撑到 534px（现在实测过），窄屏必须允许换行并允许品牌名收缩 */
     #topbar{flex-wrap:wrap;gap:8px;padding:8px 12px}
     .brand{font-size:13px;letter-spacing:1px}

@@ -23,6 +23,7 @@ import { ensureEvac, evacAvailable, fireFlare } from './evac';
 import { CROPS, SEASON_INFO, WEATHER, growthDays } from './env-core';
 import { envLine, envOf, seasonNow, tempPenalty } from './env';
 import { farmSummary, cropList, harvest, plant, plotSlots, farmBuildCost } from './farm';
+import { radGain, radLevelAt, radProtect, RAD_SOURCES, geigerText } from './rad-core';
 import { chopInfo, forageInfo, salvageInfo } from './gather';
 import { diveInfo, fishInfo, intakeInfo, canSwim, pondSummary, swimStep, waterNearby, fish as doFish, dive as doDive } from './water';
 import { accountSummary, currentUser as accountUser } from './account-ui';
@@ -49,6 +50,48 @@ function curBlock(): Block { const s = sw(); const w = localWorld(s); return blo
     写在 world-ui 里而不是各模块各写一遍——技能判定只该有一处真相。 */
 export function perkOn(skill: string, lv: number): boolean {
   return Number((L.S as any)?.skills?.[skill] ?? 0) >= lv;
+}
+
+/* ── M25 辐射：地图上的辐射场 + 走动累积 ── */
+/** 这张图上所有辐射源（核电站 / 废料填埋场）。按世界实例记忆——576 格每个都扫一遍太浪费 */
+let radSrcCache: { w: WorldState; src: { x: number; y: number; kind: string }[] } | null = null;
+function radSourcesOf(w: WorldState): { x: number; y: number; kind: string }[] {
+  if (radSrcCache && radSrcCache.w === w) return radSrcCache.src;
+  const out: { x: number; y: number; kind: string }[] = [];
+  for (const k in w.blocks) {
+    const b = w.blocks[k];
+    if (b.poi && RAD_SOURCES[b.poi]) out.push({ x: b.x, y: b.y, kind: b.poi });
+  }
+  radSrcCache = { w, src: out };
+  return out;
+}
+/** 玩家身上的辐射防护（防化服 / 防毒面具 / 潜水服 叠加，上限 85%） */
+function myRadProtect(): number {
+  const eq = (L.S as any)?.eq || {};
+  const gear = [eq.body, eq.mask, eq.feet].map((id: string) => (id && L.ITEMS[id]) || null);
+  return radProtect(gear as any);
+}
+const hasGeiger = (): boolean => L.itemCount('geiger') > 0 || (L.S as any)?.eq?.trinket === 'geiger';
+/** 走完一段路之后结算辐射：按每一格自己的等级累加，并给一句盖革读数 */
+function radAfterWalk(w: WorldState, path: { x: number; y: number }[], steps: number): void {
+  const src = radSourcesOf(w);
+  if (!src.length) return;
+  const prot = myRadProtect();
+  let gain = 0, maxLv = 0;
+  for (let i = 1; i <= steps && i < path.length; i++) {
+    const lv = radLevelAt(src, path[i].x, path[i].y);
+    if (lv > 0) { gain += radGain(lv, 1, prot); maxLv = Math.max(maxLv, lv); }
+  }
+  if (!gain) return;
+  const S = L.S as any;
+  S.rad = Math.max(0, Math.min(100, Math.round(S.rad + gain)));
+  L.log(geigerText(maxLv, hasGeiger()) + '　体内辐射 +' + gain + '（现在 ' + Math.round(S.rad) + '）' +
+    (prot > 0 ? '　🛡️ 防护 -' + Math.round(prot * 100) + '%' : '　⚠️ 没有任何防护，碘片/防化服能少吸收一半以上'), 'danger');
+}
+/** 当前这一格的辐射等级（面板/详情用） */
+function radHere(w: WorldState): number {
+  const s = sw();
+  return radLevelAt(radSourcesOf(w), s.cur.x, s.cur.y);
 }
 /** M24 机械技能：修车材料按等级打折（Lv3 起再 -30%） */
 export function repairCost(base: number): number {
@@ -86,6 +129,7 @@ function cellHtml(b: Block, s: SaveWorld, frags: Record<string, 1>, dangerMode =
   const isFrag = !!frags[bkey(b.x, b.y)];
   const ev = ensureEvac();
   const isEvac = ev.open && ev.site.x === b.x && ev.site.y === b.y;
+  const radLv = radLevelAt(radSourcesOf(w), b.x, b.y);      // M25：这一格的辐射等级
   const onPath = !!preview && preview.path.includes(bkey(b.x, b.y));
   const isTarget = !!preview && preview.x === b.x && preview.y === b.y;
   /* M19：危险度图层——格子底色换成"越深越红"的梯度（贴着安全屋是绿的），
@@ -115,6 +159,7 @@ function cellHtml(b: Block, s: SaveWorld, frags: Record<string, 1>, dangerMode =
   }
   const tip = !b.revealed ? '未探索区域'
     : (b.zone ? zoneLabel(b.zone) + ' · ' : '') + biomeName(b) + ' · 危险 ' + b.danger
+      + (radLv > 0 ? ' · ☢️ 辐射 ' + radLv + ' 级' : '')
       + (b.visited && b.poi ? ' · ' + POIS[b.poi].name : '')
       + (b.biome === 'water' ? ' · 水域：可以游过去（2 行动力/格），水边能钓鱼' : b.biome === 'highway' ? ' · 主干道：开车最快' : b.road ? ' · 沿街：开车比越野快' : '')
       + (b.poi === 'sunken' ? ' · 沉没基地：需要潜水（氧气瓶）' : '')
@@ -555,7 +600,10 @@ function poiCard(): string {
   const frags = pendingFragKeys();
   const hereFrag = !!frags[bkey(b.x, b.y)];
   const gh = ghostAt(localWorld(s), b.x, b.y);
+  const radLv = radHere(localWorld(s));                    // M25：这一格的辐射等级
   let body = '';
+  if (radLv > 0) body += '<div class="hint" style="color:' + (radLv >= 2 ? '#e0736a' : '#e0b06a') + '">' +
+    esc(geigerText(radLv, hasGeiger())) + '　待在这里每走一步都会累积。</div>';
   if (poi) {
     body += '<p class="muted">' + esc(poi.desc) + '</p>' +
       (hereFrag ? '<div class="hint" style="color:#d8c07a">🔑 情报说这一带藏着门禁卡碎片——搜一次就能拿到。</div>' : '') +
@@ -872,6 +920,7 @@ function runTrip(target: { x: number; y: number }, t: Trip) {
   if (stop === null) L.addXP('stealth', 1);       // 一路没撞上东西 = 潜行有用
   const here = curBlock();
   const zid = zoneOfPoi(here.poi);
+  radAfterWalk(w, t.path as any, walk);          // M25：辐射区里走一趟，体内辐射会累积
   S.loc = zid ?? (bkey(here.x, here.y) === homeKey(s) ? 'base' : S.loc);
   s.trail.push((t.mode === 'car' ? '🚗' : '🚶') + ' → ' + here.name + (here.poi ? '（' + POIS[here.poi].name + '）' : ''));
   if (s.trail.length > 24) s.trail.shift();

@@ -64,6 +64,9 @@ export interface Foe {
   hpMax: number;
   atk: number;
   def: number;
+  /** M25：装甲等级（参考塔科夫：装甲丧尸 5、暴君 4、巨型/匪徒 2、普通 0~1）。
+      def 是"平摊减伤"，armor 是"子弹穿透要过的门槛"——两件事，别混（bridge 里 def 由 armor 折算）。 */
+  armor?: number;
   spd: number;
   types: FoeType[];
   moves: string[];

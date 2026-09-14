@@ -4,10 +4,13 @@
    - 属性克制给倍率，状态异常按回合结算
    - 引擎不碰 DOM，也不直接读全局 S：由 bridge 注入玩家数值、由 UI 层同步回存档 */
 import { ITEM_MOVES, STATUS_NAME, TACTIC_MOVES, typeMult, effectivenessText, weaponMoves } from './moves';
+import { penMul } from './ammo-core';        // M25：子弹穿透 vs 装甲（口径弹种规则与 legacy 共用一份）
 import type { ActorRef, Battle, BattleEvent, DamageType, Foe, Move, PlayerCombatState, StatusKind } from '../types';
 
 export interface PlayerProfile {
   hp: number; hpMax: number; sta: number; staMax: number; ammo: number;
+  /** M25：当前装填弹种的穿透等级（参考塔科夫）。pen ≥ 目标装甲才算"打得动" */
+  pen?: number;
   weaponId: string; weaponName: string; weaponDmg: number; isGun: boolean;
   apen?: boolean; spread?: boolean;
   critBonus: number;        // 来自技能/改装
@@ -186,7 +189,10 @@ export function playerAct(b: Battle, p: PlayerProfile, moveId: string, targetIdx
     if (crit) { dmg *= p.critMult ?? 1.8; anyCrit = true; }
     if (b.player.weak) dmg *= 0.75;
     dmg *= 0.92 + rnd() * 0.16;
-    dmg = Math.max(1, Math.round(dmg - foe.def * 0.8));
+    /* M25 穿透：foe.def 里含"装甲等级"（bridge 按 t.armor 折算），子弹穿透不够会被挡下大半伤害。
+       近战不吃装甲（甲是防弹的），所以只有 isGun 才走 penMul。 */
+    const def = foe.def * (p.isGun ? penMul(p.pen || 0, foe.armor || 0) : 1);
+    dmg = Math.max(1, Math.round(dmg - def * 0.8));
     foe.hp -= dmg;
     b.stats.dealt += dmg;
     const eff = effectivenessText(mult);

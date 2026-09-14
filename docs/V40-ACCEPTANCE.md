@@ -1038,3 +1038,79 @@ M12 起探索页是"3×3 区域图 + 24×24 本地图"**上下两块**：区域�
   在遇到 ITEMS 里不存在的 id 时抛 `Cannot read properties of undefined (reading 't')`（探针塞了假物品时抓到的）。
   现在携带物品与储物箱两处都先 `filter(k => !!ITEMS[k])`——坏档/旧档不会再让页面白掉。
 - 证据：`docs/_m24_ui_probe.mjs` **本地 16/16、线上 16/16**（新增两条：6 种宽度卡片内不越界 / 建好菜园的菜园卡不越界）。
+---
+
+## 三十一、M25：整页可滚 / 藏身处工作站 / 口径与穿透 / 辐射（用户："为什么整个页面还能滚动"）
+
+### 1. "为什么整个页面还能滚动"（根因是一个 33px 的 BETA 条）
+
+- 用户原话只有这一句 + 一张 2047×1105 的探索页截图。**先在用户视口复现再动手**：
+  `docs/_m25_scroll_diag.mjs` 在 2048/1600/1280/1024 四档宽度上量 `document.scrollingElement`：
+  `sh=1138 ch=1105 → 页面可滚=true`，四档**全都**多出 38px 里的 33px，而且 `#app` 的 `top=33`。
+- 根因：站点 BETA 声明条 `#beta-notice` 是 `body` 里的**流内 sticky** 节点（实测 33px），
+  而 `#app` 写死 `height:100vh` 且从那条下面开始 → 文档比视口正好高 33px。
+  `body{overflow:hidden}` 挡不住这件事：**滚动溢出会从 body 传播到 html/视口**，所以整页能滚。
+  同一次测量还暴露第二个问题：`#view` 的网格行是 `32px 902px（地图）+ 588px（卡片）`，
+  903px 的容器塞 1522px 内容 → 地图底边（1195）越过容器底（1105），"下沿被切"是必然的。
+- 修复（`src/styles/game.css` + `src/styles/v4.css`）：
+  - `#app{height:calc(100vh - var(--beta-h,0px))}`，并用 `:has()` 认这两条站点横幅：
+    `body:has(> #beta-notice) #app{height:calc(100vh - var(--beta-h,33px))}`、
+    `body:has(> #mobile-warn) #app{height:calc(100vh - var(--beta-h,0px) - var(--mobile-h,46px))}`。
+    **不写死 33px 常量**：字号/换行一变就不准，所以留 `--beta-h/--mobile-h` 给站点脚本按实测覆盖。
+  - ≥1700px（地图与卡片同屏）改成 `grid-template-rows:auto minmax(0,1fr)`，
+    地图列与卡片墙各自 `height:100%` + `overflow:auto` + `overscroll-behavior:contain` ——
+    工具条吃自然高，剩下那一行正好填满视口，**两张长内容各滚各的，不再顶出 #view**。
+  - 卡片墙关掉横向滚动（多列流容器的 `scrollWidth` 会把列高也算进去，实测 843px 报 1270px，
+    而 `overflow-y:auto` 会把 `overflow-x` 从 visible 悄悄变成 auto → 白多一条横向滚动条）。
+  - 窄屏（≤860px）显式 `height:auto;min-height:calc(100vh - BETA)`：手机"整页滚"是预期行为，
+    桌面才是 shell 固定；原来那条 `#app{max-height:none}` 盖不住 `height`，会把内容锁死在 100vh。
+
+### 2. 藏身处式工作站（用户："工作台能做的东西太太太少了，增加不同种类的工作台——类似塔科夫藏身处"）
+
+- `BASE_UP` 新增四个站：`🔩 弹药台`（复装/穿甲弹/独头弹）、`⚗️ 医疗台`（急救包/解毒剂/碘片/抗辐射药）、
+  `🍳 灶台`（熟食/批量煮水/风干肉）、`🔋 发电机`（全局增益，不出配方）。
+- 配方条目升级成 `{out, n, need, st, lv, desc}`，共 **29 条**（M24 之前 12 条）；
+  `renderCraft()` 按站分区，每个站显示自己的等级与"n / m 配方"，没建就把**建设价目**写在卡片里。
+- **顺手修一个真 bug**：老配方分两处定义（顶部字面量 + `RECIPES.push`），字段名是老的 `bench`，
+  没有 `lv` → `lv >= undefined` 恒为 false，那些配方变成"永远做不了"，界面还显示 `Lv.undefined`
+  （探针在制作页抓到 8 处）。现在统一走 `normalizeRecipes()`，**两处都归一**（工作台配方从 2/15 恢复成 14/15）。
+- 发电机被动：净水 +1、菜园保鲜 +1 天、医疗台每件 +1 份（结算与文案都有 `🔋` 标注）。
+
+### 3. 枪械口径与穿透（用户："枪械的子弹口径分类与穿透等级，参考塔科夫"）
+
+- 纯逻辑放进 `src/v4/ammo-core.ts`（口径表 / 弹种表 / 装填选择 / `penMul` / 短名），
+  **legacy 战斗与 v4 引擎共用同一份**——两套战斗算出两个数就是"面板说能打穿、实战没伤害"的 bug 源头；
+  `tests/ammo.test.ts` 14 条钉住这套数学。
+- 口径 5 种、弹种 10 种（`a9_fmj/a9_ap/a12_buck/a12_slug/a556_fmj/a556_ap/a762_fmj/a762_ap/a308_m/a308_ap`），
+  每条弹带 `pen` 与 `dmgMul`；`S.load[cal]` 记住玩家手选的弹，没选就自动挑**穿透最高且有货**的。
+- 结算：`penMul(pen,armor) = max(0.15, 1-(armor-pen)*0.18)`，装甲丧尸 5 / 暴君 4 / 巨型·匪徒 2；
+  v4 引擎侧新增 `PlayerProfile.pen` + `Foe.armor`（bridge 把 `t.armor` 折算进 `def` 与 `armor`），
+  近战不吃装甲（甲是防弹的）。实测：同样的枪打装甲目标，FMJ(pen3) 只剩 64% 伤害、换穿甲弹(pen5) 满伤，
+  **收益差 1.56 倍**——这就是"要换弹"的动力。
+- 入口：`背包 → 弹药` 区（按口径分组、显示穿透/倍率/余弹，一键装填），
+  HUD 那条弹药 chip 也能点（在当前口径的弹种之间循环）。`syncBack()` 同步改成**消耗背包里那一发实弹**，
+  不再只动 `S.ammo` 镜像（改之前会出现"打光了但背包里还有弹"）。
+
+### 4. 辐射（用户："添加辐射（添加核电站啊啥的）"）
+
+- `src/v4/rad-core.ts`：核电站（半径 3）/ 废料填埋场（半径 2）两个辐射源，`radLevelAt` 按切比雪夫距离
+  给出 0~3 级（中心最高、每远一格降一级），`radGain(level, steps, protect)` 算累积量，
+  `radProtect()` 叠防护（防化服 60% / 面具 25% / 潜水服 10%，封顶 85%），`radTier()` 分 5 档。
+- 玩法：两个 POI 进 `DEEP_LOOT` 与 `ZONE_POI`（工业区/废墟），核电站与废料场各上限 1 个；
+  在辐射区走路累积体内辐射（`runTrip` 里结算），夜里按档位掉血 / 吐掉食物 / 治疗打折，
+  `tickVitals` 按档位压体力上限；`碘片 -25`、`抗辐射药 -55`，盖革计数器才报得出具体等级。
+- HUD 新增辐射 chip（只在吃进去之后出现，带档位标签与 tooltip 说明）；`S.rad` 进存档并有 clamp。
+
+### 实测证据
+
+- `docs/_m25_probe.mjs`：**本地 32/32**（整页不可滚 × 4 档视口 / 工具条整条在视野内 × 4 / 地图列与卡片墙各自滚且不顶出 /
+  制作页 4 个站分区 + 35 个配方按钮 / 弹药区与装填按钮 / 穿甲弹穿透数学 / 辐射累积与药品压制 / 无控制台报错）。
+- `docs/_m25_scroll_diag.mjs`（滚动拓扑，修复前后对比：`页面可滚 true→false`，`worldScroll/cardsScroll` 各自为真）、
+  `docs/_m25_scrollbar_probe.mjs`（`innerWidth - documentElement.clientWidth = 0px`，即**没有滚动条**）、
+  `docs/_m25_pages_probe.mjs`（探索/据点/制作/背包/技能五页：无 `undefined/NaN`、无横向溢出、整页不滚）。
+- 截图 `docs/_m25_shots/`（`01_explore_scroll_fixed` / `02_craft_stations` / `03_inventory_ammo` / `10..14_*` 五页全套），
+  关键页跑过视觉复查（制作页确认不再出现 `Lv.undefined`，分区徽标 `14 / 15 配方`）。
+- `npx tsc --noEmit` 干净、单测 **293/293**（新增 `tests/rad.test.ts` 15 条 + `tests/ammo.test.ts` 14 条）。
+- 已知问题：**P2** 辐射目前只有两个源（核电站/废料场），没有"穿防化服进核电站内部搜刮"的专属深层 POI；
+  **P3** 弹药台 UI 用的是 legacy `.lrow` 皮，还没并进探索页那套卡片墙视觉；**P3** 辐射档位的长期代价（掉血/呕吐）
+  只在夜间结算，白天没有可见症状提示。

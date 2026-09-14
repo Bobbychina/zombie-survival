@@ -54,15 +54,15 @@ const ZONE_POI: Record<Zone, string[]> = {
   cbd: ['office', 'mall', 'megamart', 'appliance', 'apartment', 'radio'],
   residential: ['apartment', 'school', 'market', 'pharmacy', 'clinic', 'church', 'police'],
   suburb: ['market', 'school', 'clinic', 'apartment', 'camp', 'gas', 'church'],
-  industry: ['depot', 'buildmart', 'hardware', 'warehouse', 'sawmill', 'garage', 'prison', 'waterworks', 'outpost', 'construction'],
+  industry: ['depot', 'buildmart', 'hardware', 'warehouse', 'sawmill', 'garage', 'prison', 'waterworks', 'outpost', 'construction', 'nuclear', 'waste'],
   military: ['military', 'bunker', 'prison', 'warehouse', 'outpost'],
   farmland: ['farm', 'clinic', 'camp', 'church', 'megamart'],
   forest: ['lumber', 'camp', 'church', 'outpost'],
-  ruins: ['outpost', 'bunker', 'church', 'prison', 'construction', 'warehouse'],
+  ruins: ['outpost', 'bunker', 'church', 'prison', 'construction', 'warehouse', 'waste'],
   water: [], open: [],
 };
 /** 稀有度上限：真实城市里医院/军营不会有八个，而超市可以有五个 */
-const POI_CAP: Record<string, number> = { hospital: 2, military: 1, bunker: 2, radio: 2, prison: 1, waterworks: 2, mall: 2, lab: 1, sunken: 2, megamart: 2 };
+const POI_CAP: Record<string, number> = { hospital: 2, military: 1, bunker: 2, radio: 2, prison: 1, waterworks: 2, mall: 2, lab: 1, sunken: 2, megamart: 2, nuclear: 1, waste: 1 };
 const POI_CAP_DEFAULT = 4;
 const MODERN_POIS = new Set(['furniture', 'hardware', 'megamart', 'office', 'appliance', 'depot', 'buildmart', 'lumber', 'sawmill']);
 
@@ -470,7 +470,7 @@ export function generateWorld(seed: string, opts: GenOpts = {}): WorldState {
   const roadAdj = (r: Raw) => NEIGHBORS.some(([dx, dy]) => at(r.b.x + dx, r.b.y + dy)?.b.road);
   const nDens = createNoise2D(seedrandom(seed + ':density'));
   /* 高价值（深处才划算）与日用品（近处就该有）——名单按玩法价值分，不按稀有度 */
-  const DEEP_LOOT = new Set(['military', 'prison', 'megamart', 'mall', 'bunker', 'depot', 'buildmart', 'warehouse', 'waterworks', 'radio', 'outpost']);
+  const DEEP_LOOT = new Set(['military', 'prison', 'megamart', 'mall', 'bunker', 'depot', 'buildmart', 'warehouse', 'waterworks', 'radio', 'outpost', 'nuclear', 'waste']);
   const DAILY = new Set(['market', 'pharmacy', 'gas', 'garage', 'hospital', 'clinic', 'school', 'farm', 'camp']);
   for (const r of raws) {
     const b = r.b;

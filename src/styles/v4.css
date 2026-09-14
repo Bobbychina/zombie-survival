@@ -28,13 +28,25 @@
    右边是 auto-fill 的卡片网格——卡片自己找平，不再出现"左边一大堆、右边孤零零一张卡"。
    窄屏（<1024px）自动叠成一列，跟以前一样整页滚。 */
 @media (min-width:1024px){
-  #app{width:min(2400px,calc(100vw - 16px));max-height:none}
+  /* M25 根因修复：站点 BETA 条（#beta-notice，sticky，实测 33px）在正常流里占高，
+     而窄屏的那条 `#app{max-height:none}` 把 1040px 上限也去掉了 —— 于是 #app 从 33px 起高 100vh，
+     到 1138px 结束：**文档比视口正好多 33px → 整个页面能滚**（body{overflow:hidden} 挡不住
+     滚动溢出从 html 传播出去，只有 #view / #log 该滚）。
+     用 :has() 把 BETA 条/手机提醒条的高度从 #app 里扣掉（固定 px 常量写死会在字号/换行变时再次错位），
+     再加兜底 var(--beta-h,0px) 给站点脚本按实测写值。 */
+  #app{width:min(2400px,calc(100vw - 16px));max-height:none;
+    height:calc(100vh - var(--beta-h,0px))}
+  body:has(> #beta-notice) #app{height:calc(100vh - var(--beta-h,33px))}
+  body:has(> #mobile-warn) #app{height:calc(100vh - var(--beta-h,0px) - var(--mobile-h,46px))}
 }
 @media (min-width:1280px){
   #body{grid-template-columns:minmax(0,1fr) clamp(300px,19vw,430px)}
 }
 @media (min-width:1024px){
-  #view.v4-board{display:grid;gap:12px;align-items:start;grid-template-columns:minmax(0,1fr)}
+  /* M25：地图与卡片墙同屏时，两者都可能是视口两倍高 → 必须让 #view 自己滚，
+     且网格行不许被内容撑开（min-height:0 + 行 max-height:100%）。 */
+  #view.v4-board{display:grid;gap:12px;align-items:start;grid-template-columns:minmax(0,1fr);
+    grid-auto-rows:min-content;min-height:0}
   /* M24：卡片墙改成**多列流**（masonry 效果），不再用行对齐网格。
      用户报障「为什么卡片中间有空白」：网格里同一行的高度由最高那张卡决定，
      矮卡下面就会空出一大块（实测：水体 232px 旁边的菜园只有 65px → 空 167px）。 */
@@ -43,11 +55,19 @@
 /* 很宽（≥1700px）才把地图钉在左边当锚点：窄一点的屏幕上 24×24 地图要 620px+，
    跟卡片墙抢宽度不如让地图独占一行、卡片在下面铺成 3~4 列。 */
 @media (min-width:1700px){
+  /* M25：地图列和卡片墙各自可能是视口两倍高，但**整页不许滚**（用户报「为什么整个页面还能滚动」）。
+     所以这里把网格行定成 auto + 1fr：工具条吃自然高，下面那一行正好填满剩余高度，
+     地图与卡片各自在自己列里滚（overscroll-behavior:contain 防止滚到底把滚动传给外层）。 */
   #view.v4-board{grid-template-columns:minmax(0,auto) minmax(0,1fr);
-    grid-template-areas:"tools tools" "map cards"}
+    grid-template-areas:"tools tools" "map cards";
+    grid-template-rows:auto minmax(0,1fr)}
   #v4tools{grid-area:tools}
-  #v4world{grid-area:map;position:sticky;top:8px}
-  #v4cards{grid-area:cards}
+  #v4world{grid-area:map;position:sticky;top:8px;height:100%;max-height:100%;overflow-y:auto;
+    scrollbar-width:thin;overscroll-behavior:contain}
+  #v4cards{grid-area:cards;height:100%;max-height:100%;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}
+  /* M25.1：多列流容器的 scrollWidth 会把整列高度也算进去（实测 843px 宽报 1270px），
+     而 `overflow-y:auto` 会把 overflow-x 从 visible 自动变成 auto → 卡片墙白白多一条横向滚动条。
+     显式关掉横向滚动即可（列内容不会横向溢出：卡片本身已经 anywhere 断行 + max-width:100%）。 */
 }
 /* 卡片墙本身：多列流 + 卡片不许被拆到两列去 */
 #v4cards{columns:340px;column-gap:12px;min-width:0}

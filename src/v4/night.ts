@@ -5,6 +5,7 @@
    - 血月不在家：据点被啃（掉防线 + 丢储物），幂等（R3：lastRaidDay）
    参数全部集中在下面常量里，方便按 S1 敏感度矩阵调。 */
 import { L } from '../main';
+import { radTier } from './rad-core';
 import { POIS } from './pois';
 import { blockAt } from './worldgen';
 import { ensureSaveWorld, worldOf, type SaveWorld } from './worldstate';
@@ -150,6 +151,28 @@ export function rest(kind?: RestKind): void {
     const heal = Math.min(3, S.hpMax - S.hp);
     S.hp += heal;
     L.log('💉 医疗技能让你在睡梦里也在恢复：+ ' + heal + ' 生命。', 'dim');
+  }
+  /* M25 辐射的夜间结算：累积到阈值就掉血/呕吐；干净的时候身体会自己代谢掉一点 */
+  {
+    const rad = Number((S as any).rad) || 0;
+    const rt = radTier(rad);
+    if (rt.nightHp < 0 && S.hp > 1) {
+      const loss = Math.min(S.hp - 1, -rt.nightHp);
+      S.hp -= loss;
+      L.log('☢️ 辐射病发作（' + rt.label + '）：一夜之间流失 ' + loss + ' 生命。' + rt.note, 'danger');
+    }
+    if (rt.eatChance > 0 && Math.random() < rt.eatChance) {
+      const foods = Object.keys(S.inv || {}).filter(id => L.ITEMS?.[id]?.t === 'food' && (S.inv[id] || 0) > 0);
+      if (foods.length) {
+        const id = foods[Math.floor(Math.random() * foods.length)];
+        const n = Math.min(S.inv[id], 1 + (rt.tier >= 4 ? 2 : 0));
+        L.takeItem(id, n);
+        L.log('🤮 你吐得停不下来，糟蹋了 ' + L.itemName(id) + '×' + n + '。', 'danger');
+      }
+    }
+    if (rad > 0 && rad < 25) {
+      (S as any).rad = Math.max(0, Math.round(rad - 2));       // 轻度：身体慢慢代谢
+    }
   }
 
   // 血月/尸群不在家 → 据点被啃（C03）。夜里那场"守夜战"如果被 legacy 开出来，

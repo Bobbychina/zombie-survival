@@ -1,5 +1,8 @@
 // @ts-nocheck —— v3.0 的单文件代码整体搬进这里当底座，逐块迁出到 src/v4/*。
 // 不要在这个文件里加新功能：新东西写进 src/v4/，通过 window 上的名字与这里互操作。
+// M25 例外：辐射的分档/累积公式在 src/v4/rad-core.ts（纯逻辑、可单测），这里只 import 公式，不重复实现。
+import { radTier, radGain, radLevelAt, radProtect, RAD_SOURCES, geigerText } from '../v4/rad-core';
+import { CALIBERS, penMul, ammoTable, pickLoadedAmmo, ammoShortName } from '../v4/ammo-core';
 
 
 /* ═══════════ legacy/00-data.js ═══════════ */
@@ -36,6 +39,23 @@ const ITEMS = {
   metal:    {n:'铁片',      t:'mat',   w:0.8, desc:'拆自车门与通风管。'},
   tape:     {n:'胶带',      t:'mat',   w:0.2, desc:'末日里的万能缝合线。'},
   powder:   {n:'火药',      t:'mat',   w:0.2, desc:'复装弹药的必需品。'},
+  /* M25 弹药（参考塔科夫：口径分开 + 穿透等级）
+     pen = 穿透等级（0~6）；armor 高的目标（装甲丧尸/暴君）只有高穿透弹打得动。
+     dmgMul = 这一发本身的伤害系数（空尖弹打无甲更疼、穿甲弹打无甲略亏）。 */
+  a9_fmj:   {n:'9mm FMJ',    t:'ammo', w:0.012, cal:'c9',   pen:2, dmgMul:1,    desc:'9×19 普通弹。便宜、量大，打不动硬壳。'},
+  a9_ap:    {n:'9mm AP',     t:'ammo', w:0.012, cal:'c9',   pen:4, dmgMul:1.05, desc:'9×19 穿甲弹。钢芯，贵，但能啃开护甲。'},
+  a12_buck: {n:'12号鹿弹',   t:'ammo', w:0.045, cal:'c12',  pen:1, dmgMul:1,    desc:'霰弹。近距离威力大，穿透几乎为零。'},
+  a12_slug: {n:'12号重弹头', t:'ammo', w:0.05,  cal:'c12',  pen:3, dmgMul:1.3,  desc:'独头弹。一发一个洞，能打穿薄钢板。'},
+  a556_fmj: {n:'5.56 FMJ',   t:'ammo', w:0.012, cal:'c556', pen:3, dmgMul:1,    desc:'小口径步枪弹。射速快、后坐小。'},
+  a556_ap:  {n:'5.56 AP',    t:'ammo', w:0.012, cal:'c556', pen:5, dmgMul:1.12, desc:'5.56 穿甲弹。军用级，专治装甲。'},
+  a762_fmj: {n:'7.62 FMJ',   t:'ammo', w:0.016, cal:'c762', pen:3, dmgMul:1.08, desc:'中间威力弹。肉多、便宜。'},
+  a762_ap:  {n:'7.62 AP',    t:'ammo', w:0.016, cal:'c762', pen:5, dmgMul:1.2,  desc:'7.62 穿甲弹。'},
+  a308_m:   {n:'7.62N 竞赛', t:'ammo', w:0.02,  cal:'c308', pen:4, dmgMul:1.15, desc:'全威力竞赛弹。精度与穿透兼顾。'},
+  a308_ap:  {n:'7.62N 穿甲', t:'ammo', w:0.022, cal:'c308', pen:6, dmgMul:1.35, desc:'狙击级穿甲弹。目前能打穿一切的东西。'},
+  /* M25 辐射相关的药 */
+  iodine:   {n:'碘片',      t:'med',   w:0.05, rad:-25, desc:'抢在甲状腺吸收放射性碘之前吃下去。'},
+  radaway:  {n:'抗辐射药',  t:'med',   w:0.15, rad:-55, desc:'螯合剂，把体内的放射性核素排出去。'},
+  geiger:   {n:'盖革计数器',t:'gear',  w:0.4, slot:'trinket', geiger:true, desc:'咔哒声越密，说明你离死越近。'},
   wood:     {n:'木料',      t:'mat',   w:1.0, desc:'燃料、加固、也能当棍子。'},
   chip:     {n:'电子元件',  t:'mat',   w:0.1, desc:'拆自收音机与旧手机。'},
   chem:     {n:'化学药剂',  t:'mat',   w:0.4, desc:'标签早被腐蚀了，谨慎使用。'},
@@ -49,13 +69,13 @@ const ITEMS = {
   crowbar:  {n:'撬棍',      t:'wpn',   w:2.0, dmg:14, sta:7,  crit:.08, noise:0,   desc:'开局的老伙计。无声、耐用。'},
   machete:  {n:'砍刀',      t:'wpn',   w:1.5, dmg:23, sta:9,  crit:.18, noise:0,   desc:'开山刀，劈砍顺手，容易出血。'},
   axe:      {n:'消防斧',    t:'wpn',   w:3.0, dmg:34, sta:16, crit:.12, noise:.5,  desc:'破拆工具，对装甲丧尸也有效。', apen:true},
-  pistol:   {n:'手枪',      t:'wpn',   w:1.2, dmg:21, ammo:1,  crit:.15, noise:3,   desc:'9mm，可靠、但很吵。'},
-  shotgun:  {n:'霰弹枪',    t:'wpn',   w:3.5, dmg:46, ammo:3,  crit:.10, noise:5,   desc:'近距离一枪断头；吃弹快（3 发/次），定位是清场而不是续航。'},
-  rifle:    {n:'突击步枪',  t:'wpn',   w:3.2, dmg:26, ammo:1,  crit:.30, noise:4,   desc:'点射压制，靠暴击吃饭（每发 26 伤害、暴击率最高）。'},
-  marksman: {n:'精准步枪',  t:'wpn',   w:4.0, dmg:64, ammo:3,  crit:.32, noise:5,   desc:'拉栓一声，远处的脑袋就没了。'},
+  pistol:   {n:'手枪',      t:'wpn',   w:1.2, dmg:21, ammo:1,  cal:'c9',   crit:.15, noise:3,   desc:'9×19，可靠、但很吵。'},
+  shotgun:  {n:'霰弹枪',    t:'wpn',   w:3.5, dmg:46, ammo:3,  cal:'c12',  crit:.10, noise:5,   desc:'近距离一枪断头；吃弹快（3 发/次），定位是清场而不是续航。'},
+  rifle:    {n:'突击步枪',  t:'wpn',   w:3.2, dmg:26, ammo:1,  cal:'c556', crit:.30, noise:4,   desc:'点射压制，靠暴击吃饭（每发 26 伤害、暴击率最高）。'},
+  marksman: {n:'精准步枪',  t:'wpn',   w:4.0, dmg:64, ammo:3,  cal:'c308', crit:.32, noise:5,   desc:'拉栓一声，远处的脑袋就没了。'},
   // 装备
-  gasmask:  {n:'防毒面具',  t:'gear',  w:0.6, slot:'mask', gasImmune:true, desc:'免疫毒气丧尸的毒雾。'},
-  hazmat:   {n:'防化服',    t:'gear',  w:3.5, slot:'body', dmgCut:.4, desc:'僵尸伤害 -40%，但闷热笨重。'},
+  gasmask:  {n:'防毒面具',  t:'gear',  w:0.6, slot:'mask', gasImmune:true, radProt:.25, desc:'免疫毒气丧尸的毒雾，滤罐也能滤掉一部分放射性尘埃（-25%）。'},
+  hazmat:   {n:'防化服',    t:'gear',  w:3.5, slot:'body', dmgCut:.4, radProt:.6, desc:'僵尸伤害 -40%、辐射 -60%，但闷热笨重。'},
   vest:     {n:'战术背心',  t:'gear',  w:2.5, slot:'body', armor:2, desc:'护甲 +2。'},
   kevlar:   {n:'防弹衣',    t:'gear',  w:6.0, slot:'body', armor:5, desc:'护甲 +5，很重。'},
   helmet:   {n:'战术头盔',  t:'gear',  w:1.5, slot:'head', armor:1, critCut:.5, desc:'护甲 +1，被爆头的概率减半。'},
@@ -75,24 +95,26 @@ const ZOMBIES = {
   walker:  {n:'普通丧尸', hp:24, dmg:6,  spd:1,   xp:5,  bite:.12, loot:{cloth:.4, metal:.2, can:.12, dirty:.15}, desc:'行动迟缓、数量众多。'},
   crawler: {n:'爬行者',   hp:16, dmg:7,  spd:1,   xp:6,  bite:.10, dodge:.22, loot:{cloth:.4, bottle:.2, chip:.1}, desc:'贴地爬行，很难打中要害。'},
   runner:  {n:'奔跑者',   hp:19, dmg:9,  spd:2,   xp:9,  bite:.14, bleed:true, loot:{cloth:.3, choco:.2, tape:.2}, desc:'速度极快，每回合攻击两次。'},
-  hound:   {n:'变异猎犬', hp:22, dmg:11, spd:2.5, xp:11, bite:.18, bleed:true, loot:{jerky:.3, metal:.2}, desc:'成群狩猎，扑咬会撕裂伤口。'},
+  hound:   {n:'变异猎犬', hp:22, dmg:11, spd:2.5, xp:11, bite:.18, bleed:true, armor:1, loot:{meat:.5, jerky:.12, metal:.2}, desc:'成群狩猎，扑咬会撕裂伤口。肉能吃——如果烤过。'},
   brute:   {n:'重型丧尸', hp:48, dmg:14, spd:1,   xp:15, bite:.10, loot:{metal:.5, fuel:.2, powder:.2}, desc:'体型庞大，生命力顽强。'},
   poison:  {n:'毒气丧尸', hp:40, dmg:9,  spd:1,   xp:18, poison:true, loot:{chem:.5, anti:.15, tape:.2}, desc:'持续释放毒雾，无面具就会中毒。'},
   screamer:{n:'尖叫者',   hp:14, dmg:4,  spd:2,   xp:10, summon:.5, loot:{chip:.3, cloth:.2}, desc:'尖叫声会招来更多丧尸。'},
-  armored: {n:'装甲丧尸', hp:62, dmg:17, spd:.8,  xp:22, armGun:.5, armMelee:.75, keycard:.34, loot:{metal:.6, powder:.25, kevlar:.05}, desc:'枪弹难穿，需要破甲武器。'},
-  giant:   {n:'巨型丧尸', hp:78, dmg:21, spd:1.2, xp:28, armGun:.2, bite:.2, loot:{chem:.3, fuel:.3, serum:.08}, desc:'两米五的变异体，一巴掌能让人断气。'},
+  /* M25 穿透：armor 是"装甲等级"，只有 pen 够高的弹才算打得动（参考塔科夫）。
+     armGun/armMelee 仍保留作为"整体减伤"（暴君这种靠体型硬吃的），两者相乘。 */
+  armored: {n:'装甲丧尸', hp:62, dmg:17, spd:.8,  xp:22, armor:5, armMelee:.75, keycard:.34, loot:{metal:.6, powder:.25, kevlar:.05, a556_ap:.06}, desc:'枪弹难穿，需要穿甲弹或破甲武器。'},
+  giant:   {n:'巨型丧尸', hp:78, dmg:21, spd:1.2, xp:28, armor:2, armGun:.2, bite:.2, loot:{chem:.3, fuel:.3, serum:.08, meat:.2}, desc:'两米五的变异体，一巴掌能让人断气。'},
   // v4.0：大世界里"活人"也是威胁（拾荒者据点/路上遭遇用）。数值上比同级丧尸更脆但更会打枪。
-  bandit:  {n:'拾荒者',   hp:34, dmg:12, spd:1.4, xp:16, armGun:.25, bite:.06, loot:{ammo:.35, metal:.25, bandage:.2, pistol:.06, kevlar:.08}, desc:'和你一样的人，只是先动了手。'},
+  bandit:  {n:'拾荒者',   hp:34, dmg:12, spd:1.4, xp:16, armor:2, bite:.06, loot:{ammo:.35, metal:.25, bandage:.2, pistol:.06, kevlar:.08}, desc:'和你一样的人，只是先动了手。'},
   // M7：水下遭遇（沉没基地潜水时出现，水里比人快）
-  drowned: {n:'溺亡者',   hp:36, dmg:11, spd:1.2, xp:18, armGun:.2, bite:.18, loot:{cloth:.3, chem:.2, chip:.15, o2:.12}, desc:'泡得发白的东西，在水里比人快。'},
+  drowned: {n:'溺亡者',   hp:36, dmg:11, spd:1.2, xp:18, armor:1, bite:.18, loot:{cloth:.3, chem:.2, chip:.15, o2:.12}, desc:'泡得发白的东西，在水里比人快。'},
   // M11 三种"要动脑子打"的：数值不是重点，机制才是（机制由 v4 引擎的 traits 实现，见 bridge.ts）
-  spitter: {n:'喷吐者',   hp:30, dmg:8,  spd:1.2, xp:20, armGun:.15, loot:{chem:.45, anti:.2, chip:.15, tape:.2},
+  spitter: {n:'喷吐者',   hp:30, dmg:8,  spd:1.2, xp:20, armor:1, loot:{chem:.45, anti:.2, chip:.15, tape:.2},
     desc:'喉咙鼓成一个囊，隔着五米把酸液吐过来——格挡挡不住，护甲会被啃薄。'},
   bomber:  {n:'自爆者',   hp:20, dmg:5,  spd:1.5, xp:16, loot:{powder:.4, fuel:.25, metal:.2, chip:.12},
     desc:'肚子撑得发亮，走得摇摇晃晃。它死了会炸——除非你先用火烧掉它。'},
-  hatcher: {n:'孵化者',   hp:56, dmg:7,  spd:.8,  xp:24, armGun:.2, loot:{chem:.3, serum:.1, cloth:.3, chip:.2},
+  hatcher: {n:'孵化者',   hp:56, dmg:7,  spd:.8,  xp:24, armor:2, loot:{chem:.3, serum:.1, cloth:.3, chip:.2},
     desc:'行动迟缓的肉囊，每两回合撑破一个口子，爬行者就从里面钻出来。'},
-  tyrant:  {n:'暴君',     hp:140, dmg:22, spd:1.5, xp:60, boss:true, armGun:.4, armMelee:.3, bite:.25,
+  tyrant:  {n:'暴君',     hp:140, dmg:22, spd:1.5, xp:60, boss:true, armor:4, armGun:.15, armMelee:.3, bite:.25,
     loot:{serum:.35, kevlar:.25, powder:.3, marksman:.12, medkit:.3},
     desc:'三米高，肩膀顶穿天花板。打到一半它会彻底不管不顾。'},
 };
@@ -131,25 +153,108 @@ const BASE_UP = {
   bed:     {n:'行军床',   icon:'🛏️', max:3, cost:{cloth:4, wood:2},  desc:'睡觉恢复更多生命与体力。'},
   filter:  {n:'净水装置', icon:'🚰', max:3, cost:{metal:3, chip:2, tape:1}, desc:'每天产出净水，等级越高越多。'},
   garden:  {n:'屋顶菜园', icon:'🌱', max:3, cost:{wood:2, cloth:1, can:1},  desc:'每天产出食物。'},   // M6/P03：起步价（木2/布1/罐头1），第 3~5 天就能建起来
-  bench:   {n:'工作台',   icon:'🛠️', max:3, cost:{metal:3, wood:2, tape:1}, desc:'解锁制作配方，等级越高配方越多。'},
+  bench:   {n:'工作台',   icon:'🛠️', max:3, cost:{metal:3, wood:2, tape:1}, desc:'基础制作：绷带、胶带、燃烧瓶、手雷。等级越高配方越多。'},
+  /* M25：藏身处式分工站（用户："工作台能做的东西太少了，增加不同种类的工作台"）——
+     每个站只管自己那一类活，等级决定深度配方；发电机是全局增益（不是配方站）。 */
+  loading: {n:'弹药台',   icon:'🔩', max:3, cost:{metal:4, wood:2, tape:2}, desc:'复装与改装弹药：普通弹、穿甲弹、独头弹。'},
+  medlab:  {n:'医疗台',   icon:'⚗️', max:3, cost:{metal:3, chip:2, chem:2}, desc:'制药：急救包、解毒剂、碘片、抗辐射药。'},
+  kitchen: {n:'灶台',     icon:'🍳', max:3, cost:{metal:3, cloth:1, wood:3}, desc:'把生食做熟、批量煮水、风干肉——熟食回得更多也更抗腐坏。'},
+  power:   {n:'发电机',   icon:'🔋', max:2, cost:{metal:6, chip:4, fuel:2}, desc:'通电后：净水装置 +1 产出、菜园生长快 1 天、医疗台制作 +1 份。'},
   storage: {n:'储物箱',   icon:'📦', max:3, cost:{metal:3, wood:3},  desc:'提供基地储物格，离家时不用背着。'},
   radio:   {n:'无线电',   icon:'📻', max:1, cost:{chip:3, metal:3, tape:2}, desc:'解锁“方舟实验室”坐标与更多商人来访。'},
   wall:    {n:'围墙工事', icon:'🧱', max:2, cost:{wood:6, metal:5},  desc:'尸潮时提供掩体，减少资源损失。'},
   pond:    {n:'鱼塘',     icon:'🐟', max:3, cost:{wood:4, cloth:2, metal:1}, desc:'每天产鱼；投喂鱼饵/蔬菜能翻倍，冬天减产。'},   // M7：水产养殖
 };
 
-// 制作配方：bench 需要的工作台等级
+/* M25 弹药口径/穿透：口径表、弹种表、装载选择、穿透算法全部在 v4/ammo-core.ts —— 
+   同一套规则 v4 引擎（combat.ts 的 PlayerProfile.pen）也要用，放在这里就会算出两个数。 */
+const AMMO_OF = ammoTable(ITEMS as any);                     // 按口径分好组、按穿透升序
+/** 当前给这个口径装的是哪种弹：玩家在「弹药」里选过就用选的，否则自动挑穿透最高且有货的 */
+function loadedAmmo(cal){
+  return pickLoadedAmmo(AMMO_OF[cal] || [], S.inv || {}, S.load, cal);
+}
+const ammoCount = () => { let n = 0; for(const id in ITEMS){ const it = ITEMS[id]; if(it.t === 'ammo') n += S.inv[id] || 0; } return n; };
+/** M25：切换某个口径装填的弹种（背包里点）——穿透更高的弹打装甲目标，便宜的弹打普通丧尸 */
+function setLoaded(cal, id){
+  if(!S.load) S.load = {};
+  S.load[cal] = id;
+  const it = ITEMS[id];
+  log('🔩 ' + CALIBERS[cal].n + ' 换装：' + (it ? it.n : id) + '（穿透 ' + (it ? it.pen : 0) + '）', 'info');
+  render(); autosave();
+}
+/** M25：HUD 点弹药 chip = 在当前口径的弹种之间循环（不用翻背包） */
+function cycleLoaded(){
+  const wid = S.eq.wpn;
+  const cal = wid && ITEMS[wid] && ITEMS[wid].cal;
+  if(!cal){ log('❌ 手上的家伙不吃子弹。','dim'); return; }
+  const list = (AMMO_OF[cal] || []).filter(a => (S.inv[a.id] || 0) > 0);
+  if(list.length < 2){ log('🔩 这个口径只有' + (list.length ? '一种' : '零种') + '弹，没得换。','dim'); return; }
+  const cur = loadedAmmo(cal);
+  const i = list.findIndex(a => a.id === cur);
+  setLoaded(cal, list[(i + 1) % list.length].id);
+}
+/** M25：背包里的弹药区 —— 每个口径一行，点弹种就换装（参考塔科夫的弹种分层） */
+function ammoSectionHtml(){
+  const cals = Object.keys(CALIBERS).filter(c => (AMMO_OF[c] || []).some(a => (S.inv[a.id] || 0) > 0));
+  if(!cals.length) return '';
+  const wid = S.eq.wpn;
+  const curCal = wid && ITEMS[wid] && ITEMS[wid].cal;
+  let h = '<div class="sect-title">弹药 <span class="badge">按口径分装</span></div>';
+  h += '<p class="hint" style="margin-bottom:8px">同一口径可以有多种弹：<b>穿透 ≥ 目标装甲才打满伤害</b>（装甲丧尸 5、暴君 4）。打普通丧尸用便宜弹就够，遇到硬壳再换穿甲弹。</p>';
+  cals.forEach(cal => {
+    const list = (AMMO_OF[cal] || []).filter(a => (S.inv[a.id] || 0) > 0);
+    const picked = loadedAmmo(cal);
+    h += '<div class="card" style="padding:10px;margin-bottom:8px">' +
+      '<div class="row"><span class="nm">' + CALIBERS[cal].n + '</span>' +
+      (cal === curCal ? '<span class="tag eq">当前武器口径</span>' : '') +
+      '<span class="spacer"></span><span class="hint">' + list.reduce((a, x) => a + (S.inv[x.id] || 0), 0) + ' 发</span></div><div class="grid g2" style="margin-top:6px">';
+    list.forEach(a => {
+      const it = ITEMS[a.id], on = a.id === picked;
+      const good = a.pen >= 4;
+      h += '<div class="lrow" style="align-items:center"><div><div class="nm">' + it.n + '</div>' +
+        '<div class="ds">穿透 <b style="color:' + (good ? 'var(--warn)' : 'var(--dim)') + '">' + a.pen + '</b> · 伤害 ×' + (a.dmgMul || 1) +
+        ' · <span class="mono">' + (S.inv[a.id] || 0) + ' 发</span></div></div><div class="rt">' +
+        '<button class="btn xs ' + (on ? 'warn' : 'ok') + '" onclick="setLoaded(\'' + cal + '\',\'' + a.id + '\')">' + (on ? '已装填' : '装填') + '</button>' +
+        '</div></div>';
+    });
+    h += '</div></div>';
+  });
+  return h;
+}
+
+// 制作配方：st = 哪个站，lv = 该站等级要求（老档没 st 的都归工作台）
 const RECIPES = [
-  {out:'bandage',  n:2, need:{cloth:2},                 bench:0, desc:'撕成条，煮沸，晾干。'},
-  {out:'water',    n:1, need:{dirty:2, wood:1},         bench:0, desc:'煮沸消毒，去掉大部分病原。'},
-  {out:'molotov',  n:1, need:{bottle:1, fuel:1, cloth:1}, bench:1, desc:'布条塞瓶口，点火就扔。'},
-  {out:'tape',     n:1, need:{cloth:1, chem:1},         bench:1, desc:'劣质胶带，但能粘住东西。'},
-  {out:'ammo',     n:10,need:{powder:2, metal:1, tape:1}, bench:2, desc:'复装弹药 ×10（自制，易哑火）。'},
-  {out:'medkit',   n:1, need:{bandage:2, anti:1, tape:1}, bench:2, desc:'凑齐一套急救物资。'},
-  {out:'antitoxin',n:1, need:{chem:2, water:1},         bench:2, desc:'用化学药剂中和毒素。'},
-  {out:'grenade',  n:1, need:{powder:3, metal:2, tape:1}, bench:3, desc:'自制破片手雷，威力有限但够用。'},
-  {out:'serum',    n:1, need:{chem:3, anti:1, chip:1},  bench:3, desc:'低配版病毒抑制剂。'},
+  {out:'bandage',  n:2, need:{cloth:2},                 st:'bench', lv:0, desc:'撕成条，煮沸，晾干。'},
+  {out:'water',    n:1, need:{dirty:2, wood:1},         st:'bench', lv:0, desc:'煮沸消毒，去掉大部分病原。'},
+  {out:'molotov',  n:1, need:{bottle:1, fuel:1, cloth:1}, st:'bench', lv:1, desc:'布条塞瓶口，点火就扔。'},
+  {out:'tape',     n:1, need:{cloth:1, chem:1},         st:'bench', lv:1, desc:'劣质胶带，但能粘住东西。'},
+  {out:'medkit',   n:1, need:{bandage:2, anti:1, tape:1}, st:'bench', lv:2, desc:'凑齐一套急救物资。'},
+  {out:'grenade',  n:1, need:{powder:3, metal:2, tape:1}, st:'bench', lv:3, desc:'自制破片手雷，威力有限但够用。'},
+  /* ── 弹药台：复装（参考塔科夫的"弹种"分层） ── */
+  {out:'a9_fmj',   n:12, need:{powder:2, metal:1},       st:'loading', lv:0, desc:'9mm 复装弹 ×12，打普通丧尸够用。'},
+  {out:'a556_fmj', n:12, need:{powder:3, metal:2},       st:'loading', lv:1, desc:'5.56 复装弹 ×12。'},
+  {out:'a762_fmj', n:12, need:{powder:3, metal:2},       st:'loading', lv:1, desc:'7.62 复装弹 ×12，肉多。'},
+  {out:'a12_buck', n:8,  need:{powder:3, metal:1, tape:1}, st:'loading', lv:1, desc:'12 号鹿弹 ×8，清场用。'},
+  {out:'a9_ap',    n:8,  need:{powder:3, metal:3, chip:1}, st:'loading', lv:2, desc:'9mm 穿甲弹 ×8：钢芯，能啃装甲。'},
+  {out:'a556_ap',  n:8,  need:{powder:4, metal:3, chip:1}, st:'loading', lv:2, desc:'5.56 穿甲弹 ×8。'},
+  {out:'a762_ap',  n:8,  need:{powder:4, metal:3, chip:1}, st:'loading', lv:3, desc:'7.62 穿甲弹 ×8。'},
+  {out:'a308_m',   n:6,  need:{powder:4, metal:3, chip:2}, st:'loading', lv:3, desc:'7.62N 竞赛弹 ×6：精准与穿透兼顾。'},
+  {out:'a12_slug', n:6,  need:{powder:4, metal:2, tape:1}, st:'loading', lv:2, desc:'12 号独头弹 ×6。'},
+  {out:'a308_ap',  n:5,  need:{powder:6, metal:4, chip:3}, st:'loading', lv:3, desc:'7.62N 穿甲弹 ×5：目前能打穿一切的东西。'},
+  /* ── 医疗台：制药 ── */
+  {out:'painkiller', n:2, need:{chem:1, water:1},        st:'medlab', lv:0, desc:'止痛药 ×2。'},
+  {out:'antitoxin', n:1, need:{chem:2, water:1},         st:'medlab', lv:1, desc:'用化学药剂中和毒素。'},
+  {out:'iodine',   n:3, need:{chem:1, water:1},          st:'medlab', lv:1, desc:'碘片 ×3：进辐射区之前先吃。'},
+  {out:'anti',     n:1, need:{chem:2, chip:1},           st:'medlab', lv:2, desc:'抗生素。'},
+  {out:'radaway',  n:1, need:{chem:3, anti:1, water:1},  st:'medlab', lv:2, desc:'抗辐射药：把已经吃进去的放射核素排出去。'},
+  {out:'serum',    n:1, need:{chem:3, anti:1, chip:1},   st:'medlab', lv:3, desc:'低配版病毒抑制剂。'},
+  /* ── 灶台：把生食做熟（熟食回得更多，而且不会吃坏肚子） ── */
+  {out:'water',    n:3, need:{dirty:3, wood:1},          st:'kitchen', lv:0, desc:'一锅煮三份净水。'},
+  {out:'cooked',   n:1, need:{meat:1, wood:1},           st:'kitchen', lv:0, desc:'把生肉做熟：饱食与治疗都更高。'},
+  {out:'jerky',    n:2, need:{meat:2, chem:1},           st:'kitchen', lv:1, desc:'风干肉 ×2：占位小、不腐坏。'},
+  {out:'stew',     n:1, need:{meat:1, veg:1, water:1},   st:'kitchen', lv:2, desc:'热炖菜：回满饱食并且压感染。'},
 ];
+/* M25 兼容：归一化统一由 normalizeRecipes() 负责（定义在文件后段、两批配方都加完之后）。 */
 
 // 技能：每级效果由对应系统读取
 /* M24：技能从 6 条扩到 12 条，并且**每条都有升级来源 + 分级解锁**。
@@ -379,6 +484,11 @@ function newState(){
     // M6：季节/天气/体温（env）与菜园地块（plots）——数值与公式全在 src/v4/env-core.ts
     env:{ weather:'clear', tomorrow:'cloudy', temp:50, rainToday:0, coldTier:0 },
     plots:[],
+    /* M25：口径与辐射。
+       load  = 每个口径"现在装的是哪种弹"（玩家在弹药台/背包里选，没选就自动挑穿透最高的）
+       rad   = 体内辐射累积 0~100（核电站/废料场周边会涨，碘片与抗辐射药能压下去） */
+    load:{},
+    rad:0,
     logBuf:[], sfx:true, tab:'explore', over:false
   };
 }
@@ -433,6 +543,20 @@ function sanitizeSave(d){
   const bag = (src, cap) => { const dst = {}; if(src && typeof src === 'object') for(const id in src){
       const n = Math.floor(num(src[id], 0, 0, cap)); if(ITEMS[id] && n > 0) dst[id] = n; } return dst; };
   out.inv = bag(out.inv, 9999); out.store = bag(out.store, 9999);
+  /* M25 存档迁移：老档只有一个笼统的 S.ammo（无口径）→ 折成 9mm 复装弹放进背包；
+     多出来的旧 "ammo" 物品也一并折算（它是"杂牌弹药"，按 1:1 变成 9mm FMJ）。 */
+  {
+    const old = Math.floor(num(out.ammo, 0, 0, 1e6));
+    const junk = out.inv.ammo || 0;
+    if(old > 0 || junk > 0){ out.inv.a9_fmj = (out.inv.a9_fmj || 0) + old + junk; }
+    delete out.inv.ammo;
+    out.ammo = 0;
+    /* load：每个口径记住玩家选的弹种（只认合法 id，坏档忽略） */
+    const ld = {}; const src = out.load && typeof out.load === 'object' ? out.load : {};
+    for(const c in CALIBERS){ const v = src[c]; if(typeof v === 'string' && ITEMS[v] && ITEMS[v].cal === c) ld[c] = v; }
+    out.load = ld;
+    out.rad = Math.floor(num(out.rad, 0, 0, 100));
+  }
   const slots = { wpn:'wpn', head:'head', body:'body', mask:'mask', feet:'feet', bag:'bag', trinket:'trinket' };
   const eq = {}; for(const sl in slots){ const v = (out.eq || {})[sl];
     eq[sl] = (typeof v === 'string' && ITEMS[v] && ITEMS[v].slot === slots[sl]) ? v : base.eq[sl]; }
@@ -1028,7 +1152,9 @@ function tickVitals(mult){
   S.hun = clamp(S.hun - 3.6 * cut * mult, 0, 100);
   S.thi = clamp(S.thi - 4.4 * cut * mult, 0, 100);
   const enc = encumbrance();
-  S.sta = clamp(S.sta - (6 + enc * 6) * mult, 0, S.staMax);
+  /* M25：体内辐射压低体力上限（重度辐射时几乎跑不动） */
+  const radCap = S.staMax * radTier(S.rad).staMul;
+  S.sta = clamp(S.sta - (6 + enc * 6) * mult, 0, radCap);
   if(S.hun <= 0){ S.hp -= 4; log('🍖 饥饿到了极限，身体在消耗自己。','danger'); }
   else if(S.hun < 18) log('🍖 你饿得手在抖（伤害与命中下降）。','dim');
   if(S.thi <= 0){ S.hp -= 5; log('💧 严重脱水，视线开始发黑。','danger'); }   // C08：归零掉血 6/8 → 4/5，别让饥饿单独构成死亡螺旋
@@ -1048,6 +1174,13 @@ function statMods(){
   // 流血的提示交给 HUD 的伤口 chip，不再塞进 note（避免同一屏重复两次）
   if(hasWound('fracture')){ m.dodge -= .10; }
   if(hasWound('sick')){ m.dmgMul -= .10; }
+  /* M25：辐射分档惩罚（轻度只提示、明显以上真的扣战力与治疗） */
+  {
+    const rt = radTier(S.rad);
+    if(rt.tier >= 2) m.dmgMul -= .10;
+    if(rt.tier >= 3) m.dodge -= .10;
+    if(rt.tier >= 1) m.note.push('辐射 ' + rt.label);
+  }
   return m;
 }
 function sleepNight(){
@@ -1081,13 +1214,22 @@ function sleepNight(){
     }
   }
   // 据点产出（v3.0：断水断电后净水器要烧燃料；菜园改为产新鲜蔬菜，会烂）
+  const powered = (S.base.power || 0) > 0;              // M25：自建发电机 = 自己发电，不看电网脸色
   if(S.base.filter){
-    const n = S.base.filter;
-    if(!powerOff()){ addItem('water', n, true); log('🚰 净水装置产出 ' + n + ' 份净水。','success'); }
+    const n = S.base.filter + (powered ? 1 : 0);        // M25 发电机：净水 +1
+    if(powered){ addItem('water', n, true); log('🚰 净水装置产出 ' + n + ' 份净水（发电机供电 +1）。','success'); }
+    else if(!powerOff()){ addItem('water', n, true); log('🚰 净水装置产出 ' + n + ' 份净水。','success'); }
     else if(has('fuel')){ takeItem('fuel', 1); addItem('water', n, true); log('⛽ 电网断了，你用汽油发电机带净水器跑了一夜（-1 汽油，+' + n + ' 净水）。','success'); }
     else log('🔌 断电了，净水器没燃料——今天没有净水产出。','danger');
   }
-  if(S.base.garden){ const n = S.base.garden; addItem('veg', n, true); if(!S.spoil.veg) S.spoil.veg = ITEMS.veg.fresh; log('🌱 菜园收成 ' + n + ' 份新鲜蔬菜（' + ITEMS.veg.fresh + ' 天内要吃掉或炖了）。','success'); }
+  if(S.base.garden){
+    const n = S.base.garden;
+    addItem('veg', n, true);
+    /* M25 发电机：菜园生长快一天 —— 直接体现在保鲜期上（当晚收的菜能多放一天），
+       比"改生长进度"更好懂：玩家看到的是"菜不容易烂了"。 */
+    S.spoil.veg = ITEMS.veg.fresh + (powered ? 1 : 0);
+    log('🌱 菜园收成 ' + n + ' 份新鲜蔬菜（' + S.spoil.veg + ' 天内要吃掉或炖了）。','success');
+  }
   // 食物腐坏 / 伤口 / 防线自愈
   spoilTick();
   woundTick();
@@ -1292,7 +1434,18 @@ function renderHud(){
   h += bar('thi', S.thi, 100, '💧 水分', Math.round(S.thi));
   h += bar('inf', S.infect, 100, '🦠 感染' + (S.infect >= 60 ? ' · 爆发期' : (S.infect >= 35 ? ' · 警戒' : '')), Math.round(S.infect) + '%');
   h += '</div><div class="hud-chips">';
-  h += '<span class="chip cold">🔫 弹药 <b>' + S.ammo + '</b></span>';
+  /* M25：口径分开后 HUD 报总弹数 + 当前武器的口径与弹种；有 2 种以上可换弹时整条可点（循环换装） */
+  const wCal = (S.eq.wpn && ITEMS[S.eq.wpn] && ITEMS[S.eq.wpn].cal) ? ITEMS[S.eq.wpn].cal : null;
+  const wAmmo = wCal ? loadedAmmo(wCal) : null;
+  const swappable = wCal ? (AMMO_OF[wCal] || []).filter(a => (S.inv[a.id] || 0) > 0).length >= 2 : false;
+  h += '<span class="chip cold"' + (swappable ? ' style="cursor:pointer" title="点一下换弹种" onclick="cycleLoaded()"' : '') + '>🔫 弹药 <b>' + ammoCount() + '</b>' +
+    (wAmmo ? ' <span class="mono" style="opacity:.75">' + CALIBERS[wCal].short + '·' + ITEMS[wAmmo].n.split(' ').pop() +
+      ' 穿透' + (ITEMS[wAmmo].pen || 0) + ' ×' + (S.inv[wAmmo] || 0) + '</span>' + (swappable ? ' ⟳' : '') : '') + '</span>';
+  /* M25：辐射 chip —— 只有真的吃进去才显示，标签直接给分档 */
+  if(S.rad > 0){
+    const rt = radTier(S.rad);
+    h += '<span class="chip ' + (rt.tier >= 2 ? 'heavy warnpulse' : '') + '" title="' + rt.note + '">☢️ 辐射 <b>' + Math.round(S.rad) + '</b> · ' + rt.label + '</span>';
+  }
   h += '<span class="chip gold">🔩 材料 <b>' + S.mat + '</b></span>';
   h += '<span class="chip ' + (w > cw ? 'heavy warnpulse' : '') + '">🎒 负重 <b>' + w + '/' + cw + '</b></span>';
   h += '<span class="chip">🛡️ 护甲 <b>' + armorTotal() + '</b></span>';
@@ -1512,11 +1665,25 @@ function effDmg(w, isGun){
   const wid = (S.eq.wpn && ITEMS[S.eq.wpn]) ? S.eq.wpn : 'crowbar';
   let d = w.dmg;
   d *= isGun ? (1 + skillBonus('shoot', .06, .7)) : (1 + skillBonus('melee', .07, .7));
+  /* M25：装上什么弹就打什么伤害（竞赛/独头更疼，穿甲弹打无甲略亏） */
+  const ammo = (isGun && w.cal) ? ITEMS[loadedAmmo(w.cal)] : null;
+  if(ammo) d *= (ammo.dmgMul || 1);
   d += Math.floor(S.day / 5) * 2;
   d *= statMods().dmgMul;
   d *= modMul(wid, 'wmult');                                   // C22 消音器的伤害代价
   let crit = (w.crit || 0) + modSum(wid, 'crit') + (isGun ? S.skills.shoot : S.skills.melee) * .005;   // C22 瞄准镜
   return { d:d, crit:crit };
+}
+/** M25：这一枪对某个目标的实际伤害 —— 穿透等级 vs 装甲等级（参考塔科夫） */
+function damageVs(foe, base, isGun, w){
+  const t = (foe && foe.t) || {};
+  const armor = t.armor || 0;
+  if(!isGun || !armor || !w || !w.cal) return base;
+  const aid = loadedAmmo(w.cal);
+  const pen = (aid && ITEMS[aid]) ? (ITEMS[aid].pen || 0) : 0;
+  const m = penMul(pen, armor);
+  if(m < 1) foe.__pen = { pen:pen, armor:armor, m:m };        // 战斗日志用：这发被挡掉多少
+  return base * m;
 }
 /* C15 战斗节拍器：combatAct 只做"调度"，结算拆成 combatResolve（玩家动作）+ combatAfter（胜负判定与敌方回合）。
    beat 模式下两段之间插 180/300ms 间隔并锁按钮；fast（默认）模式下与旧版完全同步，随机数调用顺序不变。 */
@@ -1560,10 +1727,13 @@ function combatResolve(kind, arg, staged){
   if(kind === 'shoot' || kind === 'melee'){
     const isGun = kind === 'shoot';
     const ammoCost = isGun ? Math.max(1, (w.ammo || 1) + modSum(wid, 'ammo')) : 0;   // C22 扩容弹匣
-    if(isGun && S.ammo < ammoCost){ cbLog('弹药不足！', 'hurt'); drawCombat(); return; }
+    const aid = isGun && w.cal ? loadedAmmo(w.cal) : null;                           // M25：这一口径装的是哪种弹
+    if(isGun && (!aid || itemCount(aid) < ammoCost)){
+      cbLog('弹药不足！' + (w.cal ? '（' + CALIBERS[w.cal].short + ' 只剩 ' + (aid ? itemCount(aid) : 0) + ' 发）' : ''), 'hurt'); drawCombat(); return;
+    }
     if(!isGun && S.sta < (w.sta || 0)){ cbLog('体力不够挥不动了，先防御回气。', 'hurt'); drawCombat(); return; }
     if(isGun){
-      S.ammo -= ammoCost; S.stats.ammoUsed += ammoCost;
+      takeItem(aid, ammoCost); S.ammo = ammoCount(); S.stats.ammoUsed += ammoCost;   // M25：按口径消耗实弹
       S.noise += Math.max(0, (w.noise >= 3 ? 2 : 1) + modSum(wid, 'noise'));         // C22 消音器
       noiseCheck();                                                               // v3.0：噪音会招来迁徙尸群
       if(!staged) sfx('shoot');
@@ -1573,7 +1743,13 @@ function combatResolve(kind, arg, staged){
     const e = effDmg(w, isGun);
     const crit = chance(e.crit);
     let dmg = crit ? e.d * 1.8 : e.d;
+    dmg = damageVs(foe, dmg, isGun, w);                      // M25：穿透 vs 装甲
     hitFoe(foe, dmg, { gun:isGun, apen:!!w.apen, crit:crit, source:w.n });
+    if(foe.__pen && foe.__pen.m < 1){
+      cbLog('🛡️ 子弹被装甲吃掉了大半（穿透 ' + foe.__pen.pen + ' vs 装甲 ' + foe.__pen.armor +
+        '，只剩 ' + Math.round(foe.__pen.m * 100) + '% 伤害）——换穿甲弹试试。', 'hurt');
+      foe.__pen = null;
+    }
     addXP(isGun ? 'shoot' : 'melee', isGun ? 4 : 3);
     if(w.apen) cbLog('🪓 ' + w.n + ' 劈开了它的防护。', 'good');
   } else if(kind === 'guard'){
@@ -2129,8 +2305,14 @@ function useConsumable(id, inCombat){
   if(!has(id)) return false;
   const it = ITEMS[id];
   takeItem(id, 1);
-  const healMul = 1 + skillBonus('medic', .08, .8);
+  const healMul = (1 + skillBonus('medic', .08, .8)) * radTier(S.rad).healMul;   // M25：重度辐射下伤口长得慢
   const notes = [];
+  /* M25：碘片 / 抗辐射药 —— 把体内辐射压下去 */
+  if(it.rad){
+    const before = S.rad;
+    S.rad = clamp(S.rad + it.rad, 0, 100);
+    notes.push('辐射 ' + before + ' → ' + S.rad);
+  }
   if(it.heal){ const h = Math.round(it.heal * healMul); S.hp = Math.min(S.hpMax, S.hp + h); notes.push('生命 +' + h); }
   if(it.hun){ const h = Math.round(it.hun * (1 + skillBonus('survival', .05, .4))); S.hun = clamp(S.hun + h, 0, 100); notes.push('饱食 +' + h); }
   if(it.thi){ const h = Math.round(it.thi * (1 + skillBonus('survival', .05, .4))); S.thi = clamp(S.thi + h, 0, 100); notes.push('水分 +' + h); }
@@ -2190,8 +2372,8 @@ function withdraw(id){
   log('📦 取出：' + itemName(id) + ' ×' + n, 'info');
   render(); autosave();
 }
-const TYPE_LABEL = { food:'食物', drink:'饮水', med:'医疗', mat:'材料', wpn:'武器', gear:'装备', thr:'投掷', key:'剧情' };
-const TYPE_TAG = { food:'med', drink:'mat', med:'med', mat:'mat', wpn:'wpn', gear:'gear', thr:'thr', key:'key' };
+const TYPE_LABEL = { food:'食物', drink:'饮水', med:'医疗', mat:'材料', wpn:'武器', gear:'装备', thr:'投掷', key:'剧情', ammo:'弹药' };
+const TYPE_TAG = { food:'med', drink:'mat', med:'med', mat:'mat', wpn:'wpn', gear:'gear', thr:'thr', key:'key', ammo:'key' };
 function renderInv(){
   const slots = [['wpn','🗡️ 武器'],['head','⛑️ 头部'],['body','🧥 身体'],['mask','😷 面罩'],['feet','👟 足部'],['trinket','🦴 挂饰'],['bag','🎒 背包']];
   let h = '<div class="sect-title">装备</div><div class="grid g3">';
@@ -2204,6 +2386,7 @@ function renderInv(){
         : '<div class="nm" style="margin:4px 0;color:var(--dim)">空</div>') + '</div>';
   });
   h += '</div>';
+  h += ammoSectionHtml();        // M25：口径与弹种（换装入口，HUD 也能点）
   h += '<div class="sect-title">携带物品 <span class="badge">' + carryWeight() + ' / ' + capWeight() + ' kg</span></div>';
   /* M24.1：过滤掉 ITEMS 里不存在的 id —— 坏档/旧档里如果混进未知物品，
      原来会在这里 sort 时读 undefined.t 直接抛异常（整个背包页白屏）。 */
@@ -2294,35 +2477,59 @@ function renderMods(){
   return h;
 }
 function renderCraft(){
-  const bench = S.base.bench;
-  let h = '<div class="sect-title">工作台 <span class="badge">Lv.' + bench + '</span></div>';
-  h += '<p class="muted" style="margin-bottom:10px">工作台等级决定能做什么。每件消耗 <b>1 行动力</b>。材料来自搜刮与击杀。</p>';
-  h += '<div class="grid g2">';
-  RECIPES.forEach((r, i) => {
-    const okBench = bench >= r.bench;
-    const okMat = Object.keys(r.need).every(k => (S.inv[k] || 0) >= r.need[k]);
-    const out = ITEMS[r.out] || { n:'弹药' };
-    const need = Object.keys(r.need).map(k => '<span class="tag ' + (itemCount(k) >= r.need[k] ? 'eq' : '') + '">' + itemName(k) + ' ' + itemCount(k) + '/' + r.need[k] + '</span>').join(' ');
-    h += '<div class="lrow" style="flex-direction:column;align-items:stretch;gap:6px">' +
-      '<div class="row"><span class="nm">' + out.n + ' ×' + r.n + '</span><span class="spacer"></span><span class="tag">工作台 Lv.' + r.bench + '</span></div>' +
-      '<div class="ds">' + r.desc + '</div>' +
-      '<div class="row">' + need + '</div>' +
-      '<button class="btn sm ' + (okBench && okMat ? 'ok' : '') + '" ' + (okBench && okMat ? '' : 'disabled') + ' onclick="craft(' + i + ')">' +
-        (okBench ? (okMat ? '制作 (1 AP)' : '材料不足') : '需要工作台 Lv.' + r.bench) + '</button></div>';
-  });
+  /* M25：制作页按"工作站"分区（藏身处那套）——工作台 / 弹药台 / 医疗台 / 灶台。
+     每个站显示自己的等级与该站配方；没有的站直接告诉你它还没建。 */
+  const STATIONS = [
+    {k:'bench',   icon:'🛠️', n:'工作台', desc:'基础制作：绷带、胶水、燃烧瓶、手雷。'},
+    {k:'loading', icon:'🔩', n:'弹药台', desc:'复装与改装弹药：普通弹 / 穿甲弹 / 独头弹，按口径分开。'},
+    {k:'medlab',  icon:'⚗️', n:'医疗台', desc:'制药：急救包、解毒剂、碘片、抗辐射药。'},
+    {k:'kitchen', icon:'🍳', n:'灶台',   desc:'把生食做熟、批量煮水、风干肉。'},
+  ];
+  const powered = (S.base.power || 0) > 0;               // M25：发电机（全局增益，不是配方站）
+  let h = '<div class="sect-title">制作 <span class="badge">每件 1 行动力</span></div>';
+  h += '<p class="muted" style="margin-bottom:10px">材料来自搜刮与击杀。四个站各管一摊：先在<b>据点 → 建设</b>里把它们建起来，等级越高配方越深。' +
+    (powered ? '<b style="color:var(--green)">🔋 发电机在转</b>：医疗台 +1 产出、净水 +1、菜园保鲜 +1 天。'
+      : '建了<b>发电机</b>还能给医疗台 +1 产出（净水 +1、菜园保鲜 +1 天）。') + '</p>';
+  for(const st of STATIONS){
+    const lv = S.base[st.k] || 0;
+    const list = RECIPES.map((r, i) => ({r, i})).filter(x => (x.r.st || 'bench') === st.k);
+    h += '<div class="sect-title" style="margin-top:12px">' + st.icon + ' ' + st.n +
+      ' <span class="badge">' + (lv > 0 ? 'Lv.' + lv : '还没建') + '</span>' +
+      '<span class="badge">' + list.filter(x => lv >= x.r.lv).length + ' / ' + list.length + ' 配方</span></div>';
+    h += '<div class="hint" style="margin-bottom:6px">' + st.desc + (lv === 0 ? '　→ 在<b>据点 → 建设</b>里花材料建起来（' + buildCostText(st.k) + '）。' : '') + '</div>';
+    h += '<div class="grid g2">';
+    for(const {r, i} of list){
+      const okSt = lv >= r.lv;
+      const okMat = Object.keys(r.need).every(k => (S.inv[k] || 0) >= r.need[k]);
+      const out = ITEMS[r.out] || { n: r.out };
+      const need = Object.keys(r.need).map(k => '<span class="tag ' + (itemCount(k) >= r.need[k] ? 'eq' : '') + '">' + itemName(k) + ' ' + itemCount(k) + '/' + r.need[k] + '</span>').join(' ');
+      const ammoTag = out.t === 'ammo' ? '<span class="tag ' + (out.pen >= 4 ? 'wpn' : '') + '">穿透 ' + out.pen + '</span>' : '';
+      h += '<div class="lrow" style="flex-direction:column;align-items:stretch;gap:6px">' +
+        '<div class="row"><span class="nm">' + out.n + ' ×' + r.n + '</span>' + ammoTag + '<span class="spacer"></span><span class="tag">' + st.n + ' Lv.' + r.lv + '</span></div>' +
+        '<div class="ds">' + r.desc + '</div>' +
+        '<div class="row">' + need + '</div>' +
+        '<button class="btn sm ' + (okSt && okMat ? 'ok' : '') + '" ' + (okSt && okMat ? '' : 'disabled') + ' onclick="craft(' + i + ')">' +
+          (okSt ? (okMat ? '制作 (1 AP)' : '材料不足') : (lv === 0 ? '需要先建' + st.n : '需要' + st.n + ' Lv.' + r.lv)) + '</button></div>';
+    }
+    h += '</div>';
+  }
   h += '</div>';
   h += renderMods();          // C22：改装面板紧跟在制作配方后面
   return h;
 }
 function craft(i){
   const r = RECIPES[i];
-  if(S.base.bench < r.bench){ log('❌ 工作台等级不够。','dim'); return; }
+  const st = r.st || 'bench';
+  const stName = (BASE_UP[st] && BASE_UP[st].n) || '工作台';
+  if((S.base[st] || 0) < r.lv){ log('❌ ' + stName + '等级不够（需要 Lv.' + r.lv + '）。','dim'); return; }
   if(!Object.keys(r.need).every(k => (S.inv[k] || 0) >= r.need[k])){ log('❌ 材料不足。','dim'); return; }
   if(!spendAP(1)) return;
   Object.keys(r.need).forEach(k => takeItem(k, r.need[k]));
   /* M24 技能：厨艺（煮水/做饭多出 1 份）、制作（按等级概率返还材料） */
   const isCook = r.out === 'water' || (ITEMS[r.out] && ITEMS[r.out].t === 'food');
-  let outN = r.n + (isCook && hasPerk('cook', 3) ? 1 : 0);
+  /* M25 发电机：医疗台通电后每件多出 1 份（跟厨艺一样是"站台增益"，不叠加到别的站上） */
+  const poweredBonus = st === 'medlab' && (S.base.power || 0) > 0 ? 1 : 0;
+  let outN = r.n + (isCook && hasPerk('cook', 3) ? 1 : 0) + poweredBonus;
   if(isCook && S.skills.cook >= 2 && !hasPerk('cook', 3)) outN += Math.floor(S.skills.cook / 2);
   grant(r.out, outN);
   const refundP = (S.skills.craft || 0) * (hasPerk('craft', 3) ? .20 : .10);
@@ -2336,6 +2543,7 @@ function craft(i){
   sfx('ok');
   log('🛠️ 制作完成：' + (ITEMS[r.out] ? ITEMS[r.out].n : '弹药') + ' ×' + outN +
     (isCook && outN > r.n ? '（厨艺 +' + (outN - r.n) + '）' : '') +
+    (poweredBonus ? '（🔋 发电机 +' + poweredBonus + '）' : '') +
     (refunded ? '　♻️ 制作技能返还了 ' + refunded : ''), 'success');
   bountyTick(); sideTick();
   checkAch(); render(); autosave();
@@ -2393,6 +2601,12 @@ function scaledCost(k, lv){
   const base = BASE_UP[k].cost, out = {};
   for(const c in base) out[c] = Math.ceil(base[c] * (1 + lv * .6));
   return out;
+}
+/** M25：建设价目的一行文字（制作页里告诉玩家"这个站要多少材料才建得起来"） */
+function buildCostText(k){
+  const u = BASE_UP[k];
+  if(!u) return '';
+  return Object.keys(u.cost).map(c => itemName(c) + '×' + u.cost[c]).join('、');
 }
 function build(k){
   const u = BASE_UP[k], lv = S.base[k];
@@ -2524,6 +2738,9 @@ Object.assign(ITEMS, {
   seed_veg:  {n:'蔬菜种子', t:'mat',  w:0.05, desc:'播在菜园地块上：快熟低产（5 天 / 每块 2 份）。'},
   seed_grain:{n:'麦种',     t:'mat',  w:0.05, desc:'慢熟高产：9 天 / 每块 5 份，冬天存粮靠它。'},
   berry:     {n:'野果',     t:'food', w:0.1, hun:12, fresh:3, desc:'林子里摘的，酸甜，放不久。'},
+  /* M25：生肉/熟肉（灶台那一站的原料与成品） */
+  meat:      {n:'生肉',     t:'food', w:0.6, hun:16, sick:.22, fresh:2, desc:'变异猎犬身上割下来的。生吃会出事，架火烤过就是好东西。'},
+  cooked:    {n:'烤肉',     t:'food', w:0.5, hun:38, heal:3, desc:'灶台出品。焦香味能把整栋楼的死人都叫醒。'},
   mushroom:  {n:'蘑菇',     t:'food', w:0.1, hun:10, sick:.08, desc:'认不准就别生吃。'},
   grain:     {n:'麦子',     t:'food', w:0.3, hun:8, desc:'生麦子难啃，磨成粉才好用。'},
   dried:     {n:'果干',     t:'food', w:0.1, hun:20, sta:4, desc:'烤干之后能放很久的甜味。'},
@@ -2533,7 +2750,7 @@ Object.assign(ITEMS, {
   fish_cooked:{n:'烤鱼',    t:'food', w:0.4, hun:42, heal:4, desc:'火上一烤，腥味变成了香味。'},
   rod:       {n:'鱼竿',     t:'mat',  w:1.0, desc:'自制竿子：钓鱼命中 +25%，上钩还能多钓一条。'},
   bait:      {n:'鱼饵',     t:'mat',  w:0.1, desc:'钓鱼命中 +20%，每次消耗一份；也能投喂鱼塘。'},
-  wetsuit:   {n:'潜水服',   t:'gear', w:2.0, slot:'body', armor:1, desc:'又湿又冷但保暖：下水不抽筋，水下搜索的保命装备。'},
+  wetsuit:   {n:'潜水服',   t:'gear', w:2.0, slot:'body', armor:1, radProt:.1, desc:'又湿又冷但保暖：下水不抽筋，水下搜索的保命装备。'},
   o2:        {n:'氧气瓶',   t:'mat',  w:1.2, desc:'一瓶能支撑 3 次水下搜索；没有它只能憋一口气。'},
   purify:    {n:'净化片',   t:'med',  w:0.05, desc:'一片能净一升水：丢进污水里等一会儿就能喝，不用生火。'},   // M7.1：取水闭环
 });
@@ -2551,6 +2768,18 @@ RECIPES.push(
   {out:'water',      n:1, need:{dirty:1, purify:1},        bench:0, desc:'净化片丢进污水，半小时后就能喝。'},
   {out:'purify',     n:2, need:{chem:1, cloth:1},          bench:1, desc:'化工原料压成的净水片，一片一升。'},
 );
+/* M25：M24 及更早的配方写在**两处**（顶部字面量 + 这里的 push），字段名还是老的 `bench`
+   （工作台等级），既没有 st 也没有 lv —— 漏掉归一化的话 `lv >= undefined` 恒为 false，
+   那些配方会变成"永远做不了"，界面上还会显示 Lv.undefined（实测就是这样）。
+   所以必须**两处都归一遍**，不能只写在顶部那个字面量后面。 */
+function normalizeRecipes(){
+  for(const r of RECIPES){
+    if(typeof r.lv !== 'number') r.lv = typeof r.bench === 'number' ? r.bench : 0;
+    if(!r.st) r.st = 'bench';
+    if(r.desc === undefined) r.desc = '';
+  }
+}
+normalizeRecipes();
 const WOUND_DEF = {
   bleed:    { n:'流血',  icon:'🩸', cure:'bandage' },
   fracture: { n:'骨折',  icon:'🦴', cure:'splint'  },
@@ -3193,7 +3422,10 @@ function boot(){
 /* 内联 onclick 只能看到 window 上的属性，而顶层 let/const 不是 window 属性：
    这里把状态对象挂成访问器，保证内联事件与外部脚本读写的是同一份状态。 */
 /* ── C23 工程加固：显式导出（内联 onclick 与外部验证脚本依赖这些名字）── */
-Object.assign(window, { VER, SAVE_KEY, V1_KEY, ITEMS, itemName, isWpn, ZOMBIES, ZONES, BASE_UP, RECIPES, SKILLS, COMPANIONS, MERCHANT, LORE, ACHIEVEMENTS, AFFIX, BOUNTY_POOL, QUEST_BOUNTIES, SIDE_QUESTS, MODS, ZONE_SIL, newState, RM, BAK_KEY, writeSave, saveGame, autosave, lsGet, lsSet, sanitizeSave, MIGRATIONS, migrateSave, loadGame, confirmRestart, migrateV1, deepMerge, exportSave, importSave, $, $$, clamp, rnd, ri, chance, pick, wpick, esc, AUDIO_MAX, actx, AMB, ambStart, ambBlip, ambStop, ambMode, ambSync, MUS, MUS_MAX, CHORDS, PENTA, mtof, musicMood, musicTempo, musicVoice, musicNoiseHit, musicBar, musicStart, musicStop, musicSting, tone, arnd, noise, SFX, sfx, floatText, shake, toast, firstTip, award, addXP, log, clearLog, replayLog, hr, skillBonus, capWeight, carryWeight, encumbrance, armorTotal, addItem, takeItem, itemCount, has, ammoInMag, phaseName, spendAP, tickVitals, statMods, sleepNight, nightRaid, combatRepair, rescueEnding, recapHtml, TABS, renderTop, bar, renderHud, nextStep, renderTabs, setTab, render, baseLevel, modal, closeModal, closeAllModals, mkFoe, startCombat, openCombatModal, cbLog, drawCombat, battleTarget, siegePanelHtml, effDmg, combatAct, combatAfter, combatResolve, hitFoe, killFoe, afterPlayerTurn, companionTurn, foeTurn, endCombat, gameOver, restart, zoneOpen, zoneLockText, renderExplore, openZone, drawZone, grant, searchZone, applyFirst, lootItem, encounterRoll, survivorEvent, recruit, restHere, useConsumable, equipItem, equipWeapon, dropItem, deposit, withdraw, TYPE_LABEL, TYPE_TAG, renderInv, renderSideQuests, renderMods, renderCraft, craft, renderBase, scaledCost, build, renderSkills, QUEST_STAGES, questProgress, checkQuest, renderQuest, GOAL_DAY, MAP, WOUND_DEF, daysToHorde, nextEventText, threatLevel, travelCost, travelTo, goHome, defMax, defInit, repairDefense, TRAPS, buildTrap, hasWound, addWound, cureWound, woundTick, spoilTick, powerOff, raiseHorde, mapClick, renderMap, renderCalendar, noiseCheck, runScore, bountyBudget, bountyDef, metricValue, rollBounties, bountyTick, claimBounty, renderBounties, affixRoll, applyAffix, sideActive, sideTick, sideAdvance, sideNightCheck, modsOf, modSum, modMul, addMod, shopLeft, shopDayCheck, startFinalBattle, bossPhase2, finalVictory, enterEndless, renderCodex, discoverLore, renderStats, checkAch, merchantRate, openMerchant, buyMerchant, openMenu, openHelp, cheat, firstGesture, togglePace, toggleAmb, toggleMusic, initGame, boot });
+Object.assign(window, { VER, SAVE_KEY, V1_KEY, ITEMS, itemName, isWpn, ZOMBIES, ZONES, BASE_UP, RECIPES, SKILLS, COMPANIONS, MERCHANT, LORE, ACHIEVEMENTS, AFFIX, BOUNTY_POOL, QUEST_BOUNTIES, SIDE_QUESTS, MODS, ZONE_SIL, newState, RM, BAK_KEY, writeSave, saveGame, autosave, lsGet, lsSet, sanitizeSave, MIGRATIONS, migrateSave, loadGame, confirmRestart, migrateV1, deepMerge, exportSave, importSave, $, $$, clamp, rnd, ri, chance, pick, wpick, esc, AUDIO_MAX, actx, AMB, ambStart, ambBlip, ambStop, ambMode, ambSync, MUS, MUS_MAX, CHORDS, PENTA, mtof, musicMood, musicTempo, musicVoice, musicNoiseHit, musicBar, musicStart, musicStop, musicSting, tone, arnd, noise, SFX, sfx, floatText, shake, toast, firstTip, award, addXP, log, clearLog, replayLog, hr, skillBonus, capWeight, carryWeight, encumbrance, armorTotal, addItem, takeItem, itemCount, has, ammoInMag, phaseName, spendAP, tickVitals, statMods, sleepNight, nightRaid, combatRepair, rescueEnding, recapHtml, TABS, renderTop, bar, renderHud, nextStep, renderTabs, setTab, render, baseLevel, modal, closeModal, closeAllModals, mkFoe, startCombat, openCombatModal, cbLog, drawCombat, battleTarget, siegePanelHtml, effDmg, combatAct, combatAfter, combatResolve, hitFoe, killFoe, afterPlayerTurn, companionTurn, foeTurn, endCombat, gameOver, restart, zoneOpen, zoneLockText, renderExplore, openZone, drawZone, grant, searchZone, applyFirst, lootItem, encounterRoll, survivorEvent, recruit, restHere, useConsumable, equipItem, equipWeapon, dropItem, deposit, withdraw, TYPE_LABEL, TYPE_TAG, renderInv, renderSideQuests, renderMods, renderCraft, craft, renderBase, scaledCost, build, renderSkills, QUEST_STAGES, questProgress, checkQuest, renderQuest, GOAL_DAY, MAP, WOUND_DEF, daysToHorde, nextEventText, threatLevel, travelCost, travelTo, goHome, defMax, defInit, repairDefense, TRAPS, buildTrap, hasWound, addWound, cureWound, woundTick, spoilTick, powerOff, raiseHorde, mapClick, renderMap, renderCalendar, noiseCheck, runScore, bountyBudget, bountyDef, metricValue, rollBounties, bountyTick, claimBounty, renderBounties, affixRoll, applyAffix, sideActive, sideTick, sideAdvance, sideNightCheck, modsOf, modSum, modMul, addMod, shopLeft, shopDayCheck, startFinalBattle, bossPhase2, finalVictory, enterEndless, renderCodex, discoverLore, renderStats, checkAch, merchantRate, openMerchant, buyMerchant, openMenu, openHelp, cheat, firstGesture, togglePace, toggleAmb, toggleMusic, initGame,
+  /* M25：口径/弹种/辐射这几个查询函数被验收探针与将来的 UI 直接用，一并挂出去 */
+  CALIBERS, AMMO_OF, ammoCount, loadedAmmo, setLoaded, cycleLoaded, penMul, radTier,
+  radLevelAt, radGain, radProtect, RAD_SOURCES, geigerText, boot });
 Object.defineProperty(window, "S", { get: function(){ return S; }, set: function(v){ S = v; }, configurable: true });
 Object.defineProperty(window, "battle", { get: function(){ return battle; }, set: function(v){ battle = v; }, configurable: true });
 Object.defineProperty(window, "fxLock", { get: function(){ return fxLock; }, set: function(v){ fxLock = v; }, configurable: true });

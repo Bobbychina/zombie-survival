@@ -22,7 +22,9 @@ export function toFoe(src: any): Foe {
     name: src.n ?? src.name ?? '丧尸',
     hp: src.hp, hpMax: src.hpMax ?? src.hp,
     atk: src.dmg ?? 6,
-    def: (t.armGun ? 6 : 0) + (t.armMelee ? 3 : 0) + (src.boss ? 4 : 0),
+    /* M25：def 现在主要来自"装甲等级"（参考塔科夫），armGun/armMelee 只作为额外整体减伤 */
+    def: (t.armor ? t.armor * 2 : 0) + (t.armGun ? Math.round((1 - t.armGun) * 6) : 0) + (t.armMelee ? 3 : 0) + (src.boss ? 4 : 0),
+    armor: t.armor || 0,          // 穿透要过的门槛（引擎那边只有枪吃这个）
     spd: src.spd ?? 1,
     types,
     moves: foeMoves(id, src.dmg ?? 6),
@@ -47,7 +49,11 @@ export function playerProfile(): PlayerProfile {
   const inv: Record<string, number> = {};
   ['bandage', 'medkit', 'molotov', 'grenade', 'smoke', 'antitoxin'].forEach(id => { if (L.itemCount(id) > 0) inv[id] = L.itemCount(id); });
   return {
-    hp: S.hp, hpMax: S.hpMax, sta: S.sta, staMax: S.staMax, ammo: S.ammo,
+    /* M25：弹药按"当前武器口径里装的那种弹"计数（口径分开后没有笼统的弹药池了） */
+    hp: S.hp, hpMax: S.hpMax, sta: S.sta, staMax: S.staMax,
+    ammo: isGun && w.cal ? (S.inv[L.loadedAmmo(w.cal)] || 0) : 0,
+    /* M25：穿透等级 —— v4 引擎用它抵消 foe.def（穿甲弹打装甲目标不再白给） */
+    pen: isGun && w.cal ? (L.ITEMS[L.loadedAmmo(w.cal)]?.pen || 0) : 0,
     weaponId: wid, weaponName: w.n, weaponDmg: e.d, isGun,
     apen: !!w.apen, spread: isGun && L.ITEMS[wid].n === '霰弹枪',
     critBonus: Math.max(0, e.crit - (w.crit ?? 0)),
@@ -67,6 +73,14 @@ export function syncBack(p: PlayerProfile) {
   // X01：生命必须 clamp 到上限（试玩档出现过 186/128：治疗与"每 5 天 +10 上限"叠加后没人收口）
   S.hp = Math.max(0, Math.min(S.hpMax, Math.round(p.hp)));
   S.sta = Math.max(0, Math.min(p.staMax, p.sta));
+  /* M25：口径分开后 S.ammo 只是"总弹药"的镜像，真正的池子是背包里的弹种。
+     引擎扣的是 p.ammo（当前装填弹种的发数），所以这里要**同步扣掉那一种弹**，
+     否则会出现"打光了但背包里还有弹"的鬼故事（M25 之前 S.ammo 是唯一池子，所以没这问题）。 */
+  const wid: string = (S.eq.wpn && L.ITEMS[S.eq.wpn]) ? S.eq.wpn : '';
+  const cal = wid && L.ITEMS[wid]?.cal;
+  const aid = cal ? L.loadedAmmo(cal) : null;
+  const spent = Math.max(0, (S.ammo || 0) - Math.max(0, p.ammo));
+  if (aid && spent > 0) L.takeItem(aid, Math.min(spent, L.itemCount(aid)));
   S.ammo = Math.max(0, p.ammo);
   ['bandage', 'medkit', 'molotov', 'grenade', 'smoke', 'antitoxin'].forEach(id => {
     const want = p.inventory[id] ?? 0;

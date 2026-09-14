@@ -8,7 +8,7 @@ export interface PoiDef {
   searches: number;          // 能搜刮几次（搜空后只剩外壳）
   loot: Record<string, number>;
   enemies: string[];
-  feat?: 'vehicle' | 'fuel' | 'food' | 'water' | 'npc' | 'quest' | 'radio' | 'medical' | 'tools' | 'rest' | 'dive';
+  feat?: 'vehicle' | 'fuel' | 'food' | 'water' | 'npc' | 'quest' | 'radio' | 'medical' | 'tools' | 'rest' | 'dive' | 'rad';
   /** M7.1：这类地方专门出建材（每次"材料"档额外多给这么多） */
   matBonus?: number;
   desc: string;
@@ -55,6 +55,16 @@ export const POIS: Record<string, PoiDef> = {
   prison: P({ id:'prison', name:'监狱', icon:'⛓️', biomes:['industrial','ruins'], danger:2, searches:5,
     loot:{ keycard:.15, kevlar:.15, metal:.4, vest:.2, medkit:.15, powder:.3 }, enemies:['armored','brute','tyrant'],
     feat:'quest', desc:'暴动之后门就没关过。里面关着的东西也不全是人。' }),
+  /* M25：辐射源（用户："添加辐射（添加核电站啊啥的）"）。
+     这两个不只是"更危险的建筑"——周围 2~3 格是**辐射场**，待久了体内辐射会累积（见 src/v4/rad-core.ts）。 */
+  nuclear: P({ id:'nuclear', name:'核电站', icon:'☢️', biomes:['industrial','ruins'], danger:3, searches:6,
+    loot:{ chip:.45, chem:.4, metal:.35, a556_ap:.14, a308_ap:.08, radaway:.22, o2:.15, serum:.12 },
+    enemies:['armored','spitter','brute','tyrant'], feat:'rad',
+    desc:'冷却塔还在冒白汽，虽然没人知道它靠什么在运转。这里什么都能找到——包括你不想找到的东西。' }),
+  waste: P({ id:'waste', name:'废料填埋场', icon:'🛢️', biomes:['industrial','ruins','farm'], danger:2, searches:4,
+    loot:{ chem:.5, metal:.4, fuel:.25, iodine:.25, chip:.2, a762_ap:.12 },
+    enemies:['poison','brute','hound','spitter'], feat:'rad',
+    desc:'埋了几十年的桶开始漏了。夜里桶盖底下有绿色的光。' }),
   school: P({ id:'school', name:'学校', icon:'🏫', biomes:['suburb','city'], danger:0, searches:5,
     loot:{ data:.2, cloth:.3, can:.25, bandage:.25, chip:.15, backpack:.12 }, enemies:['walker','crawler','screamer'],
     desc:'教室黑板上的粉笔字还停在那一天。' }),
