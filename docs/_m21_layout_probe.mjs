@@ -163,6 +163,31 @@ ok('今夜卡「就地生火过夜」翻到第二天（唯一睡觉入口）', s
 ok('过夜走了 v4 结算（睡眠债记账 + lastNight）', !!(sleepRes.lastNight && typeof sleepRes.debt === 'number'), 'debt=' + sleepRes.debt)
 await sleep(600)
 
+/* ── 6b) 大区视图不许溢出（用户第二次报障："这边也溢出了"——选中详情/出发被挤到屏幕外） ── */
+await send('Emulation.setDeviceMetricsOverride', { width: 1056, height: 1151, deviceScaleFactor: 1, mobile: false })
+await ev(`window.dispatchEvent(new Event('resize')); 1`); await sleep(500)
+await ev(`V4World.mapMode('region')`); await sleep(700)
+await ev(`(() => { const c=[...document.querySelectorAll('#v4world .rcell2')].find(e=>!/here/.test(e.className)); if(c) c.click(); return 1; })()`)
+await sleep(600)
+const reg = JSON.parse(await ev(`(() => {
+  const v = document.getElementById('view'), card = document.getElementById('v4world');
+  const det = document.querySelector('#v4world .rdetail'), go = document.querySelector('#v4world .rdetail .rgo');
+  const vb = v.getBoundingClientRect(), cb = card.getBoundingClientRect(), db = det ? det.getBoundingClientRect() : null;
+  const gb = go ? go.getBoundingClientRect() : null;
+  return JSON.stringify({ cardH: Math.round(cb.height), viewH: Math.round(vb.height),
+    cardFits: Math.round(cb.bottom) <= Math.round(vb.bottom) + 1,
+    detailVisible: db ? Math.round(db.bottom) <= Math.round(vb.bottom) + 1 : false,
+    goVisible: gb ? (gb.bottom <= vb.bottom + 1 && gb.top >= vb.top) : false,
+    cell: getComputedStyle(document.querySelector('#v4world .rgrid')).gridTemplateColumns.split(' ')[0],
+    scrollW: document.documentElement.scrollWidth, innerW: window.innerWidth });
+})()`))
+ok('大区视图：选中详情首屏可见（不再被挤到屏幕外）', reg.detailVisible === true, JSON.stringify(reg))
+ok('大区视图：「出发/走不了」那条报价首屏可见', reg.goVisible === true)
+ok('大区视图：整张地图卡一屏装下（1056×1151）', reg.cardFits === true, 'cardH=' + reg.cardH + ' viewH=' + reg.viewH)
+ok('大区视图：无横向溢出', reg.scrollW <= reg.innerW + 2, reg.scrollW + ' vs ' + reg.innerW)
+await shot('04_region_1056')
+await ev(`V4World.mapMode('local')`); await sleep(500)
+
 /* ── 6) 截图（1440 宽 + 用户报障时的 1056×1151） ── */
 await shot('01_explore_1440')
 /* 卡片墙在地图下面：滚过去再拍一张，才能看到"卡片墙"本身（用户要的"多搞一些卡片"） */

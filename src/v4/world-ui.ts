@@ -252,6 +252,11 @@ export function renderRegionPanel(s: SaveWorld): string {
     '点一格看详情，再点「出发」才动身——地图上会亮出整条路线。</div>';
 
   const dangerMode = regionLayer === 'danger';
+  /* M21.1：12×12 大区图与"选中详情"并排（详情 = 地名/危险/路程报价/出发按钮）。
+     用户报障："这边也溢出了"——详情原先堆在地图下面，一屏放不下就被切在屏幕外，
+     想出发还得往下滚。宽卡片时并排、窄卡片时自动换行，两边都不用滚。 */
+  h += '<div class="rmain">';
+  h += '<div class="rgridcol">';
   h += '<div class="rgrid' + (dangerMode ? ' rl-danger' : '') + '">';
   for (const row of metaGrid()) {
     for (const def of row) {
@@ -273,12 +278,17 @@ export function renderRegionPanel(s: SaveWorld): string {
   }
   h += '</div>';
 
-  if (!dangerMode) h += typeLegend();
-  h += dangerLegend();
+  // M21.1：两个图例折进 `<details>`（跟本地地图一致）：常驻两三行图例会占掉一屏的 1/5，
+  // 玩家真正要看的"选中详情 + 出发"反而被挤到屏幕外——用户报障"这边也溢出了"。
+  h += '<details class="wlegend-box"><summary>图例与说明</summary>' +
+    (dangerMode ? '' : typeLegend()) + dangerLegend() +
+    '<div class="hint">点一格看详情，再点「出发」才动身——地图上会亮出整条路线。</div></details>';
+  h += '</div>';
 
   if (sel && trip) h += renderRegionDetail(s, here, sel, trip);
   else h += '<div class="rdetail empty">👆 点任意一格：显示那一带的地名、地貌、危险度、能弄到的物资，' +
     '以及开过去要花多少油和行动力。</div>';
+  h += '</div>';
 
   /* 去不了的原因在详情里已经逐条给了，这里只说"整体状态"，不重复念。
      只在"切比雪夫距离 ≤ MAX_HOPS"的格子里算（更远的必然超跳数，不必跑 BFS） */
@@ -701,9 +711,12 @@ export function mountWorldPanel() {
 function fitMap() {
   const view = document.getElementById('view');
   const card = document.getElementById('v4world');
-  const wrap = card ? card.querySelector('.wmapwrap') as HTMLElement | null : null;
-  const grid = card ? card.querySelector('.wgrid') as HTMLElement | null : null;
-  if (!view || !card || !wrap || !grid || !view.classList.contains('v4-board')) return;
+  if (!view || !card || !view.classList.contains('v4-board')) return;
+  const rgrid = card.querySelector('.rgrid') as HTMLElement | null;
+  if (rgrid) { fitRegion(view, card, rgrid); return; }        // 大区图走 12×12 那套算法
+  const wrap = card.querySelector('.wmapwrap') as HTMLElement | null;
+  const grid = card.querySelector('.wgrid') as HTMLElement | null;
+  if (!wrap || !grid) return;
   const cardBox = card.getBoundingClientRect();
   const viewBox = view.getBoundingClientRect();
   const chrome = cardBox.height - wrap.getBoundingClientRect().height;   // 标题行/预览条/悬停行/图例/内边距
@@ -732,6 +745,46 @@ function fitMap() {
     const over = totalH - view.clientHeight;
     if (over <= 0 || cell <= 24) break;
     cell = Math.max(24, cell - Math.ceil(over / 24));
+    apply(cell);
+  }
+}
+
+/** M21.1：大区图（12×12）也要"一屏装下"。用户报障：详情里的路程报价与「出发」被挤在屏幕外。
+    详情已经并到地图右侧，所以高度预算里只剩标题/图例；格子 30~60px（再小就看不清地名与危险数字）。 */
+function fitRegion(view: HTMLElement, card: HTMLElement, rgrid: HTMLElement) {
+  const col = rgrid.parentElement as HTMLElement | null;
+  const box = card.getBoundingClientRect();
+  const vbox = view.getBoundingClientRect();
+  const availH = vbox.bottom - box.top - 8;
+  if (availH < 280) return;
+  const chrome = card.offsetHeight - rgrid.offsetHeight;                 // 标题行/图层开关/图例/提示/内边距
+  /* M21.1：卡片不够宽就"详情在上、地图在下"（<880px 时并排放不下两张东西），
+     这样点完格子立刻看到路程报价与「出发」，不用先滚过整张地图。 */
+  const main = card.querySelector('.rmain') as HTMLElement | null;
+  if (main) main.classList.toggle('stack', card.clientWidth < 880);
+  const byH = Math.floor((availH - chrome - 33) / 12);
+  const byW = Math.floor(((col ? col.clientWidth : box.width) - 33) / 12);
+  // 下限 24px：和本地地图的点击命中区一致（R4）；≤34px 时地名放不下，只留危险数字（.tiny）
+  let cell = Math.max(24, Math.min(60, byH, byW));
+  const apply = (c: number) => {
+    const tpl = 'repeat(12, ' + c + 'px)';
+    if (rgrid.style.gridTemplateColumns !== tpl) {
+      rgrid.style.gridTemplateColumns = tpl;
+      rgrid.style.justifyContent = 'start';
+      rgrid.style.maxWidth = 'none';
+    }
+    // 名字放不下就只留危险数字（跟窄屏规则一致），免得撑出去
+    rgrid.classList.toggle('tiny', c < 28);
+  };
+  apply(cell);
+  const padB = parseFloat(getComputedStyle(view).paddingBottom) || 0;
+  for (let i = 0; i < 2; i++) {
+    const cb = card.getBoundingClientRect();
+    const vb = view.getBoundingClientRect();
+    const totalH = (cb.top - vb.top) + view.scrollTop + card.offsetHeight + padB + 2;
+    const over = totalH - view.clientHeight;
+    if (over <= 0 || cell <= 24) break;
+    cell = Math.max(24, cell - Math.ceil(over / 12));
     apply(cell);
   }
 }

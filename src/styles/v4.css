@@ -142,6 +142,15 @@
    所以改成"小色块"：颜色看地貌、数字看危险、名字给 2~3 字缩写，点开才有详情。 */
 .v4world .rcur{font-size:12.5px;color:var(--ink);margin:2px 0 4px}
 .v4world .rgrid{display:grid;grid-template-columns:repeat(12,1fr);gap:3px;margin:8px 0 6px;max-width:520px}
+/* M21.1：大区图与选中详情并排（窄卡片自动换行）。详情里有"路程报价 + 出发"，
+   堆在地图下面会被挤到屏幕外——玩家报障"这边也溢出了"。 */
+.v4world .rmain{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
+.v4world .rgridcol{flex:0 1 auto;min-width:0}
+.v4world .rmain>.rdetail{flex:1 1 320px;min-width:280px;margin-top:8px}
+/* 窄卡片：详情挪到地图上面（点完格子先看到"怎么去、花多少"） */
+.v4world .rmain.stack{flex-direction:column}
+.v4world .rmain.stack>.rdetail{order:1;flex:0 0 auto;width:100%;margin:8px 0 4px}
+.v4world .rmain.stack>.rgridcol{order:2;width:100%}
 /* 数字和名字都**放在格子里面**（上下两行）：上一版把数字绝对定位到右上角，
    结果两位评审都把"右边那格的数字"读成了这一格的（视觉上数字贴着格线，归属不清）。 */
 .v4world .rcell2{position:relative;aspect-ratio:1/1;min-height:34px;border:1px solid rgba(255,255,255,.10);
@@ -162,6 +171,10 @@
 .v4world .rcell2.sel{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
 .v4world .rcell2.onpath{box-shadow:inset 0 0 0 2px rgba(92,200,255,.75)}
 .v4world .rcell2.none{background:#0b0e12;border-style:dashed;opacity:.2;cursor:default}
+/* 格子小到放不下地名时（fitRegion 会加 .tiny）只留危险数字，跟窄屏规则一致 */
+.v4world .rgrid.tiny .rcell2 .rnm{display:none}
+.v4world .rgrid.tiny .rcell2 .rnum{font-size:10px}
+.v4world .rgrid.tiny .rcell2{min-height:0}   /* 24~33px 的格子不能被默认 min-height:34 顶回去 */
 /* M19：本地地图的危险度图层（越深越红）。格子用 dg1..dg5 上色，迷雾格照旧压暗 */
 .wcell.dlayer.dg1{background:#78c98a}.wcell.dlayer.dg2{background:#c6d06a}.wcell.dlayer.dg3{background:#e0b45c}
 .wcell.dlayer.dg4{background:#e08a5c}.wcell.dlayer.dg5{background:#ef6f6f}
