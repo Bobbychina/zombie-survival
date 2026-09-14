@@ -91,23 +91,35 @@ ok('令牌弹窗：输入框 + 「登录并启用云存档」', tok.input === tr
 ok('权限披露与退路仍在', tok.scope === true && tok.warn === true)
 await ev(`closeAllModals()`); await sleep(300)
 
-/* ── 4) 设备码：点一下要能拿到 9 位码（本地无 client_id 时给出可读错误） ── */
+/* ── 4) 设备码：要么出 9 位码，要么快速给一条能走的路（不许转圈） ── */
 await ev(`V4Account.open()`); await sleep(300)
+const t0 = Date.now()
 await ev(`V4Account.loginDevice()`)
-let dev = { code: '', err: '' }
-for (let i = 0; i < 24; i++) {
-  await sleep(700)
+let dev = { code: '', err: '', failFoot: [] }
+for (let i = 0; i < 22; i++) {
+  await sleep(1000)
   const r = JSON.parse(await ev(`(() => {
-    const el = document.getElementById('acc-dev-code');
-    const msg = document.getElementById('acc-msg');
-    return JSON.stringify({ code: el ? el.textContent.trim() : '', err: msg ? msg.textContent.trim() : '' });
+    const last = [...document.querySelectorAll('.overlay')].pop();
+    const code = document.getElementById('acc-dev-code');
+    const title = last && last.querySelector('.modal-hd h2') ? last.querySelector('.modal-hd h2').textContent : '';
+    const mute = last && last.querySelector('.modal-bd p.muted') ? last.querySelector('.modal-bd p.muted').textContent : '';
+    const foot = last ? [...last.querySelectorAll('.modal-ft button')].map(b => (b.textContent||'').trim()) : [];
+    return JSON.stringify({ code: code ? code.textContent.trim() : '', reason: mute.replace(/^原因：/, '').trim(), title, foot });
   })()`))
-  dev = r
-  if (r.code || r.err) break
+  dev = { code: r.code, err: /走不通/.test(r.title) ? r.reason : '', failFoot: r.foot }
+  if (r.code || /走不通/.test(r.title)) break
 }
-ok('设备码通道有响应（出码 或 明确可读的错误）', !!(dev.code || dev.err), 'code=' + dev.code + ' err=' + dev.err.slice(0, 70))
-if (LIVE) ok('线上设备码真的出了 9 位码（clientId + 中继都活着）', /^[A-Z0-9-]{6,12}$/.test(dev.code), dev.code)
-if (dev.code) await shot(LIVE ? '02_device_code_live' : '02_device_code_local')
+const secs = Math.round((Date.now() - t0) / 1000)
+ok('设备码 ≤22s 内有结论（出码 或 失败面板），不会一直转圈', !!(dev.code || dev.err), `code='${dev.code}' ${secs}s err=${dev.err.slice(0, 60)}`)
+if (dev.code) {
+  ok('设备码格式像 GitHub 的 user_code', /^[A-Z0-9]{4}-[A-Z0-9]{4}$/i.test(dev.code) || /^[A-Z0-9-]{6,12}$/i.test(dev.code), dev.code)
+  await shot(LIVE ? '02_device_code_live' : '02_device_code_local')
+} else {
+  ok('失败面板给了「改用令牌码」这条出路', dev.failFoot.some(b => /改用令牌码/.test(b)), JSON.stringify(dev.failFoot))
+  ok('失败给的是具体原因（中继/网络 或 没配 client_id），不是一句"失败"',
+    /中继|网络|屏蔽|没部署|client_id/.test(dev.err), dev.err.slice(0, 100))
+  await shot(LIVE ? '02_device_fail_live' : '02_device_fail_local')
+}
 await ev(`closeAllModals()`); await sleep(300)
 
 /* ── 5) GitHub 账号的已登录态（注入一条 gh- 账号 + 记住的令牌） ── */

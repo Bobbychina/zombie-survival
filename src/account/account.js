@@ -34,6 +34,16 @@
   var INTEGRITY_FIELD = '__integrity';        // 只有取指纹时用，避免与游戏侧耦合
 
   /* ---------- 小工具 ---------- */
+  /** 带超时的 fetch：中继/后端不可达时**不能让 UI 一直转**。
+      实测（2026-09-14）：校园网把 `*.workers.dev` 整个解析到黑洞，fetch 会挂 20s+ 才失败，
+      用户看到的就是"点了没反应"。所有外部请求一律走这个。 */
+  async function fetchTimeout(url, opts, ms) {
+    var ctl = typeof AbortController === 'function' ? new AbortController() : null;
+    var timer = setTimeout(function () { if (ctl) ctl.abort(); }, ms || 9000);
+    try {
+      return await fetch(url, Object.assign({}, opts || {}, ctl ? { signal: ctl.signal } : {}));
+    } finally { clearTimeout(timer); }
+  }
   function cfg() {
     var c = global.DSH_AUTH_CONFIG || {};
     return {
@@ -44,13 +54,14 @@
     };
   }
   var apiOk = null;                                        // /api/health 的缓存结果
+  var relayOk = null;                                      // 中继可达性缓存（设备码要用）
   function apiBase() { return cfg().api; }
-  /** 云后端可用吗（只探一次，失败也不再骚扰） */
+  /** 云后端可用吗（只探一次，失败也不再骚扰）。带 5s 超时：不可达时不能把"注册"按钮卡住 */
   async function apiAvailable() {
     if (!apiBase()) return false;
     if (apiOk !== null) return apiOk;
     try {
-      var r = await fetch(apiBase() + '/api/health', { cache: 'no-store' });
+      var r = await fetchTimeout(apiBase() + '/api/health', { cache: 'no-store' }, 5000);
       var b = await r.json();
       /* kv 没绑定 = 后端还没配好：对访客当作"没有云后端"处理，自动退回本机模式，
          而不是让每个注册的人都撞一次 503（运维提示留在控制台给站长看）。 */
@@ -69,13 +80,13 @@
     opt = opt || {};
     var tok = serverToken();
     try {
-      var r = await fetch(apiBase() + path, {
+      var r = await fetchTimeout(apiBase() + path, {
         method: opt.method || 'GET',
         headers: Object.assign({ Accept: 'application/json' },
           opt.body ? { 'Content-Type': 'application/json' } : {},
           (opt.token || tok) ? { Authorization: 'Bearer ' + (opt.token || tok) } : {}),
         body: opt.body ? JSON.stringify(opt.body) : undefined,
-      });
+      }, 10000);
       var text = await r.text();
       var data = null; try { data = text ? JSON.parse(text) : null; } catch (e) { data = { raw: text }; }
       if (!r.ok) return { ok: false, status: r.status, err: (data && (data.message || data.error)) || ('HTTP ' + r.status), data: data, offline: false };
@@ -566,6 +577,7 @@
       delete db.users[id];
       saveDB(db);
       removeKey(K.session);
+      removeKey(K.ghtokKeep);            // M23：注销也要把"记住的 GitHub 令牌"一起清掉
       emit();
       return { ok: true, note: serverNote };
     },
@@ -1047,9 +1059,24 @@
     map['https://github.com/login/device/code'] = relay + '/login/device/code';
     return map[url] || url;
   }
-  function ghCandidates(url) {
+  function ghCandidates(url, relayAlive) {
     var direct = url, viaRelay = ghUrl(url);
-    return viaRelay === direct ? [direct] : [viaRelay, direct];    // 配了中继就优先走中继，中继挂了再试直连
+    if (viaRelay === direct) return [direct];
+    /* 中继已知不可达就别先撞它（会让每次请求白等一个超时） */
+    return relayAlive === false ? [direct] : [viaRelay, direct];
+  }
+  /** 中继可达性：探一次并缓存（OPTIONS 不打业务接口，4s 超时） */
+  async function relayAlive(relay) {
+    if (relayOk !== null) return relayOk;
+    try {
+      var r = await fetchTimeout(relay + '/login/device/code', { method: 'OPTIONS', cache: 'no-store' }, 4000);
+      relayOk = r.status >= 200 && r.status < 500;          // 有响应就算活着（内容对不对由业务请求管）
+    } catch (e) { relayOk = false; }
+    return relayOk;
+  }
+  async function relayProbeUsed() {
+    var relay = String((cfg().github.relay) || '').replace(/\/+$/, '');
+    return relay ? relayAlive(relay) : false;
   }
   async function ghPost(url, body, mode) {
     var headers = { Accept: 'application/json' };
@@ -1061,9 +1088,8 @@
       headers['Content-Type'] = 'application/json';
       payload = JSON.stringify(body);
     }
-    var r = await fetch(url, { method: 'POST', headers: headers, body: payload });
-    var text = await r.text();
-    var json = null;
+    var r = await fetchTimeout(url, { method: 'POST', headers: headers, body: payload }, 9000);
+    var text = await r.text();    var json = null;
     try { json = JSON.parse(text); } catch (e) { json = { raw: String(text).slice(0, 120) }; }
     return { status: r.status, ok: r.ok, json: json };
   }
@@ -1094,6 +1120,17 @@
       return { ok: false, err: '设备码超时（重新发起即可）' };
     }
 
+    /* M23.1：设备码在浏览器里**必须**经过中继（GitHub 的换 token 接口不给跨域头）。
+       中继不可达时不要白等：先快速探一下，直接给一条能走的路（令牌码），而不是让 UI 转圈。 */
+    var relay = String(cfg().github.relay || '').replace(/\/+$/, '');
+    if (relay && !(await relayAlive(relay))) {
+      return {
+        ok: false,
+        err: '设备码这条路要经过中继（' + relay + '），但当前网络连不上它（可能是网络/DNS 屏蔽或中继没部署）——改用「🔑 令牌码」只要 3 步；换个网络再点设备码也行',
+        tried: ['relay 可达性检查失败'],
+      };
+    }
+
     var dc = await ghTokenWithFallback({ client_id: c.clientId, scope: c.scope }, 'https://github.com/login/device/code');
     var r = dc.data || {};
     if (!r.device_code) return { ok: false, err: '拿设备码失败：' + (r.error || '网络/CORS 受限') + '（尝试记录：' + dc.tried.join(' ｜ ') + '）', tried: dc.tried };
@@ -1118,7 +1155,7 @@
   /** 依次用 form / json（并在配了中继时先走中继）POST；返回 {data, tried, mode} */
   async function ghTokenWithFallback(body, url) {
     var tried = [];
-    var targets = ghCandidates(url || GH_TOKEN_URL);
+    var targets = ghCandidates(url || GH_TOKEN_URL, await relayProbeUsed());
     var modes = ['form', 'json'];
     for (var t = 0; t < targets.length; t++) {
       var label = targets.length > 1 && t === 0 ? 'relay' : 'direct';

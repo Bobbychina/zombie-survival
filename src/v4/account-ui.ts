@@ -276,13 +276,35 @@ export function logout(): void {
 
 /* ── M23：GitHub 即账号——登录只有两条路：设备码 / 令牌码 ── */
 
-/** 设备码登录：出 9 位码 → 自动打开 GitHub 授权页 → 这边轮询拿到令牌 → 进号（没有账号就自动建） */
+/** 设备码登录：出 9 位码 → 自动打开 GitHub 授权页 → 这边轮询拿到令牌 → 进号（没有账号就自动建）。
+    中继不可达时**快速失败**，并把「令牌码」这条能走的路直接摆在面前（实测校园网会把 workers.dev 整个屏蔽）。 */
 export async function loginDevice(): Promise<void> {
   const a = A(); if (!a) return;
-  msg('正在向 GitHub 申请设备码……');
-  const r = await a.signInGitHubDevice(info => { deviceCodeModal(info); });
-  if (!r.ok) { toastMsg('设备码登录失败', r.err ?? '', 'bad'); msg(r.err ?? '设备码登录失败', true); return; }
+  const wait = L.modal({
+    title: '📱 正在向 GitHub 申请设备码…',
+    sticky: true,
+    body: '<p class="muted">请求只发给 GitHub（或你自己的中继），几秒就回来。</p>' +
+      '<div class="hint" id="acc-msg">等 9 位码出现…</div>',
+    footer: '<button class="btn" data-close>取消</button>',
+  });
+  const r = await a.signInGitHubDevice(info => { L.closeModal(wait); deviceCodeModal(info); });
+  if (!r.ok) { L.closeModal(wait); deviceFailModal(r.err ?? '设备码没成功'); return; }
   loginDone(r);
+}
+/** 设备码失败：说清原因 + 给两条出路（改用令牌码 / 重试） */
+function deviceFailModal(err: string): void {
+  L.modal({
+    title: '📱 设备码这条路走不通',
+    sticky: true,
+    body: '<p class="muted">原因：' + esc(err) + '</p>' +
+      '<div class="hint">设备码在浏览器里必须经过一个小中继（GitHub 的换 token 接口不给跨域头），' +
+      '所以中继被网络挡住、或还没部署时这条路就断了——这不是你的操作问题。</div>' +
+      '<div class="hint">换条路：<b>🔑 令牌码</b>——在 GitHub 建一个只勾 <span class="mono">gist</span> 的令牌粘进来，3 步就好，' +
+      '而且不依赖任何中继。</div>',
+    footer: '<button class="btn ok" onclick="closeAllModals();V4Account.openTokenBind()">🔑 改用令牌码</button>' +
+      '<button class="btn" onclick="closeAllModals();V4Account.loginDevice()">再试一次</button>' +
+      '<button class="btn" data-close>知道了</button>',
+  });
 }
 /** 这台设备上次记住的令牌还在 → 一键回来 */
 export async function loginRemembered(): Promise<void> {
