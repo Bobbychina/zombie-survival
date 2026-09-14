@@ -2205,7 +2205,9 @@ function renderInv(){
   });
   h += '</div>';
   h += '<div class="sect-title">携带物品 <span class="badge">' + carryWeight() + ' / ' + capWeight() + ' kg</span></div>';
-  const ids = Object.keys(S.inv);
+  /* M24.1：过滤掉 ITEMS 里不存在的 id —— 坏档/旧档里如果混进未知物品，
+     原来会在这里 sort 时读 undefined.t 直接抛异常（整个背包页白屏）。 */
+  const ids = Object.keys(S.inv).filter(k => !!ITEMS[k]);
   if(!ids.length) h += '<p class="muted">背包是空的。去找点能用的东西。</p>';
   else {
     h += '<div class="grid g2">';
@@ -2226,7 +2228,7 @@ function renderInv(){
     h += '</div>';
   }
   h += '<div class="sect-title">基地储物箱 <span class="badge">' + Object.keys(S.store).reduce((a, k) => a + S.store[k], 0) + ' / ' + (S.base.storage * 12) + '</span></div>';
-  const sids = Object.keys(S.store);
+  const sids = Object.keys(S.store).filter(k => !!ITEMS[k]);   // 同上：未知 id 不进渲染
   if(!sids.length) h += '<p class="muted">储物箱' + (S.base.storage ? '是空的。' : '还没建（据点 → 建设）。') + '</p>';
   else {
     h += '<div class="grid g2">';

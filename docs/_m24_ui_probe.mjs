@@ -16,7 +16,9 @@ let id = 0; const pending = new Map(); const errs = []
 ws.onmessage = (e) => {
   const m = JSON.parse(e.data)
   if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id) }
-  if (m.method === 'Runtime.consoleAPICalled' && m.params.type === 'error') errs.push(String(m.params.args?.[0]?.value || '').slice(0, 120))
+  if (m.method === 'Runtime.consoleAPICalled' && m.params.type === 'error') {
+    errs.push((m.params.args || []).map(a => String(a.value ?? a.description ?? '')).join(' ').slice(0, 240))
+  }
   if (m.method === 'Runtime.exceptionThrown') errs.push('EXC ' + (m.params.exceptionDetails?.exception?.description || '').split('\n')[0].slice(0, 140))
 }
 const send = (method, params = {}, ms = 25000) => new Promise((res) => {
@@ -34,6 +36,8 @@ const shot = async (name) => {
   if (r.result?.data) await fs.writeFile(`${outDir}/${name}.png`, Buffer.from(r.result.data, 'base64'))
 }
 await send('Runtime.enable'); await send('Page.enable')
+/* 探针永远禁用缓存：单文件 HTML 每次都重新构建，浏览器启发式缓存会让人误以为"改了没生效" */
+await send('Network.enable'); await send('Network.setCacheDisabled', { cacheDisabled: true })
 await send('Emulation.setDeviceMetricsOverride', { width: 2048, height: 1280, deviceScaleFactor: 1, mobile: false })
 const pageUrl = url + (url.includes('?') ? '&' : '?') + 'dev=ready'
 await send('Page.navigate', { url: pageUrl })
@@ -154,6 +158,43 @@ const vision = JSON.parse(await ev(`(() => {
 ok('侦查 Lv3 的视野真的更大（点亮格数更多）', vision.big > vision.base, JSON.stringify(vision))
 
 /* ── 4) 溢出检查：所有页签都不许横向溢出/被容器切 ── */
+/* M24.1：先按宽度横扫一遍卡片墙（用户报"菜园溢出了"）：任何卡片里的内容都不许越过卡片边框 */
+const widths = [1200, 1440, 1600, 1800, 2048, 2400]
+const cardOver = []
+for (const w of widths) {
+  await send('Emulation.setDeviceMetricsOverride', { width: w, height: 1280, deviceScaleFactor: 1, mobile: false })
+  await ev(`window.dispatchEvent(new Event('resize')); render(); 1`); await sleep(500)
+  const r = JSON.parse(await ev(`(() => {
+    const bad = [];
+    document.querySelectorAll('#v4cards > .v4card').forEach(c => {
+      const cr = c.getBoundingClientRect();
+      c.querySelectorAll('*').forEach(e => {
+        const b = e.getBoundingClientRect();
+        if (b.width > 0 && (b.right > cr.right + 1 || b.left < cr.left - 1)) {
+          bad.push({ card: c.dataset.card, cls: (e.className || e.tagName).toString().slice(0, 16), right: Math.round(b.right), cr: Math.round(cr.right) });
+        }
+      });
+    });
+    return JSON.stringify({ w: ${w}, bad: bad.slice(0, 3) });
+  })()`))
+  if (r.bad && r.bad.length) cardOver.push(r)
+}
+ok('卡片内容在 6 种宽度下都不越出卡片边框（含菜园卡）', cardOver.length === 0, JSON.stringify(cardOver.slice(0, 2)))
+/* 建好菜园（播种按钮全出来）再看一眼菜园卡 */
+await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false })
+await ev(`(() => { const S = DEV.state(); S.base.garden = 1; ['carrot','tomato','potato','cabbage'].forEach(s => { S.inv[s + '_seed'] = 3; }); render(); return 1; })()`)
+await sleep(700)
+const farmBuilt = JSON.parse(await ev(`(() => {
+  const c = document.querySelector('#v4cards .v4card[data-card="farm"]');
+  if (!c) return JSON.stringify({ missing: true });
+  const cr = c.getBoundingClientRect(); const bad = [];
+  c.querySelectorAll('*').forEach(e => { const b = e.getBoundingClientRect();
+    if (b.width > 0 && b.right > cr.right + 1) bad.push((e.className || e.tagName).toString().slice(0, 16)); });
+  return JSON.stringify({ w: Math.round(cr.width), h: Math.round(cr.height), btns: c.querySelectorAll('button').length, bad });
+})()`))
+ok('建好菜园后（播种按钮全出来）菜园卡也不溢出', farmBuilt.bad && farmBuilt.bad.length === 0, JSON.stringify(farmBuilt))
+await shot('06_farm_built_1440')
+
 const pages = []
 for (const t of ['探索', '背包', '制作', '技能', '任务', '图鉴', '统计']) {
   await tab(t); await sleep(450)

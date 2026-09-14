@@ -90,7 +90,7 @@ export function harvest(index: number, keepSeed = false): boolean {
 /** 面板标题用的摘要 */
 export function farmSummary(): string {
   const s = plotSlots();
-  if (!s.length) return '还没有菜园（据点 → 建设 → 屋顶菜园：' + buildCostText('garden') + '）';
+  if (!s.length) return '还没有菜园：据点 → 建设 → 屋顶菜园（材料：' + buildCostText('garden') + '）';
   const season = seasonNow();
   return s.map((p, i) => {
     if (!p.crop) return `地 ${i + 1}：空`;
@@ -102,3 +102,6 @@ export function farmSummary(): string {
 }
 
 export const cropList = () => CROP_LIST.map(id => CROPS[id]);
+
+/** 建菜园要的材料（一行纯文本，面板单独占一行显示，别和长句子挤在一起） */
+export const farmBuildCost = (): string => buildCostText('garden');

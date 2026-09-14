@@ -53,6 +53,13 @@
 #v4cards{columns:340px;column-gap:12px;min-width:0}
 #v4cards>.v4card{break-inside:avoid;-webkit-column-break-inside:avoid;page-break-inside:avoid;margin:0 0 12px;display:block}
 .v4card{border:1px solid var(--line);border-radius:8px;background:#0d1015;padding:10px 12px;min-width:0}
+/* M24.1：卡片里的内容一律不许横向溢出（用户报"菜园溢出了"）——
+   长串文字允许在任意位置断行；按钮本身就是 nowrap，所以在卡片里放开换行 + 限宽，
+   列宽再窄也只是"按钮变成两行"，不会顶出卡片或压到隔壁列。 */
+.v4card .card-bd{overflow-wrap:anywhere;word-break:break-word}
+.v4card .btn{max-width:100%;white-space:normal;text-align:left}
+.v4card .row{min-width:0}
+.v4card .hint,.v4card .muted{overflow-wrap:anywhere}
 .v4card>.card-hd{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px}
 .v4card>.card-hd .card-tt{font-size:13.5px;font-weight:600;color:var(--bone)}
 .v4card>.card-hd .badge{margin-left:0}

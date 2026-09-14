@@ -22,7 +22,7 @@ import { apMaxOf, isBloodMoonDay, rest, restOptions, tierAt, syncApMax } from '.
 import { ensureEvac, evacAvailable, fireFlare } from './evac';
 import { CROPS, SEASON_INFO, WEATHER, growthDays } from './env-core';
 import { envLine, envOf, seasonNow, tempPenalty } from './env';
-import { farmSummary, cropList, harvest, plant, plotSlots } from './farm';
+import { farmSummary, cropList, harvest, plant, plotSlots, farmBuildCost } from './farm';
 import { chopInfo, forageInfo, salvageInfo } from './gather';
 import { diveInfo, fishInfo, intakeInfo, canSwim, pondSummary, swimStep, waterNearby, fish as doFish, dive as doDive } from './water';
 import { accountSummary, currentUser as accountUser } from './account-ui';
@@ -479,7 +479,12 @@ function gatherCard(): string {
 /** 菜园卡 */
 function farmCard(): string {
   const slots = plotSlots();
-  let b = '<div class="hint">' + esc(farmSummary()) + '</div>';
+  /* M24.1：没菜园时拆成两行（长句子 + 一长串材料清单挤一行容易顶到卡片边框；
+     材料那行单独一行，窄卡片也只是换行，不会溢出） */
+  let b = slots.length
+    ? '<div class="hint">' + esc(farmSummary()) + '</div>'
+    : '<div class="hint">还没有菜园：据点 → 建设 → 屋顶菜园</div>' +
+      '<div class="hint">材料：' + esc(farmBuildCost()) + '</div>';
   if (slots.length) {
     b += '<div class="row" style="margin-top:6px">';
     slots.forEach((pl, i) => {
