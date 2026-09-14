@@ -786,7 +786,28 @@ export function mountWorldPanel() {
   if (tools.nextSibling !== map) view.insertBefore(map, tools.nextSibling);
   if (map.nextSibling !== board) view.insertBefore(board, map.nextSibling);
   view.classList.add('v4-board');
-  requestAnimationFrame(fitMap);        // 按可用高度定格子尺寸：能放大就放大，能放下就不滚
+  /* M25.1：fitMap 必须等**两次** rAF —— 第一次 rAF 时 #v4world 的 flex 高度还在布局中途，
+     量出来的 clientHeight 是旧值（会算错格子边长，实测把 514px 的图塞进 512px 的框 → 地图又滚了）。 */
+  requestAnimationFrame(() => requestAnimationFrame(fitMap));
+  /* 窗口尺寸变化 / 面板高度变化（BETA 条出现、浏览器 UI 收起）时重算一次；
+     只在尺寸真的变了才动，避免和 fitMap 自己改格子尺寸打架（改格子 → 触发 observer → 死循环）。 */
+  if (typeof ResizeObserver !== 'undefined') {
+    const mapCard = document.getElementById('v4world');        // 注意：本函数里 `card` 是"造卡片"的工具函数，别撞名
+    const ro = mapCard ? (mapCard as any).__ro as ResizeObserver | undefined : undefined;
+    if (mapCard && !ro) {
+      let lastW = 0, lastH = 0;
+      const obs = new ResizeObserver((entries) => {
+        const r = entries[0]?.contentRect;
+        if (!r) return;
+        const w = Math.round(r.width), h = Math.round(r.height);
+        if (Math.abs(w - lastW) < 2 && Math.abs(h - lastH) < 2) return;   // 格子尺寸变化引起的高度抖动忽略
+        lastW = w; lastH = h;
+        requestAnimationFrame(fitMap);
+      });
+      obs.observe(mapCard);
+      (mapCard as any).__ro = obs;
+    }
+  }
 }
 
 /** 地图格子尺寸自适应：算「整列内容总高（含上方标题与工具条）」，超了就缩格子，直到不用滚。
@@ -809,7 +830,10 @@ function fitMap() {
   // 另外给卡片墙留 ~150px「露头」：地图再大也是 24×24，操作卡片一张都看不见才是真问题。
   const availW = wrap.clientWidth - 14;                                 // 减去 .wmapwrap 的内边距与边框
   const byW = Math.floor((availW - 23 * 2) / 24);
-  let cell = Math.max(24, Math.min(28, Math.floor((avail - 150 - 46) / 24), byW));
+  /* M25.1：不再给卡片墙留 150px「露头」——≥1700px 时地图与卡片墙是**两列**，各滚各的，
+     留那个余量只会让地图白缩 6px、还把整张图顶出容器（用户：「现在地图怎么又能滚动了」）。
+     下限 18px（点击命中区的绝对底线）：地图面板本身不滚，装不下的唯一出路就是把格子缩小。 */
+  let cell = Math.max(18, Math.min(28, Math.floor((avail - 24) / 24), byW));
   const apply = (c: number) => {
     const tpl = 'repeat(24, ' + c + 'px)';
     if (grid.style.gridTemplateColumns !== tpl) {
@@ -819,17 +843,14 @@ function fitMap() {
     }
   };
   apply(cell);
-  // 兜底微调：把 #view 的上下内边距也算进去（每轮重新量，别用旧坐标），缩到 24px 就停手
-  const padB = parseFloat(getComputedStyle(view).paddingBottom) || 0;
-  for (let i = 0; i < 2; i++) {
-    const cb = card.getBoundingClientRect();
-    const vb = view.getBoundingClientRect();
-    const totalH = (cb.top - vb.top) + view.scrollTop + card.offsetHeight + padB + 2;
-    const over = totalH - view.clientHeight;
-    if (over <= 0 || cell <= 24) break;
-    cell = Math.max(24, cell - Math.ceil(over / 24));
-    apply(cell);
-  }
+  /* M25.1：一次算准，不靠"量了再缩"的迭代 —— 网格行是按内容算的，DOM 写完那一刻量到的
+     clientHeight 还是**布局中途**的旧值（实测 wrap.clientHeight=512 时，#v4world 已经 796，
+     按 512 算出来的 28px 会把 514px 的图塞进 512px 的框里）。所以这里改成两遍：
+     先按「卡片高度 - 除地图框以外的兄弟节点高度」反推，再用真实溢出量收口。 */
+  let guard = 6;
+  while (wrap.scrollWidth > wrap.clientWidth + 1 && cell > 18 && guard-- > 0) apply(--cell);   // 先保宽度不滚
+  guard = 6;
+  while (wrap.scrollHeight > wrap.clientHeight + 1 && cell > 18 && guard-- > 0) apply(--cell); // 再保高度不滚
 }
 
 /** M21.1：大区图（12×12）也要"一屏装下"。用户报障：详情里的路程报价与「出发」被挤在屏幕外。
@@ -840,15 +861,20 @@ function fitRegion(view: HTMLElement, card: HTMLElement, rgrid: HTMLElement) {
   const vbox = view.getBoundingClientRect();
   const availH = vbox.bottom - box.top - 8;
   if (availH < 280) return;
-  const chrome = card.offsetHeight - rgrid.offsetHeight;                 // 标题行/图层开关/图例/提示/内边距
+  /* M25.1：地图面板是 flex 列，装地图的 wrapper 会自己收缩 —— 所以可用高度必须取
+     **wrapper 的实际高度**（原来只用卡片总高差算，会算出 710px 的格子塞进 512px 的框里，
+     结果大区图自己滚起来，正是用户说的「地图又能滚动了」）。地图在弹窗里渲染不出来时退回旧算法。 */
+  const wrap = card.querySelector('.wmapwrap') as HTMLElement | null;
+  const chrome = wrap ? 0 : card.offsetHeight - rgrid.offsetHeight;      // 标题行/图层开关/图例/提示/内边距
   /* M21.1：卡片不够宽就"详情在上、地图在下"（<880px 时并排放不下两张东西），
      这样点完格子立刻看到路程报价与「出发」，不用先滚过整张地图。 */
   const main = card.querySelector('.rmain') as HTMLElement | null;
   if (main) main.classList.toggle('stack', card.clientWidth < 880);
-  const byH = Math.floor((availH - chrome - 33) / 12);
+  const wrapH = wrap ? wrap.clientHeight - 16 : 0;                       // 减 wrapper 的 padding 与边框
+  const byH = Math.floor(((wrap ? wrapH : availH - chrome - 33)) / 12);
   const byW = Math.floor(((col ? col.clientWidth : box.width) - 33) / 12);
-  // 下限 24px：和本地地图的点击命中区一致（R4）；≤34px 时地名放不下，只留危险数字（.tiny）
-  let cell = Math.max(24, Math.min(60, byH, byW));
+  // 下限 18px：地图面板本身不滚，"装不下"的唯一出路是把格子缩小（小时只留危险数字 .tiny）
+  let cell = Math.max(18, Math.min(60, byH, byW));
   const apply = (c: number) => {
     const tpl = 'repeat(12, ' + c + 'px)';
     if (rgrid.style.gridTemplateColumns !== tpl) {
@@ -860,14 +886,21 @@ function fitRegion(view: HTMLElement, card: HTMLElement, rgrid: HTMLElement) {
     rgrid.classList.toggle('tiny', c < 28);
   };
   apply(cell);
+  /* M25.1：大区网格的行高由内容撑开，所以 `.rgrid` 自己的 scrollHeight 永远等于 clientHeight
+     —— 靠容器溢出量判断"装不装得下"是**查不出来**的（实测 710px 的图塞进 512px 的框，
+     容器照样报不溢出，于是地图自己滚起来）。直接按 12 行 × 格子边长算需要多高。 */
+  const needH = (c: number) => c * 12 + 3 * 11;
+  let guard = 6;
+  while (wrap && needH(cell) > wrap.clientHeight - 16 && cell > 18 && guard-- > 0) apply(--cell);
+  /* 兜底：卡片整体（含图例）超出 #view 时继续收 —— 但 ≥1700px 那套布局里卡片高度是定死的，
+     这条只在窄屏（地图与卡片上下排）才会真的触发。 */
   const padB = parseFloat(getComputedStyle(view).paddingBottom) || 0;
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < 4; i++) {
     const cb = card.getBoundingClientRect();
     const vb = view.getBoundingClientRect();
-    const totalH = (cb.top - vb.top) + view.scrollTop + card.offsetHeight + padB + 2;
-    const over = totalH - view.clientHeight;
-    if (over <= 0 || cell <= 24) break;
-    cell = Math.max(24, cell - Math.ceil(over / 12));
+    const over = Math.max(0, (cb.top - vb.top) + view.scrollTop + card.offsetHeight + padB + 2 - view.clientHeight);
+    if (over <= 0 || cell <= 18) break;
+    cell = Math.max(18, cell - Math.max(1, Math.ceil(over / 12)));
     apply(cell);
   }
 }

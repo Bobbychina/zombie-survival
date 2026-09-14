@@ -79,8 +79,18 @@ const cols = JSON.parse(await ev(`(() => {
     worldScroll: wr.scrollHeight > wr.clientHeight + 1, cardsScroll: cd.scrollHeight > cd.clientHeight + 1,
     worldInside: wr.getBoundingClientRect().bottom <= vr.bottom + 2, cardsInside: cd.getBoundingClientRect().bottom <= vr.bottom + 2 })
 })()`))
-ok('宽屏：地图列在自己列里滚（不顶出 #view）', cols.worldInside === true && cols.worldScroll === true, JSON.stringify(cols))
+ok('宽屏：地图列装得下（不再自己滚）且不顶出 #view', cols.worldInside === true && cols.worldScroll === false, JSON.stringify(cols))
 ok('宽屏：卡片墙在自己列里滚（不顶出 #view）', cols.cardsInside === true, 'cardsScroll=' + cols.cardsScroll)
+const fit = JSON.parse(await ev(`(() => {
+  const card = document.getElementById('v4world')
+  const grid = card.querySelector('.wgrid')
+  const cells = grid.querySelectorAll('.wcell')
+  const rows = new Set([...cells].map(c => Math.round(c.getBoundingClientRect().top))).size
+  const r = cells[0].getBoundingClientRect()
+  const wrap = card.querySelector('.wmapwrap')
+  return JSON.stringify({ cell: Math.round(r.width), rows, wrapScroll: wrap.scrollHeight - wrap.clientHeight })
+})()`))
+ok('本地地图：24 行完整铺开、格子 ≥18px、地图框不滚', fit.rows === 24 && fit.cell >= 18 && fit.wrapScroll <= 1, JSON.stringify(fit))
 await shot('01_explore_scroll_fixed')
 
 /* ── 2) 藏身处式工作站：四个站 + 弹药台配方 ── */

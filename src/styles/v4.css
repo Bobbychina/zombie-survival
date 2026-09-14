@@ -62,8 +62,8 @@
     grid-template-areas:"tools tools" "map cards";
     grid-template-rows:auto minmax(0,1fr)}
   #v4tools{grid-area:tools}
-  #v4world{grid-area:map;position:sticky;top:8px;height:100%;max-height:100%;overflow-y:auto;
-    scrollbar-width:thin;overscroll-behavior:contain}
+  #v4world{grid-area:map;position:sticky;top:8px;height:100%;max-height:100%;overflow:hidden;
+    display:flex;flex-direction:column;min-height:0}
   #v4cards{grid-area:cards;height:100%;max-height:100%;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}
   /* M25.1：多列流容器的 scrollWidth 会把整列高度也算进去（实测 843px 宽报 1270px），
      而 `overflow-y:auto` 会把 overflow-x 从 visible 自动变成 auto → 卡片墙白白多一条横向滚动条。
@@ -95,8 +95,8 @@
 .v4world .whead{display:flex;gap:10px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;margin-bottom:8px}
 .v4world .wname{font-size:14px;font-weight:600;color:var(--bone)}
 .v4world .wveh{font-size:11px;color:var(--dim);border:1px solid var(--line2);border-radius:4px;padding:3px 7px;white-space:nowrap}
-.v4world .wmapwrap{overflow:auto;border:1px solid var(--line);border-radius:6px;background:#0b0d10;padding:6px}
-.v4world .wgrid{display:grid;gap:2px;min-width:0;grid-template-columns:repeat(24,minmax(20px,28px))!important;justify-content:center}
+.v4world .wmapwrap{flex:1 1 auto;min-height:0;overflow:auto;border:1px solid var(--line);border-radius:6px;background:#0b0d10;padding:6px}
+.v4world .wgrid{display:grid;gap:2px;min-width:0;grid-template-columns:repeat(24,minmax(18px,28px))!important;justify-content:center}
 @media (max-width:1399px){.v4world .wgrid{min-width:620px}}
 /* M10 触屏：地图是"点区块"这个核心操作，24px 一格手指点不准。
    窄屏把格子放大到 30~36px（靠左右滑动看地图），并给滚动容器加惯性滚动。 */
@@ -131,7 +131,7 @@
 .v4world .wlegend .sw.ic{display:inline-flex;align-items:center;justify-content:center;font-size:9px;background:#12151a}
 .v4world .wlegend .sw.cur-sw{background:transparent;outline:2px solid var(--bone)}
 .v4world .wlegend .sw.path-sw{background:transparent;outline:1px dashed rgba(207,210,214,.6)}
-.v4world .wcell{aspect-ratio:1/1;min-width:0;min-height:24px;border-radius:2px;display:flex;align-items:center;justify-content:center;
+.v4world .wcell{aspect-ratio:1/1;min-width:0;min-height:18px;border-radius:2px;display:flex;align-items:center;justify-content:center;
   font-size:11px;line-height:1;border:1px solid transparent;user-select:none}
 .v4world .wcell.seen{cursor:pointer}
 .v4world .wcell.seen:hover{border-color:var(--accent);transform:scale(1.12);z-index:2}
