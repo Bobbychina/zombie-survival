@@ -71,15 +71,15 @@
     "text": "🌍 世界 1 个当前：余烬世界 · 种子 ember-01 · 标准开局 · 第 1 天▶ 余烬世界第 1 天 · 种子 ember-01 · 还没死过进行中改名＋ 新建世界复制我的挑战码粘贴挑战码挑战码 = 种子 + 开局预设（标准开局 / 清贫开局 / 地狱开局）。发给朋友，他粘进去就能开一张跟你一模一样的地图。",
     "reg": {
       "v": 1,
-      "activeId": "wmu0lyb8kln",
+      "activeId": "wmu0m8mxeyz",
       "worlds": [
         {
-          "id": "wmu0lyb8kln",
+          "id": "wmu0m8mxeyz",
           "name": "余烬世界",
           "seed": "ember-01",
           "preset": "normal",
-          "createdAt": 1789351952996,
-          "lastPlayed": 1789351952996,
+          "createdAt": 1789352434706,
+          "lastPlayed": 1789352434706,
           "day": 1,
           "deaths": 0
         }
