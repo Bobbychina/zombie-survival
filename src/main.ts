@@ -133,7 +133,10 @@ async function main() {
   // 账号与云存档（内联 onclick 用；函数名与 account-ui.ts 导出保持一致）
   (window as any).V4Account = {
     open: accountUi.openPanel, summary: accountUi.accountSummary,
-    doRegister: accountUi.doRegister, doLogin: accountUi.doLogin, logout: accountUi.logout,
+    /* M23：账号 = GitHub。登录只有两条路（设备码 / 令牌码），**没有注册** */
+    loginDevice: accountUi.loginDevice, loginRemembered: accountUi.loginRemembered,
+    legacyLogin: accountUi.legacyLogin, legacyDoLogin: accountUi.doLogin,
+    doLogin: accountUi.doLogin, logout: accountUi.logout,
     showRecover: accountUi.showRecover, doRecover: accountUi.doRecover,
     setupRecovery: accountUi.setupRecovery, copyRecovery: accountUi.copyRecovery,
     bindGitHubToken: accountUi.bindGitHubToken, openTokenBind: accountUi.openTokenBind,

@@ -27,6 +27,7 @@
     save: function (uid, game, slot) { return 'dsh.save.v1.' + uid + '.' + game + '.' + slot; },
     oauth: 'dsh.oauth.pending',
     ghtok: 'dsh.ghtok.v1',                                 // 本机模式的 GitHub 令牌：只放 sessionStorage
+    ghtokKeep: 'dsh.ghtok.keep.v1',                        // M23：记住的 GitHub 令牌（localStorage，解绑时清）
   };
   var listeners = [];
   var popup = null;
@@ -330,7 +331,9 @@
       var g = u && u.providers && u.providers.github;
       return { bound: !!g, login: g ? g.login : '', avatar: g ? g.avatar : '', serverSide: false };
     },
-    /* ----- 注册 / 登录 / 会话 ----- */
+    /* ----- 注册 / 登录 / 会话 -----
+       M23：这个游戏的 UI **不再提供注册**（账号 = GitHub，见 signInGitHub）；
+       register/login 仍留在库里，给游戏厅页面与老的本机账号用。 */
     register: async function (opts) {
       var name = String((opts && opts.name) || '').trim();
       var pass = String((opts && opts.password) || '');
@@ -693,44 +696,11 @@
     /** GitHub 设备码流程：只需 client_id（OAuth App 里要勾选 Enable Device Flow）
      *  云模式：整条流程在 Worker 里跑，前端只拿到 9 位码；本机模式：先 form 再 json 直连。 */
     bindGitHubDevice: async function (onCode) {
-      var c = cfg().github;
-      if (!c.clientId) return { ok: false, err: '还没配 GitHub client_id（见 /games/auth-config.js）' };
-
-      if (serverMode()) {
-        var start = await api('/api/gh/device/start', { method: 'POST', body: { client_id: c.clientId } });
-        if (!start.ok) return { ok: false, err: '拿设备码失败：' + start.err };
-        if (onCode) onCode({ user_code: start.data.user_code, verification_uri: start.data.verification_uri, expires_in: start.data.expires_in });
-        var deadline = Date.now() + Math.min(start.data.expires_in || 900, 900) * 1000;
-        var wait = Math.max(3, start.data.interval || 5) * 1000;
-        while (Date.now() < deadline) {
-          await new Promise(function (s) { setTimeout(s, wait); });
-          var p = await api('/api/gh/device/poll', { method: 'POST' });
-          if (p.ok && p.data && p.data.ok) return Account._bindServerGithub(p.data);
-          if (!p.ok) return { ok: false, err: '设备码失败：' + p.err };
-          if (p.ok && p.data && !p.data.pending) return { ok: false, err: '设备码没被授权' };
-        }
-        return { ok: false, err: '设备码超时（重新发起即可）' };
-      }
-
-      var dc = await ghTokenWithFallback({ client_id: c.clientId, scope: c.scope }, 'https://github.com/login/device/code');
-      var r = dc.data || {};
-      if (!r.device_code) return { ok: false, err: '拿设备码失败：' + (r.error || '网络/CORS 受限') + '（尝试记录：' + dc.tried.join(' ｜ ') + '）', tried: dc.tried };
-      if (onCode) onCode({ user_code: r.user_code, verification_uri: r.verification_uri, expires_in: r.expires_in });
-      var deadline = Date.now() + Math.min(r.expires_in || 900, 900) * 1000;
-      while (Date.now() < deadline) {
-        await new Promise(function (s) { setTimeout(s, (r.interval || 5) * 1000); });
-        var t = await ghTokenWithFallback({
-          client_id: c.clientId, device_code: r.device_code,
-          grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-        });
-        var tj = t.data || {};
-        if (tj.access_token) return Account.bindGitHubToken(tj.access_token, ghTokenExtra(tj));
-        if (tj.error && tj.error !== 'authorization_pending' && tj.error !== 'slow_down') {
-          return { ok: false, err: '设备码失败：' + (tj.error_description || tj.error) + '（' + t.tried.join(' ｜ ') + '）' };
-        }
-        if (!t.data) return { ok: false, err: '设备码轮询被挡：' + t.tried.join(' ｜ ') };
-      }
-      return { ok: false, err: '设备码超时（重新发起即可）' };
+      return githubDeviceFlow(onCode, function (t, ex) { return Account.bindGitHubToken(t, ex); });
+    },
+    /** M23：设备码**登录**（没登录过也能用：拿到令牌直接建号/进号；已登录则等同绑定） */
+    signInGitHubDevice: async function (onCode) {
+      return githubDeviceFlow(onCode, function (t, ex) { return Account.signInGitHub(t, ex); });
     },
     /** 微软账号：授权码 + PKCE（SPA 平台注册，无需 client secret） */
     bindMicrosoft: async function () {
@@ -766,12 +736,65 @@
           var bag = readSess(K.ghtok, {});
           delete bag[u.uid];
           writeSess(K.ghtok, bag);                       // 本机模式：令牌只在内存/本标签页，删掉即失效
+          removeKey(K.ghtokKeep);                        // M23：记住的那份也一起清（不然下次还能自动登录）
           note = '本机令牌已清除（可去 GitHub 设置里再撤销那次授权）';
         }
       }
       delete u.providers[provider];
       saveDB(db); emit();
       return { ok: true, note: note };
+    },
+    /* ----- M23：GitHub 即账号（这个游戏不提供注册） -----
+       为什么：用户原话「只能用 github 账户登录不能注册」。账号 = GitHub 身份，
+       所以第一次设备码/令牌登录时**自动建一条无口令的本地账号记录**（uid = gh-<login>），
+       之后一切照旧（存档槽、云同步、Gist 都挂在这条记录上）。 */
+    signInGitHub: async function (token, extra) {
+      token = String(token || '').trim();
+      if (!/^(gh[pousr]_|github_pat_)/.test(token)) return { ok: false, err: '这不像 GitHub 令牌（应以 ghp_ / github_pat_ 开头）' };
+      if (serverMode()) {
+        /* 云后端模式下账号由服务端持有，这里只做"已登录时的绑定"，避免两套身份打架 */
+        if (!Account.currentUid()) return { ok: false, err: '云后端模式下请先用账号密码登录，再绑定 GitHub' };
+        return Account.bindGitHubToken(token, extra);
+      }
+      var me = await gh('GET', '/user', token);
+      if (!me.ok) return { ok: false, err: '令牌无效或缺少权限：' + me.err };
+      var login = String(me.data.login || '').trim();
+      if (!login) return { ok: false, err: 'GitHub 没返回用户名' };
+      var db = loadDB(), found = null, lower = login.toLowerCase();
+      /* 已经有同 login 的记录（例如老账号绑过 GitHub）→ 复用，进度与存档槽都跟着走 */
+      Object.keys(db.users).forEach(function (k) {
+        var u = db.users[k], g = u.providers && u.providers.github;
+        if (g && String(g.login || '').toLowerCase() === lower) found = found || u;
+      });
+      if (!found) {
+        var uid = 'gh-' + lower;
+        found = db.users[uid] || { uid: uid, name: login, email: '', createdAt: nowISO(), providers: {}, games: {} };
+        found.name = found.name || login;
+        db.users[uid] = found;
+        var w = saveDB(db);
+        if (!w.ok) return { ok: false, err: w.err };
+      }
+      Account._setSession(found.uid);
+      /* 令牌记在 localStorage：不然每次开标签页都要重做一遍设备码（"更方便"就无从谈起）。
+         公用电脑上玩完点「解绑」即可清掉。 */
+      writeJSON(K.ghtokKeep, { uid: found.uid, login: login, token: token, at: nowISO() });
+      var r = Account._bind('github', {
+        token: token, login: login, name: me.data.name || login, avatar: me.data.avatar_url, boundAt: nowISO(),
+      }, extra);
+      if (!r.ok) return r;
+      return { ok: true, uid: found.uid, user: Account.current(), created: !found.createdAt || false, provider: 'github', info: r.info };
+    },
+    /** 已经记住过令牌（上次登录留着的那份）：一键回来，不用再走设备码 */
+    rememberedGitHub: function () {
+      var r = readJSON(K.ghtokKeep, null);
+      return r && r.token ? { login: r.login || '', at: r.at || '' } : null;
+    },
+    ghToken: function () { var r = readJSON(K.ghtokKeep, null); return r && r.token ? r.token : null; },
+    /** 用记住的令牌直接登录（令牌失效会返回 ok:false，UI 再引导去设备码/粘贴） */
+    signInGitHubRemembered: async function () {
+      var r = readJSON(K.ghtokKeep, null);
+      if (!r || !r.token) return { ok: false, err: '这台设备还没记住令牌' };
+      return Account.signInGitHub(r.token);
     },
     _bind: function (provider, data) {
       var db = loadDB(), u = db.users[Account.currentUid()];
@@ -838,11 +861,14 @@
       var p = u && u.providers && u.providers[provider];
       if (!p) return null;
       if (provider === 'github') {
-        /* 本机模式的令牌在 sessionStorage；云模式的令牌在服务端，前端根本拿不到 */
+        /* 本机模式的令牌在 sessionStorage；云模式的令牌在服务端，前端根本拿不到。
+           M23：GitHub 即账号，令牌另记一份在 localStorage（K.ghtokKeep），关标签页不用重登。 */
         var bag = readSess(K.ghtok, {});
         var gtok = bag[u.uid];
-        if (!gtok) return null;
-        return gtok;
+        if (gtok) return gtok;
+        var keep = readJSON(K.ghtokKeep, null);
+        if (keep && keep.token && (!keep.uid || keep.uid === u.uid)) return keep.token;
+        return null;
       }
       if (Date.now() < (p.exp || 0)) return p.access;
       if (!p.refresh) return null;
@@ -1046,6 +1072,49 @@
     if (e.name === 'TypeError') return 'CORS/网络被挡(TypeError)';
     return (e.name || 'Error') + ': ' + (e.message || '');
   }
+  /** M23：GitHub 设备码流程（绑定与登录共用；finish(token, extra) 决定把令牌交给谁）。
+   *  云模式：整条流程在 Worker 里跑，前端只拿到 9 位码；本机模式：先 form 再 json 直连。 */
+  async function githubDeviceFlow(onCode, finish) {
+    var c = cfg().github;
+    if (!c.clientId) return { ok: false, err: '还没配 GitHub client_id（见 /games/auth-config.js）' };
+
+    if (serverMode()) {
+      var start = await api('/api/gh/device/start', { method: 'POST', body: { client_id: c.clientId } });
+      if (!start.ok) return { ok: false, err: '拿设备码失败：' + start.err };
+      if (onCode) onCode({ user_code: start.data.user_code, verification_uri: start.data.verification_uri, expires_in: start.data.expires_in });
+      var deadline = Date.now() + Math.min(start.data.expires_in || 900, 900) * 1000;
+      var wait = Math.max(3, start.data.interval || 5) * 1000;
+      while (Date.now() < deadline) {
+        await new Promise(function (s) { setTimeout(s, wait); });
+        var p = await api('/api/gh/device/poll', { method: 'POST' });
+        if (p.ok && p.data && p.data.ok) return Account._bindServerGithub(p.data);
+        if (!p.ok) return { ok: false, err: '设备码失败：' + p.err };
+        if (p.ok && p.data && !p.data.pending) return { ok: false, err: '设备码没被授权' };
+      }
+      return { ok: false, err: '设备码超时（重新发起即可）' };
+    }
+
+    var dc = await ghTokenWithFallback({ client_id: c.clientId, scope: c.scope }, 'https://github.com/login/device/code');
+    var r = dc.data || {};
+    if (!r.device_code) return { ok: false, err: '拿设备码失败：' + (r.error || '网络/CORS 受限') + '（尝试记录：' + dc.tried.join(' ｜ ') + '）', tried: dc.tried };
+    if (onCode) onCode({ user_code: r.user_code, verification_uri: r.verification_uri, expires_in: r.expires_in });
+    var dl2 = Date.now() + Math.min(r.expires_in || 900, 900) * 1000;
+    while (Date.now() < dl2) {
+      await new Promise(function (s) { setTimeout(s, (r.interval || 5) * 1000); });
+      var t = await ghTokenWithFallback({
+        client_id: c.clientId, device_code: r.device_code,
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+      });
+      var tj = t.data || {};
+      if (tj.access_token) return finish(tj.access_token, ghTokenExtra(tj));
+      if (tj.error && tj.error !== 'authorization_pending' && tj.error !== 'slow_down') {
+        return { ok: false, err: '设备码失败：' + (tj.error_description || tj.error) + '（' + t.tried.join(' ｜ ') + '）' };
+      }
+      if (!t.data) return { ok: false, err: '设备码轮询被挡：' + t.tried.join(' ｜ ') };
+    }
+    return { ok: false, err: '设备码超时（重新发起即可）' };
+  }
+
   /** 依次用 form / json（并在配了中继时先走中继）POST；返回 {data, tried, mode} */
   async function ghTokenWithFallback(body, url) {
     var tried = [];

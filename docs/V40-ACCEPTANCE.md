@@ -898,3 +898,36 @@ M12 起探索页是"3×3 区域图 + 24×24 本地图"**上下两块**：区域�
   - **P2**：一键授权这条路从游戏 UI 上撤了；若要恢复，需要先部署中继并配 `GH_CLIENT_SECRET`（库函数与 Worker 都还在）。
   - **P3**：令牌默认勾 `gist` 是全量授权（GitHub 的粒度限制，收不窄）——已在弹窗与 PRIVACY.md 明写；
     想要更小权限只能改用「导出存档文件」这条离线路。
+---
+
+## 二十七、M23：账号 = GitHub（设备码 + 令牌码两条登录路，UI 上取消注册）
+
+- 用户原话：**"再搞一个更方便的，设备码（就这两个），然后优化一下注册登录逻辑——只能用 github 账户登录不能注册"**。
+- 改法（`src/account/account.js` + `src/v4/account-ui.ts` + `src/main.ts`）：
+  - **库里新增"GitHub 即账号"**：`signInGitHub(token)` = 校验令牌 → 找同 login 的记录（老账号绑过 GitHub 就复用，进度与存档槽跟着走）
+    → 找不到就建一条 `uid = gh-<login>` 的**无口令**本机账号 → 写会话 → 绑定 provider。`signInGitHubDevice(onCode)` 走同一条设备码流程，
+    只是把"拿到令牌之后干什么"换成登录（`bindGitHubDevice` 保留原来的绑定语义，两者共用新抽出的 `githubDeviceFlow()`）。
+  - **令牌记住了**：以前本机模式的令牌只放 `sessionStorage`（关标签页就失效，每次都要重绑），现在另记一份在
+    `localStorage`（`dsh.ghtok.keep.v1`），`_cloudToken` 兜底读它，`unbind` 会清掉——这才叫"更方便"。
+    同时新增 `rememberedGitHub()` / `signInGitHubRemembered()`：登录页会给一颗「⚡ 用这台设备记住的 GitHub 直接进」。
+  - **UI 上取消注册**：登录页只剩两条路（📱 设备码登录 / 🔑 令牌码登录）＋一行小字「旧账号（密码）」；
+    `V4Account.doRegister` 与注册用的邮箱输入框全删。GitHub 账号的面板不再显示「改密码」「恢复码」
+    （那是有密码账号的事），头像行显示「GitHub 账号（没有密码）· GitHub @login」。
+  - 老账号不受影响：密码登录与恢复码找回都还在（入口收进 `legacyLogin()` 的弹窗），`account.js` 的
+    `register/login/recover` 一行没动（游戏厅页面继续用）。
+- 文档：README 功能行 + 「为什么登录是设备码/令牌码这两条？」整节重写；PRIVACY.md 第 3 节改成
+  「登录与云存档用的 GitHub 令牌」（两条登录路对照表 + 令牌存在哪，含新的 localStorage 键）。
+- 实测：`docs/_m23_github_login_probe.mjs` **本地 18/18**、**线上 18/18**：
+  - `V4Account.doRegister` 已不存在；登录页只有设备码/令牌码两条路，没有任何注册按钮或邮箱输入框；
+  - 老账号弹窗只有用户名/密码 + 登录（+ 恢复码找回），同样没有注册；
+  - 令牌弹窗标题变为「用令牌码登录」、按钮「登录并启用云存档」，权限披露与"不想给令牌"的退路仍在；
+  - **线上设备码真的出码**（`clientId = Ov23liPzQ…` + 中继都活着，探针断言 9 位码格式）——本地无 auth-config 时给出可读错误；
+  - 注入一条 `gh-` 账号后：面板认「GitHub 账号（没有密码）」、给 `GitHub @login ✕` 解绑、不显示改密码/恢复码；
+    退出登录后登录页出现「⚡ 用这台设备记住的 GitHub 直接进」。
+- 已知问题：
+  - **P2**：云后端（Worker）模式下 GitHub-only 登录没做——那种模式下账号由服务端持有，仍然要求先用口令登录；
+    本游戏线上实际跑的是本机模式（`api` 配了但后端不可达时会自动退回），所以不影响玩家。
+  - **P2**：记住的令牌放在 `localStorage`，等于"这台浏览器上谁都能看到它"。这是"方便"的直接代价，
+    弹窗与 PRIVACY.md 都写明了；公用电脑请用「解绑」，或用完全离线的「导出存档文件」。
+  - **P3**：`_m9_recovery_probe.mjs`（历史产物）里用 `V4Account.doRegister()` 造账号，M23 之后该入口已删——
+    那个脚本不再复跑，恢复码本身仍可用（老账号弹窗里）。

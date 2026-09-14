@@ -36,11 +36,13 @@ export function accountSummary(): string {
   if (!a) return '账号库没加载（这版构建有问题，报告一下）';
   const u = a.current();
   const srv = a.serverInfo?.();
-  const who = srv?.loggedIn === false && u?.server ? '云账号（后端离线，口令按本机兜底）' : (srv?.loggedIn ? '云账号' : '本机账号');
+  /* M23：GitHub 账号（没有密码）就说 GitHub 账号，别再说"本机账号" */
+  const who = u?.hasPassword === false ? 'GitHub 账号'
+    : (srv?.loggedIn === false && u?.server ? '云账号（后端离线，口令按本机兜底）' : (srv?.loggedIn ? '云账号' : '本机账号'));
   if (!u) {
     return srv?.enabled
-      ? '未登录 —— 注册后账号与存档存在你自己的 Cloudflare 里（也可绑定 GitHub 存 Gist）'
-      : '未登录 —— 当前是本机模式（存档只在这台设备；配置云后端后可跨设备）';
+      ? '未登录 —— 用 GitHub 登录（设备码 / 令牌码），存档进你自己账号下的私有 Gist'
+      : '未登录 —— 用 GitHub 登录后存档可以跨设备（本机模式也能玩，存档只在这台设备）';
   }
   const info = a.saveInfo(GAME, SLOT);
   return '已登录 ' + u.name + '（' + who + '） · ' + providerText(u) +
@@ -68,22 +70,30 @@ export function openPanel(): void {
         (a.cryptoInfo?.().locked ? '<button class="btn" onclick="V4Account.unlock()">🔓 解锁同步</button>' : '') +
         '<button class="btn ghost" onclick="V4Account.toggleAuto()">🔁 自动同步：' + (autoSync ? '开' : '关') + '</button>' +
         '<button class="btn" data-close>关闭</button>'
-      : '<button class="btn ok" onclick="V4Account.doRegister()">注册并登录</button>' +
-        '<button class="btn" onclick="V4Account.doLogin()">登录</button>' +
-        '<button class="btn" data-close>取消</button>',
+      : '<button class="btn ok" onclick="V4Account.loginDevice()">📱 设备码登录</button>' +
+        '<button class="btn" onclick="V4Account.openTokenBind()">🔑 粘贴令牌码</button>' +
+        '<button class="btn ghost" onclick="V4Account.legacyLogin()">旧账号（密码）</button>' +
+        '<button class="btn" data-close>关闭</button>',
     onMount() { paint(); },
   });
 }
 
 function loginHtml(): string {
-  return '<p class="muted">账号只为了两件事：<b>让存档跟着你走</b>、<b>在别的电脑上接着玩</b>。' +
-    '口令在本机用 WebCrypto（PBKDF2-SHA256，21 万轮）派生，上传的只有派生值；' +
-    '云后端是你自己的 Cloudflare Worker，服务端再叠一层只有它知道的密钥哈希。</p>' +
-    '<div class="row" style="margin-top:10px"><input id="acc-name" placeholder="用户名（2~24 字）" style="flex:1">' +
-    '<input id="acc-pass" type="password" placeholder="密码（≥6 位）" style="flex:1"></div>' +
-    '<div class="row" style="margin-top:8px"><input id="acc-mail" placeholder="邮箱（选填，只用来认账号）" style="flex:1"></div>' +
-    '<div class="hint" style="margin-top:8px">注册后会给你一串<b>恢复码</b>：忘了密码时用它找回账号和云存档（服务端解不开它，只有你手里那份有效）。</div>' +
-    '<div class="row" style="margin-top:8px"><button class="btn ghost" onclick="V4Account.showRecover()">😵 忘记密码 / 用恢复码登录</button></div>' +
+  const a = A();
+  const keep = a?.rememberedGitHub?.();
+  return '<p class="muted">这个游戏<b>不需要注册</b>——账号就是你的 GitHub：登录后存档写进你自己账号下的一个私有 Gist，' +
+    '换电脑用同一种方式登录就能接着玩。两种登录方式，任选一种：</p>' +
+    '<div class="row" style="margin-top:10px">' +
+    '<button class="btn ok" onclick="V4Account.loginDevice()">📱 设备码登录（9 位，最省事）</button>' +
+    '<button class="btn" onclick="V4Account.openTokenBind()">🔑 粘贴令牌码登录</button></div>' +
+    '<div class="hint" style="margin-top:8px">📱 <b>设备码</b>：点一下会出现一串 9 位码并自动打开 GitHub 授权页，输进去点 Authorize 就完事——不用复制粘贴任何东西。<br>' +
+    '🔑 <b>令牌码</b>：自己在 GitHub 建一个只勾 <span class="mono">gist</span> 的令牌粘进来（换电脑、设备码被公司网络挡住时用这条）。</div>' +
+    (keep ? '<div class="row" style="margin-top:8px"><button class="btn" onclick="V4Account.loginRemembered()">⚡ 用这台设备记住的 GitHub（@' +
+      esc(keep.login || '?') + '）直接进</button></div>' : '') +
+    '<div class="hint" style="color:#e0b06a">⚠️ 令牌会记在这台设备的浏览器里（关掉标签页不用重登）；公用电脑上玩完记得点面板里的「解绑」。</div>' +
+    '<div class="hint">老的本机账号（带密码的那种）还能进：' +
+    '<a href="#" onclick="V4Account.legacyLogin();return false">用密码登录</a>' +
+    '（只保留给老账号，<b>不再支持新注册</b>）。</div>' +
     '<div class="hint" id="acc-msg" style="margin-top:8px"></div>';
 }
 
@@ -149,13 +159,13 @@ function loggedInHtml(u: NonNullable<ReturnType<typeof currentUser>>, a: NonNull
   const srv = a.serverInfo?.();
   const backend = srv?.loggedIn ? 'server' : (g ? 'github' : (m ? 'microsoft' : null));
   let h = '<p class="muted">已登录：<b>' + esc(u.name) + '</b>' + (u.email ? '（' + esc(u.email) + '）' : '') +
-    ' · 注册于 ' + esc(u.createdAt.slice(0, 10)) + ' · ' +
-    (u.server ? '☁️ 云账号' : '💻 本机账号') + '</p>';
+    ' · ' + (u.hasPassword ? '本机账号（带密码）' : 'GitHub 账号（没有密码）') + ' · ' +
+    (g && g.login ? 'GitHub @' + esc(g.login) : '未绑定 GitHub') + '</p>';
   h += '<div class="hint">存档去向：' +
     (backend === 'server' ? '你自己的 Cloudflare（Worker + KV）'
       : backend === 'github' ? 'GitHub 私有 Gist（你自己的账号下）'
         : backend === 'microsoft' ? 'OneDrive 应用文件夹'
-          : '只在这台设备（浏览器本地）—— 想跨设备就注册云账号或绑定 GitHub') + '</div>';
+          : '只在这台设备（浏览器本地）—— 想跨设备就登录 GitHub（设备码或令牌码）') + '</div>';
   // 加密状态：云模式下上传的是密文，密钥由口令派生、只留在本标签页
   if (backend === 'server') {
     const ci = a.cryptoInfo?.();
@@ -181,20 +191,22 @@ function loggedInHtml(u: NonNullable<ReturnType<typeof currentUser>>, a: NonNull
   if (!a.config().microsoft.clientId) h += '<div class="hint">微软那条路暂时没有：它要求在 Azure 注册应用，' +
     '而个人微软账号走注册流程时被要求绑信用卡。GitHub 一条够用（免费、无额度限制），不想给令牌就导出存档文件。</div>';
   if (g && g.serverSide) h += '<div class="hint">令牌保存在你自己的 Worker 里（前端拿不到），中继只允许读写你名下那一个存档 Gist。</div>';
-  if (g && !g.serverSide) h += '<div class="hint">令牌只存在这台设备（浏览器 localStorage），除了 api.github.com 不向别处发请求；随时可在 GitHub 设置里撤销。</div>';
+  if (g && !g.serverSide) h += '<div class="hint">令牌记在这台设备的浏览器里（localStorage，关标签页不用重登），' +
+    '除了 api.github.com 不向别处发请求；点上面的「✕」解绑就会清掉它，也可在 GitHub → Settings → Developer settings → Tokens 删掉。</div>';
   if (g) h += '<div class="hint">GitHub 云盘 = 一个私有 Gist（描述里写着 bobbychina.github.io/games），删除 gist 就等于删云端存档。</div>';
   if (m) h += '<div class="hint">微软云盘 = OneDrive 的「应用文件夹 /dsh-saves」，不占用你可见的文档目录。</div>';
   /* 今日上传额度：服务端每账号每天 10 次（免费版 KV 每天只有 1000 次写），挂载后异步填进来 */
   if (backend === 'server') h += '<div class="hint" id="acc-quota">☁️ 今日云上传额度：查询中…</div>';
-  h += '<div class="hint">🎫 恢复码：<span id="acc-rc-state">…</span></div>';
+  /* 恢复码是"带密码的本机/云账号"才有的东西：GitHub 账号没有密码，显示它只会让人困惑 */
+  if (u.hasPassword) h += '<div class="hint">🎫 恢复码：<span id="acc-rc-state">…</span></div>';
   h += '<div class="sect-title" style="margin-top:12px">本机存档（槽位 main）</div>';
   h += '<div class="hint">' + (info ? '本机 ' + esc(info.updatedAt.slice(0, 16).replace('T', ' ')) + ' · ' + Math.round(info.bytes / 1024) + ' KB'
     : '还没有上传过（点下面的「上传存档」把当前进度存进账号）') + '</div>';
   // M8：存档完整性（指纹校验的结果直接摆在这里，别让玩家以为"改了没人知道"）
   h += '<div class="hint">🔒 ' + esc(integritySummary()) + '</div>';
   h += '<div class="sect-title" style="margin-top:12px">账号操作</div><div class="row">' +
-    '<button class="btn" onclick="V4Account.changePass()">🔑 改密码</button>' +
-    '<button class="btn" onclick="V4Account.setupRecovery()">🎫 设/换恢复码</button>' +
+    (u.hasPassword ? '<button class="btn" onclick="V4Account.changePass()">🔑 改密码</button>' +
+      '<button class="btn" onclick="V4Account.setupRecovery()">🎫 设/换恢复码</button>' : '') +
     '<button class="btn" onclick="V4Account.exportFile()">💾 导出存档文件</button>' +
     '<button class="btn" onclick="V4Account.importFile()">📂 从文件导入</button>' +
     '<button class="btn ghost" onclick="V4Account.exportAll()">⬆️ 导出文本</button>' +
@@ -245,19 +257,9 @@ function msg(text: string, bad = false) {
 }
 const val = (sel: string) => String((L.$(sel) as HTMLInputElement | null)?.value ?? '').trim();
 
-/* ── 登录 / 注册 ── */
-export async function doRegister(): Promise<boolean> {
-  const a = A(); if (!a) return false;
-  const r = await a.register({ name: val('#acc-name'), password: val('#acc-pass'), email: val('#acc-mail') });
-  if (!r.ok) { msg(r.err ?? '注册失败', true); return false; }
-  L.log('👤 账号已创建：' + r.user?.name + '（存档会跟着这个账号走）', 'success');
-  const code = typeof r.recoveryCode === 'string' ? r.recoveryCode : '';
-  L.closeAllModals();
-  if (code) showRecoveryCode(code, { fresh: true });   // 只显示这一次，务必让玩家抄下来
-  else openPanel();
-  L.render();
-  return true;
-}
+/* ── 登录 / 注册 ──
+   M23：UI 上**没有注册**了（账号 = GitHub，见 loginDevice/openTokenBind）。
+   doLogin 只给"旧的本机账号（带密码）"用，入口是登录页那行小字（legacyLogin）。 */
 export async function doLogin(): Promise<boolean> {
   const a = A(); if (!a) return false;
   const r = await a.login({ name: val('#acc-name'), password: val('#acc-pass') });
@@ -270,6 +272,58 @@ export function logout(): void {
   A()?.logout();
   L.closeAllModals(); L.render();
   toastMsg('已退出登录', '存档还在这台设备上，重新登录就能继续用。', 'info');
+}
+
+/* ── M23：GitHub 即账号——登录只有两条路：设备码 / 令牌码 ── */
+
+/** 设备码登录：出 9 位码 → 自动打开 GitHub 授权页 → 这边轮询拿到令牌 → 进号（没有账号就自动建） */
+export async function loginDevice(): Promise<void> {
+  const a = A(); if (!a) return;
+  msg('正在向 GitHub 申请设备码……');
+  const r = await a.signInGitHubDevice(info => { deviceCodeModal(info); });
+  if (!r.ok) { toastMsg('设备码登录失败', r.err ?? '', 'bad'); msg(r.err ?? '设备码登录失败', true); return; }
+  loginDone(r);
+}
+/** 这台设备上次记住的令牌还在 → 一键回来 */
+export async function loginRemembered(): Promise<void> {
+  const a = A(); if (!a) return;
+  msg('正在用记住的令牌登录……');
+  const r = await a.signInGitHubRemembered();
+  if (!r.ok) { toastMsg('记住的令牌不能用了', (r.err ?? '') + '　换设备码或令牌码登录即可。', 'bad'); msg(r.err ?? '登录失败', true); return; }
+  loginDone(r);
+}
+/** 登录成功：关掉所有弹窗、刷新面板与界面 */
+function loginDone(r: { user?: { name?: string } }): void {
+  L.log('👤 已用 GitHub 登录：' + (r.user?.name ?? '?') + '（云存档 = 你自己账号下的私有 Gist）', 'success');
+  L.closeAllModals(); openPanel(); L.render();
+}
+/** 设备码提示框：9 位码放最显眼处 + 自动打开授权页（不用复制粘贴任何东西） */
+function deviceCodeModal(info: { user_code: string; verification_uri: string }): void {
+  L.modal({
+    title: '📱 在 GitHub 输入这 9 位',
+    sticky: true,
+    body: '<p class="muted">已自动打开 GitHub 的授权页；把这串输进去点 <b>Authorize</b>，这边会自己完成登录（不用回来点任何东西）。</p>' +
+      '<div class="mono" style="font-size:30px;letter-spacing:5px;text-align:center;color:#7fd6a5;margin:16px 0" id="acc-dev-code">' + esc(info.user_code) + '</div>' +
+      '<div class="hint">页面没自动打开？手动访问 <b>' + esc(info.verification_uri) + '</b> 再输这串码。</div>' +
+      '<div class="hint" id="acc-msg"></div>',
+    footer: '<button class="btn" onclick="window.open(\'' + esc(info.verification_uri) + '\',\'_blank\')">打开 GitHub 授权页</button>' +
+      '<button class="btn" data-close>稍后再说</button>',
+  });
+  try { window.open(info.verification_uri, '_blank'); } catch { /* 被拦就算了，弹窗里有按钮 */ }
+}
+/** 老的本机账号（带密码）：只保留入口，不提供注册 */
+export function legacyLogin(): void {
+  L.modal({
+    title: '🔑 旧的本机账号登录',
+    sticky: true,
+    body: '<p class="muted">这是给<b>以前注册过带密码账号</b>的玩家留的入口——现在的新账号一律走 GitHub（设备码 / 令牌码），不再支持注册。</p>' +
+      '<div class="row" style="margin-top:10px"><input id="acc-name" placeholder="用户名" style="flex:1">' +
+      '<input id="acc-pass" type="password" placeholder="密码" style="flex:1"></div>' +
+      '<div class="row" style="margin-top:8px"><button class="btn ghost" onclick="V4Account.showRecover()">😵 忘记密码 / 用恢复码登录</button></div>' +
+      '<div class="hint" id="acc-msg" style="margin-top:8px"></div>',
+    footer: '<button class="btn ok" onclick="V4Account.doLogin()">登录</button>' +
+      '<button class="btn" data-close>取消</button>',
+  });
 }
 
 /* ── 云存档 = 贴一次令牌码（M22） ──
@@ -286,11 +340,13 @@ const TOKEN_URL = 'https://github.com/settings/tokens/new?scopes=gist&descriptio
 export function openTokenBind(): void {
   const a = A(); if (!a) return;
   const serverSide = !!a.config().api;      // 配了中继 = 令牌交给自己的 Worker 保存，前端不留
+  const loggedIn = !!a.current();
   L.modal({
-    title: '🔑 贴令牌码，开启云存档',
+    title: loggedIn ? '🔑 贴令牌码，开启云存档' : '🔑 用令牌码登录',
     sticky: true,
     body: '<div class="hint">云存档 = 你 GitHub 账号下的<b>一个私有 Gist</b>。三步：' +
-      '① 点下面按钮打开令牌页（<span class="mono">gist</span> 权限已勾好）→ ② 点 <b>Generate token</b> 复制 → ③ 粘进框里点「保存并启用」。</div>' +
+      '① 点下面按钮打开令牌页（<span class="mono">gist</span> 权限已勾好）→ ② 点 <b>Generate token</b> 复制 → ③ 粘进框里点「' +
+      (loggedIn ? '保存并启用' : '登录') + '」。</div>' +
       '<div class="row" style="margin-top:8px"><button class="btn" onclick="window.open(\'' + TOKEN_URL + '\',\'_blank\')">🔗 打开 GitHub 令牌页</button></div>' +
       '<input id="acc-gh-token" placeholder="粘贴令牌码（ghp_… / github_pat_…）" style="width:100%;margin-top:8px">' +
       '<div class="hint" style="margin-top:8px">权限只有 <span class="mono">gist</span>：读写你账号下的 Gist。' +
@@ -302,7 +358,7 @@ export function openTokenBind(): void {
       '面板上点「GitHub @你 ✕」也能解绑。</div>' +
       '<div class="hint" style="color:#e0b06a">⚠️ 不想给令牌？关掉窗口：用「💾 导出存档文件 / 📂 从文件导入」换设备，完全不需要第三方账号。</div>' +
       '<div class="hint" id="acc-msg" style="margin-top:8px"></div>',
-    footer: '<button class="btn ok" onclick="V4Account.bindGitHubToken()">保存并启用</button>' +
+    footer: '<button class="btn ok" onclick="V4Account.bindGitHubToken()">' + (loggedIn ? '保存并启用' : '登录并启用云存档') + '</button>' +
       '<button class="btn" data-close>取消</button>',
   });
 }
@@ -311,7 +367,8 @@ export async function bindGitHubToken(): Promise<void> {
   const t = val('#acc-gh-token');
   if (!t) { msg('先把令牌码粘进来', true); return; }
   msg('正在校验令牌……');
-  const r = await a.bindGitHubToken(t);
+  /* 没登录时这一步就是"登录"：校验令牌 → 建号/进号（账号 = GitHub）；已登录则等同绑定 */
+  const r = a.current() ? await a.bindGitHubToken(t) : await a.signInGitHub(t);
   afterBind(r, 'github');
 }
 export async function bindMicrosoft(): Promise<void> {

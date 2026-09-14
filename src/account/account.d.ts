@@ -8,6 +8,7 @@ export interface AccountUser {
   email: string;
   createdAt: string;
   server?: boolean;                    // true = 云账号（后端在 Cloudflare）
+  hasPassword?: boolean;               // false = GitHub 账号（M23 起新建的账号都没有密码）
   providers: { github?: AccountProviderGitHub; microsoft?: AccountProviderMS };
   saveGames: string[];
 }
@@ -29,6 +30,12 @@ export interface DshAccount {
   backend(): 'server' | 'github' | 'microsoft' | null;
   register(o: { name: string; password: string; email?: string }): Promise<AccountResult>;
   login(o: { name: string; password: string }): Promise<AccountResult>;
+  /* M23：账号 = GitHub。第一次设备码/令牌登录会自动建一条无口令的本地账号记录 */
+  signInGitHub(token: string, extra?: Record<string, unknown>): Promise<AccountResult>;
+  signInGitHubDevice(onCode?: (i: { user_code: string; verification_uri: string }) => void): Promise<AccountResult>;
+  signInGitHubRemembered(): Promise<AccountResult>;
+  rememberedGitHub(): { login: string; at: string } | null;
+  ghToken(): string | null;
   logout(): Promise<AccountResult>;
   current(): AccountUser | null;
   changePassword(oldPass: string, newPass: string): Promise<AccountResult>;
