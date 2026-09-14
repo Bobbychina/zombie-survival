@@ -45,6 +45,18 @@ const homeKey = (sw: SaveWorld) => { const w = worldOf(sw.seed, sw.region); retu
 function sw(): SaveWorld { return ensureSaveWorld(L.S); }
 function curBlock(): Block { const s = sw(); const w = localWorld(s); return blockAt(w, s.cur.x, s.cur.y) as Block; }
 
+/** M24：技能 perk 查询（到级即生效，和 legacy 的 hasPerk 同一套规则）。
+    写在 world-ui 里而不是各模块各写一遍——技能判定只该有一处真相。 */
+export function perkOn(skill: string, lv: number): boolean {
+  return Number((L.S as any)?.skills?.[skill] ?? 0) >= lv;
+}
+/** M24 机械技能：修车材料按等级打折（Lv3 起再 -30%） */
+export function repairCost(base: number): number {
+  const lv = Number((L.S as any)?.skills?.mechanic ?? 0);
+  const cut = Math.min(0.5, lv * 0.08 + (lv >= 3 ? 0.3 : 0));
+  return Math.max(1, Math.round(base * (1 - cut)));
+}
+
 /** M20：把导入的幽灵据点钉到当前世界上（幂等，每个世界只钉一次） */
 const ghostPlaced: Record<string, true> = {};
 function withGhosts(w: WorldState): WorldState {
@@ -268,10 +280,12 @@ export function renderRegionPanel(s: SaveWorld): string {
       const tip = def.name + ' · ' + typeLabel(def.type) + ' · 危险 ' + def.tier + '：' + def.desc +
         (seen ? '' : '（你还没去过这一带，物资是按地貌推的）');
       const bg = dangerMode ? dangerColor(def.tier) : typeColor(def.type);
+      /* M24：两个图层各管各的（用户原话："为什么地貌上色还有危险度……危险度不是有单独的上色吗"）。
+         地貌层 = 只有颜色（地名/危险数字都不画，看名字点开详情、或切到危险度层）；
+         危险度层 = 只有数字。图例、悬停 title、点开的详情都还在，信息没丢。 */
       h += '<div class="' + cls + '" style="background:' + bg + ';--dc:' + dangerColor(def.tier) + '"' +
         ' title="' + esc(tip) + '" role="button" tabindex="0" onclick="V4World.pickRegion(\'' + def.id + '\')">' +
-        '<i class="rnum d' + def.tier + '">' + def.tier + '</i>' +
-        '<b class="rnm">' + esc(def.short) + '</b>' +
+        (dangerMode ? '<i class="rnum d' + def.tier + '">' + def.tier + '</i>' : '') +
         (isHere ? '<i class="rpin">📍</i>' : '') +
         '</div>';
     }
@@ -633,7 +647,10 @@ function pruneLegacy(view: HTMLElement) {
   }
 }
 
-/** 把 legacy 自己的卡片（委托板 / 日历…）包成 v4 卡片：探索页只剩一种卡片语言 */
+/** 把 legacy 自己的内容统一包成 v4 卡片：探索页只剩一种卡片语言。
+    M24 修：以前只有"标题 + 紧随的 .card/.grid"会被包成卡片，裸的 .card（委托板 teaser、结局说明…）
+    会原样塞进卡片墙 → 界面里出现没有标题、宽度和别的卡不一样的"诡异空白块"（用户报障）。
+    现在**任何**没被认领的节点都会被包成一张有标题的卡片。 */
 function adoptLegacy(view: HTMLElement, board: HTMLElement) {
   const keep: Element[] = [];
   for (const child of Array.from(view.children)) {
@@ -643,26 +660,39 @@ function adoptLegacy(view: HTMLElement, board: HTMLElement) {
   }
   for (const el of keep) {
     const e = el as HTMLElement;
-    if (e.tagName === 'DIV' && e.classList.contains('v4card')) { board.appendChild(e); continue; }
-    // sect-title + 紧随其后的 .card/.grid = 一段完整的 legacy 区块 → 一句话标题 + 内容
+    if (e.classList.contains('v4card')) { board.appendChild(e); continue; }
+    let title = '', badges: string[] = [], bodyEl: HTMLElement | null = null;
     if (e.classList.contains('sect-title')) {
+      // sect-title + 紧随其后的 .card/.grid = 一段完整的 legacy 区块
+      title = (e.textContent || '').trim();
+      badges = Array.from(e.querySelectorAll('.badge')).map(b => (b.textContent || '').trim());
       const next = e.nextElementSibling as HTMLElement | null;
-      const title = (e.textContent || '').trim();
-      const badges = Array.from(e.querySelectorAll('.badge')).map(b => (b.textContent || '').trim());
-      const bodyEl = next && (next.classList.contains('card') || next.classList.contains('grid')) ? next : null;
-      const body = bodyEl ? bodyEl.outerHTML : '';
-      const wrap = document.createElement('div');
-      wrap.className = 'v4card';
-      wrap.dataset.card = 'legacy';
-      wrap.innerHTML = '<div class="card-hd"><span class="card-tt">' + title + '</span>' +
-        badges.map(b => '<span class="badge">' + b + '</span>').join('') + '</div><div class="card-bd">' + body + '</div>';
-      board.appendChild(wrap);
+      bodyEl = next && (next.classList.contains('card') || next.classList.contains('grid')) ? next : null;
       e.remove();
-      if (bodyEl) bodyEl.remove();
-      continue;
+    } else {
+      bodyEl = e;                              // 裸卡片/散件：它自己就是内容
+      title = legacyTitleOf(e);
     }
-    board.appendChild(e);            // 其它散件（提示行等）原样搬进卡片墙
+    const wrap = document.createElement('div');
+    wrap.className = 'v4card';
+    wrap.dataset.card = 'legacy';
+    wrap.innerHTML = '<div class="card-hd"><span class="card-tt">' + title + '</span>' +
+      badges.map(b => '<span class="badge">' + b + '</span>').join('') + '</div>' +
+      '<div class="card-bd">' + (bodyEl ? bodyEl.outerHTML : '') + '</div>';
+    board.appendChild(wrap);
+    if (bodyEl) bodyEl.remove();               // 原件（无论是原节点还是被移出来的那个）都清掉
   }
+}
+
+/** 裸 legacy 节点的标题：能认出来的给专名，认不出就给个中性标题（总比没有强） */
+function legacyTitleOf(e: HTMLElement): string {
+  if (e.classList.contains('v4teaser')) return '📜 委托板';
+  const inner = e.querySelector('.sect-title') as HTMLElement | null;
+  if (inner) return (inner.textContent || '').trim();
+  const h3 = e.querySelector('h3') as HTMLElement | null;
+  if (h3) return (h3.textContent || '').trim();
+  const txt = (e.textContent || '').trim().slice(0, 12);
+  return txt ? '📋 ' + txt : '📋 更多';
 }
 
 export function mountWorldPanel() {
@@ -820,16 +850,21 @@ function runTrip(target: { x: number; y: number }, t: Trip) {
   }
   const stop = rollTravelEncounter(Math.random, {
     steps: t.steps, night: isNight(), danger: curBlock().danger, car: t.mode === 'car',
-    luck: L.skillBonus('stealth', 0.03, 0.25),
+    // M24 潜行：基础 -3%/级（上限 25%），Lv6 起再 -10%（perk「遭遇率再 -10%」）
+    luck: L.skillBonus('stealth', 0.03, perkOn('stealth', 6) ? 0.35 : 0.25) + (perkOn('stealth', 6) ? 0.10 : 0),
   });
   const walk = stop ?? t.steps;
   for (let i = 1; i <= walk; i++) {
     const b = blockAt(w, t.path[i].x, t.path[i].y);
     if (!b) break;
+    const fresh = !s.visited[bkey(b.x, b.y)];      // M24 侦查：走到没去过的地方才涨
     s.cur = { x: b.x, y: b.y };
     markVisited(w, s, b.x, b.y);
     s.steps++;
+    L.addXP('fitness', 1);                        // M24：走路涨体能（以前体能永远 Lv.0）
+    if (fresh) L.addXP('scout', 2);
   }
+  if (stop === null) L.addXP('stealth', 1);       // 一路没撞上东西 = 潜行有用
   const here = curBlock();
   const zid = zoneOfPoi(here.poi);
   S.loc = zid ?? (bkey(here.x, here.y) === homeKey(s) ? 'base' : S.loc);
@@ -1041,38 +1076,45 @@ export const V4World = {
     if (got) L.render();
   },
 
-  /** 汽修厂修车：有材料就能弄出一辆能跑的 */
+  /** 汽修厂修车：有材料就能弄出一辆能跑的（M24：机械技能降材料） */
   fixCar() {
     const S = L.S, s = sw();
     if (s.veh) { L.toast('已经有车了', '车就停在门口。', 'info'); return; }
-    if (S.mat < 12 || L.itemCount('fuel') < 2) { L.toast('材料不够', '修车要 12 材料 + 2 汽油。', 'bad'); return; }
-    S.mat -= 12; L.takeItem('fuel', 2);
+    const mat = repairCost(12), fuelN = 2;
+    if (S.mat < mat || L.itemCount('fuel') < fuelN) { L.toast('材料不够', '修车要 ' + mat + ' 材料 + ' + fuelN + ' 汽油。', 'bad'); return; }
+    S.mat -= mat; L.takeItem('fuel', fuelN);
     s.veh = { fuel: 4, hp: 100 };
-    L.log('🔧 你把升降机上的车弄活了：油箱里还有一点底油，够跑到最近的加油站。', 'success');
+    L.addXP('mechanic', 4);
+    L.log('🔧 你把升降机上的车弄活了：油箱里还有一点底油，够跑到最近的加油站。' +
+      (mat < 12 ? '（机械技能省了 ' + (12 - mat) + ' 材料）' : ''), 'success');
     L.sfx('loot'); L.autosave(); L.render();
   },
 
-  /** 汽修厂修车况：6 材料换 40% 车况 */
+  /** 汽修厂修车况：6 材料换 40% 车况（M24：机械技能降材料） */
   repairCar() {
     const S = L.S, s = sw();
     if (!s.veh) { L.toast('没有车', '先修一辆出来。', 'bad'); return; }
     if (s.veh.hp >= 100) { L.toast('车况良好', '不用修。', 'info'); return; }
-    if (S.mat < 6) { L.toast('材料不够', '修车况要 6 材料。', 'bad'); return; }
-    S.mat -= 6;
+    const cost = repairCost(6);
+    if (S.mat < cost) { L.toast('材料不够', '修车况要 ' + cost + ' 材料。', 'bad'); return; }
+    S.mat -= cost;
     s.veh.hp = Math.min(100, s.veh.hp + 40);
+    L.addXP('mechanic', 3);
     L.log('🔧 你把车架起来敲了一遍，车况回到 ' + s.veh.hp + '%。', 'info');
     L.sfx('loot'); L.autosave(); L.render();
   },
 
-  /** 加油站补油：1 桶汽油 → 3 点油量（上限 12） */
+  /** 加油站补油：1 桶汽油 → 3 点油量（机械 Lv6 起 → 4 点） */
   refuel() {
     const s = sw();
     if (!s.veh) { L.toast('没有车', '先找汽修厂修一辆。', 'bad'); return; }
     if (L.itemCount('fuel') < 1) { L.toast('没有汽油', '在加油站/仓库搜到「汽油」再来。', 'bad'); return; }
     if (s.veh.fuel >= 12) { L.toast('油箱满了', '最多 12 点油量。', 'info'); return; }
+    const add = perkOn('mechanic', 6) ? 4 : 3;
     L.takeItem('fuel', 1);
-    s.veh.fuel = Math.min(12, s.veh.fuel + 3);
-    L.log('⛽ 加满一桶油，油量 ' + s.veh.fuel + '/12。', 'info');
+    s.veh.fuel = Math.min(12, s.veh.fuel + add);
+    L.addXP('mechanic', 2);
+    L.log('⛽ 加满一桶油（+' + add + '），油量 ' + s.veh.fuel + '/12。', 'info');
     L.sfx('loot'); L.autosave(); L.render();
   },
 

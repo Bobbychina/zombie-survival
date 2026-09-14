@@ -116,7 +116,15 @@ export function markVisited(w: WorldState, sw: SaveWorld, x: number, y: number):
   if (!b) return [];
   sw.visited[bkey(x, y)] = 1;
   b.visited = true;
-  return revealAround(w, x, y, 1);
+  return revealAround(w, x, y, scoutRadius());
+}
+
+/** M24 侦查技能：Lv3 视野 +1 圈、Lv6 再 +1 圈（默认 1 圈 = 3×3）。
+    这是"技能有没有用"里最直观的一条：技能面板写着「视野 2 圈」，地图上真的多亮一圈。 */
+export function scoutRadius(): number {
+  if (typeof window === 'undefined') return 1;              // 纯逻辑测试环境没有 window
+  const lv = Number((window as any).S?.skills?.scout ?? 0);
+  return 1 + (lv >= 3 ? 1 : 0) + (lv >= 6 ? 1 : 0);
 }
 
 export function defaultSaveWorld(seed: string): SaveWorld {

@@ -63,14 +63,28 @@ export function forage(): boolean {
   }
   if (!L.spendAP(FORAGE_AP)) return false;
   useForage(s, b);
-  for (const it of used.items) L.grant(it.id, it.n);
-  L.log(`🧺 采集：${used.items.map(i => L.itemName(i.id) + '×' + i.n).join('、')}（这里还能采 ${Math.max(0, info.left - 1)} 次）。`, 'loot');
+  /* M24 采集技能：产量 +8%/级；Lv3 perk 每次再多 1 份 */
+  const bonus = Math.min(0.6, Number((L.S as any).skills?.gather ?? 0) * 0.08);
+  const extra = scoutExtra(used.items.length);
+  for (const it of used.items) {
+    const n = Math.max(1, Math.round(it.n * (1 + bonus))) + (extra ? 1 : 0);
+    L.grant(it.id, n);
+    it.n = n;
+  }
+  L.addXP('gather', 1);
+  L.log(`🧺 采集：${used.items.map(i => L.itemName(i.id) + '×' + i.n).join('、')}（这里还能采 ${Math.max(0, info.left - 1)} 次）。` +
+    (extra ? '　🪓 采集技能 +1' : ''), 'loot');
   tempTick(1);
   L.sfx('loot'); L.autosave(); L.render();
   return true;
 }
 
 const seasonIcon = () => ({ spring: '🌱', summer: '☀️', autumn: '🍂', winter: '❄️' } as Record<string, string>)[seasonNow()] ?? '';
+
+/** M24 采集 Lv3 perk：每类产出再多 1 份（伐木/采集/拆解共用） */
+function scoutExtra(_n: number): number {
+  return Number((L.S as any).skills?.gather ?? 0) >= 3 ? 1 : 0;
+}
 
 /* ── M8 · 伐木 ── */
 const chopRec = (s: SaveWorld, b: Block) => {
@@ -107,9 +121,13 @@ export function chop(): boolean {
   if (!L.spendAP(CHOP_AP)) return false;
   s.chop = s.chop && typeof s.chop === 'object' ? s.chop : {};
   s.chop[bkey(b.x, b.y)] = { left: res.left, day: S.day };
-  const parts = ['木料×' + res.wood];
-  L.grant('wood', res.wood);
+  /* M24 采集技能：伐木也吃加成（+8%/级，Lv3 起每斧再多 1 根） */
+  const bonus = Math.min(0.6, Number((L.S as any).skills?.gather ?? 0) * 0.08);
+  const wood = Math.max(1, Math.round(res.wood * (1 + bonus))) + scoutExtra(1);
+  const parts = ['木料×' + wood];
+  L.grant('wood', wood);
   for (const it of res.extra) { L.grant(it.id, it.n); parts.push(L.itemName(it.id) + '×' + it.n); }
+  L.addXP('gather', 1);
   L.log(`🪵 伐木：${parts.join('、')}（${toolLabel(info.tool)}，这里今天还能砍 ${res.left} 次）`, 'loot');
   tempTick(1.5);        // 抡斧头是重体力活：比采集更掉体温
   L.sfx('loot'); L.autosave(); L.render();
@@ -146,11 +164,16 @@ export function salvage(): boolean {
   s.salvage = s.salvage && typeof s.salvage === 'object' ? s.salvage : {};
   s.salvage[k] = { left: Math.max(0, info.left - 1) };
   const got = salvageYields(Math.random, b.biome, b.danger);
+  /* M24 采集技能：拆解同样吃加成 */
+  const bonus = Math.min(0.6, Number((L.S as any).skills?.gather ?? 0) * 0.08);
+  const extra = scoutExtra(1);
   const parts: string[] = [];
   for (const it of got.items) {
-    if (it.id === 'MAT') { S.mat += it.n; parts.push('材料×' + it.n); }
-    else { L.grant(it.id, it.n); parts.push(L.itemName(it.id) + '×' + it.n); }
+    const n = Math.max(1, Math.round(it.n * (1 + bonus))) + extra;
+    if (it.id === 'MAT') { S.mat += n; parts.push('材料×' + n); }
+    else { L.grant(it.id, n); parts.push(L.itemName(it.id) + '×' + n); }
   }
+  L.addXP('gather', 1);
   // 噪音：拆东西很吵
   S.noise += 1;
   L.log(`🔧 拆解：${parts.join('、')}（这里还能拆 ${Math.max(0, info.left - 1)} 次）`, 'loot');

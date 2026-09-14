@@ -35,7 +35,10 @@
 }
 @media (min-width:1024px){
   #view.v4-board{display:grid;gap:12px;align-items:start;grid-template-columns:minmax(0,1fr)}
-  #v4cards{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));align-items:start}
+  /* M24：卡片墙改成**多列流**（masonry 效果），不再用行对齐网格。
+     用户报障「为什么卡片中间有空白」：网格里同一行的高度由最高那张卡决定，
+     矮卡下面就会空出一大块（实测：水体 232px 旁边的菜园只有 65px → 空 167px）。 */
+  #v4cards{columns:340px;column-gap:12px}
 }
 /* 很宽（≥1700px）才把地图钉在左边当锚点：窄一点的屏幕上 24×24 地图要 620px+，
    跟卡片墙抢宽度不如让地图独占一行、卡片在下面铺成 3~4 列。 */
@@ -46,8 +49,9 @@
   #v4world{grid-area:map;position:sticky;top:8px}
   #v4cards{grid-area:cards}
 }
-/* 卡片墙本身（窄屏也要能读：单列 + 卡片样式一致） */
-#v4cards{display:grid;gap:12px;align-items:start;min-width:0}
+/* 卡片墙本身：多列流 + 卡片不许被拆到两列去 */
+#v4cards{columns:340px;column-gap:12px;min-width:0}
+#v4cards>.v4card{break-inside:avoid;-webkit-column-break-inside:avoid;page-break-inside:avoid;margin:0 0 12px;display:block}
 .v4card{border:1px solid var(--line);border-radius:8px;background:#0d1015;padding:10px 12px;min-width:0}
 .v4card>.card-hd{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:6px}
 .v4card>.card-hd .card-tt{font-size:13.5px;font-weight:600;color:var(--bone)}

@@ -152,14 +152,46 @@ const RECIPES = [
 ];
 
 // 技能：每级效果由对应系统读取
+/* M24：技能从 6 条扩到 12 条，并且**每条都有升级来源 + 分级解锁**。
+   用户反馈原话："技能目前我玩到的地方完全没用途，技能也太少了" —— 之前只有 4 条技能有加经验的地方
+   （体能/潜行永远是 Lv.0），而且面板上只写了一句"伤害 +6%/级"，玩家根本看不到自己现在强在哪。
+   现在每条技能都有 src（怎么涨）、desc（当前值随等级变）、perks（到级解锁的硬效果）。 */
 const SKILLS = {
-  shoot:   {n:'射击', icon:'🎯', desc:'枪械伤害 +6%/级，暴击率提升。'},
-  melee:   {n:'近战', icon:'🔪', desc:'近战伤害 +7%/级，体力消耗 -3%/级。'},
-  survival:{n:'生存', icon:'🔥', desc:'搜刮收益 +8%/级，食物与水消耗 -3%/级。'},
-  medic:   {n:'医疗', icon:'💉', desc:'治疗效果 +8%/级，感染增长 -5%/级。'},
-  fitness: {n:'体能', icon:'💪', desc:'负重上限 +6/级，体力上限 +5/级。'},
-  stealth: {n:'潜行', icon:'🌑', desc:'遭遇率 -4%/级，逃跑成功率提升。'},
+  shoot:   {n:'射击', icon:'🎯', desc:'枪械伤害 +6%/级', src:'开枪命中/击杀', perks:[[5,'暴击伤害 +30%']]},
+  melee:   {n:'近战', icon:'🔪', desc:'近战伤害 +7%/级', src:'近战命中/击杀', perks:[[5,'击杀回 5 点体力']]},
+  fitness: {n:'体能', icon:'💪', desc:'负重 +6/级 · 体力上限 +5/级', src:'每走一格 +1 · 睡醒 +2', perks:[[3,'睡醒多还 1 档睡眠债']]},
+  survival:{n:'生存', icon:'🔥', desc:'搜刮收益 +8%/级 · 食水消耗 -3%/级', src:'搜刮/拆解/制作', perks:[[3,'野外过夜被夜袭的概率 -25%']]},
+  medic:   {n:'医疗', icon:'💉', desc:'治疗效果 +8%/级 · 感染增长 -5%/级', src:'治疗/包扎/吃药', perks:[[3,'每夜自动回 3 点生命']]},
+  stealth: {n:'潜行', icon:'🌑', desc:'遭遇率 -4%/级', src:'旅行没撞上东西 +1 · 逃跑成功 +4', perks:[[6,'遭遇率再 -10%']]},
+  scout:   {n:'侦查', icon:'🧭', desc:'看得更远：Lv3 视野 +1 圈，Lv6 再 +1 圈', src:'走到没去过的区块 +2', perks:[[3,'视野 +1 圈'], [6,'视野再 +1 圈']]},
+  gather:  {n:'采集', icon:'🧺', desc:'采集/伐木/拆解产量 +8%/级', src:'采集/伐木/拆解 +1', perks:[[3,'每次采集额外 +1 份']]},
+  cook:    {n:'厨艺', icon:'🍲', desc:'煮沸与烹饪产出 +1/2 级', src:'煮水/做饭 +3', perks:[[3,'煮沸/烹饪额外 +1']]},
+  craft:   {n:'制作', icon:'🔨', desc:'制作有 10%/级 概率返还材料', src:'制作/改装 +4', perks:[[3,'返还概率翻倍（20%/级）']]},
+  mechanic:{n:'机械', icon:'⚙️', desc:'修车材料 -8%/级', src:'修车/加油 +4', perks:[[3,'修车材料再 -30%'], [6,'一桶汽油 +4 油']]},
+  trade:   {n:'交易', icon:'🤝', desc:'商人价格 -4%/级', src:'和商人买卖 +3', perks:[[3,'价格再 -10%']]},
 };
+/** 某条技能现在生效的硬效果（面板直接显示，别让玩家自己算） */
+function skillNow(k){
+  const lv = S.skills[k] || 0;
+  const pct = (per, cap) => Math.round(Math.min(cap === undefined ? .6 : cap, lv * per) * 100);
+  switch(k){
+    case 'shoot':   return '枪械伤害 +' + pct(.06) + '% · 暴击率 +' + Math.round(Math.min(.15, lv * .015) * 100) + '%';
+    case 'melee':   return '近战伤害 +' + pct(.07) + '% · 体力消耗 -' + Math.min(30, lv * 3) + '%';
+    case 'fitness': return '负重 +' + (lv * 6) + ' · 体力上限 +' + (lv * 5);
+    case 'survival':return '搜刮收益 +' + pct(.08) + '% · 食水消耗 -' + Math.min(45, lv * 3) + '%';
+    case 'medic':   return '治疗效果 +' + pct(.08) + '% · 感染增长 -' + Math.min(50, lv * 5) + '%';
+    case 'stealth': return '遭遇率 -' + Math.min(35, lv * 4 + (lv >= 6 ? 10 : 0)) + '%';
+    case 'scout':   return '视野 ' + (1 + (lv >= 3 ? 1 : 0) + (lv >= 6 ? 1 : 0)) + ' 圈';
+    case 'gather':  return '采集/伐木/拆解产量 +' + pct(.08) + '%' + (lv >= 3 ? ' · 额外 +1 份' : '');
+    case 'cook':    return '煮沸/烹饪产出 +' + Math.floor(lv / 2) + (lv >= 3 ? '（含 +1）' : '');
+    case 'craft':   return '制作返还材料 ' + (lv * (lv >= 3 ? 20 : 10)) + '%';
+    case 'mechanic':return '修车材料 -' + Math.min(50, lv * 8 + (lv >= 3 ? 30 : 0)) + '%' + (lv >= 6 ? ' · 一桶汽油 +4 油' : '');
+    case 'trade':   return '商人价格 -' + Math.min(45, lv * 4 + (lv >= 3 ? 10 : 0)) + '%';
+  }
+  return '';
+}
+/** 技能 perk 是否已解锁（到级即生效，不需要点数） */
+function hasPerk(k, lv){ return (S.skills[k] || 0) >= lv; }
 
 // 同伴
 const COMPANIONS = {
@@ -312,8 +344,8 @@ function newState(){
     store:{},
     eq:{ wpn:'crowbar', head:null, body:null, mask:null, feet:null, bag:null, trinket:null },
     base:{ door:0,bed:0,filter:0,garden:0,bench:0,storage:0,radio:0,wall:0 },
-    skills:{ shoot:0,melee:0,survival:0,medic:0,fitness:0,stealth:0 },
-    xp:{ shoot:0,melee:0,survival:0,medic:0,fitness:0,stealth:0 },
+    skills:{ shoot:0,melee:0,survival:0,medic:0,fitness:0,stealth:0,scout:0,gather:0,cook:0,craft:0,mechanic:0,trade:0 },
+    xp:{ shoot:0,melee:0,survival:0,medic:0,fitness:0,stealth:0,scout:0,gather:0,cook:0,craft:0,mechanic:0,trade:0 },
     quest:{ stage:0, keycards:0, data:0 },
     lore:[], comp:null, compHp:0, compMax:0,
     ach:[], stats:{ kills:0, meleeKills:0, scav:0, crafted:0, hordes:0, nights:0, dmgDealt:0, dmgTaken:0, multiKill:0,
@@ -897,7 +929,10 @@ function award(id){
   toast('🏆 成就解锁 · ' + a.n, a.d, 'ok');
 }
 function addXP(sk, amt){
-  if(!S.skills[sk]) return;
+  /* 修（M24，用户报"技能完全没用途"的根因）：原来写的是 `if(!S.skills[sk]) return;`——
+     而技能初始等级就是 0，`!0 === true`，于是**任何技能都拿不到第一点经验，永远停在 Lv.0**。
+     正确写法是"这条技能不存在才返回"（未定义才拦，0 级是合法的起点）。 */
+  if(S.skills[sk] === undefined || S.xp[sk] === undefined) return;
   const lv = S.skills[sk];
   if(lv >= 10) return;
   S.xp[sk] += amt;
@@ -1614,6 +1649,10 @@ function killFoe(foe){
   }
   // 经验
   if(w && w.ammo) addXP('shoot', foe.xp || 4); else addXP('melee', foe.xp || 4);
+  /* M24：近战 Lv5 perk —— 击杀回体力（近战本来就吃体力，这是"越打越顺"的手感） */
+  if(!w || !w.ammo){
+    if(hasPerk('melee', 5)){ S.sta = Math.min(S.staMax, S.sta + 5); }
+  }
   // 掉落
   let got = [];
   if(t.loot) for(const id in t.loot){ if(chance(t.loot[id] * (1 + skillBonus('survival', .08, .5)))){ grant(id, 1, true); got.push(itemName(id)); } }
@@ -2279,10 +2318,23 @@ function craft(i){
   if(!Object.keys(r.need).every(k => (S.inv[k] || 0) >= r.need[k])){ log('❌ 材料不足。','dim'); return; }
   if(!spendAP(1)) return;
   Object.keys(r.need).forEach(k => takeItem(k, r.need[k]));
-  grant(r.out, r.n);
-  S.stats.crafted++; addXP('survival', 3);
+  /* M24 技能：厨艺（煮水/做饭多出 1 份）、制作（按等级概率返还材料） */
+  const isCook = r.out === 'water' || (ITEMS[r.out] && ITEMS[r.out].t === 'food');
+  let outN = r.n + (isCook && hasPerk('cook', 3) ? 1 : 0);
+  if(isCook && S.skills.cook >= 2 && !hasPerk('cook', 3)) outN += Math.floor(S.skills.cook / 2);
+  grant(r.out, outN);
+  const refundP = (S.skills.craft || 0) * (hasPerk('craft', 3) ? .20 : .10);
+  let refunded = '';
+  if(refundP > 0){
+    for(const k in r.need){ if(S.inv[k] !== undefined && Math.random() < refundP){ grant(k, 1); refunded = itemName(k); break; } }
+  }
+  S.stats.crafted++;
+  addXP('craft', 4);                       // M24：制作自己一条技能线
+  if(isCook) addXP('cook', 3);             // 煮水/做饭涨厨艺
   sfx('ok');
-  log('🛠️ 制作完成：' + (ITEMS[r.out] ? ITEMS[r.out].n : '弹药') + ' ×' + r.n, 'success');
+  log('🛠️ 制作完成：' + (ITEMS[r.out] ? ITEMS[r.out].n : '弹药') + ' ×' + outN +
+    (isCook && outN > r.n ? '（厨艺 +' + (outN - r.n) + '）' : '') +
+    (refunded ? '　♻️ 制作技能返还了 ' + refunded : ''), 'success');
   bountyTick(); sideTick();
   checkAch(); render(); autosave();
 }
@@ -2358,14 +2410,24 @@ function build(k){
 
 /* ───────────── 技能 ───────────── */
 function renderSkills(){
-  let h = '<div class="sect-title">生存技能 <span class="badge">行为升级，不用点数</span></div><div class="grid g2">';
+  let h = '<div class="sect-title">生存技能 <span class="badge">行为升级，不用点数</span>' +
+    '<span class="badge">' + Object.keys(SKILLS).filter(k => S.skills[k] >= 10).length + ' / ' + Object.keys(SKILLS).length + ' 满级</span></div>' +
+    '<div class="hint">用着就涨：搜刮涨生存、开枪涨射击、走路涨体能、进新地方涨侦查……到级自动解锁硬效果（下面列着）。</div>' +
+    '<div class="grid g2" style="margin-top:8px">';
   for(const k in SKILLS){
     const s = SKILLS[k], lv = S.skills[k], need = 20 + lv * 26;
     const pct = lv >= 10 ? 100 : clamp(S.xp[k] / need * 100, 0, 100);
+    const perks = (s.perks || []).map(p => {
+      const ok = lv >= p[0];
+      return '<div class="hint" style="color:' + (ok ? '#7fd6a5' : '#767b85') + '">' +
+        (ok ? '✅ ' : '🔒 ') + 'Lv.' + p[0] + ' · ' + p[1] + '</div>';
+    }).join('');
     h += '<div class="card"><h3>' + s.icon + ' ' + s.n + ' <span class="sub">Lv.' + lv + ' / 10</span></h3>' +
-      '<div class="hint" style="min-height:32px">' + s.desc + '</div>' +
+      '<div class="hint" style="min-height:16px">' + s.desc + '</div>' +
+      '<div class="hint" style="margin-top:2px;color:#cfd2d6">现在：<b>' + skillNow(k) + '</b></div>' +
       '<div class="bar" style="margin-top:8px"><i class="sta" style="width:' + pct + '%"></i></div>' +
-      '<div class="hint" style="margin-top:4px">' + (lv >= 10 ? '已满级' : '经验 ' + S.xp[k] + ' / ' + need) + '</div></div>';
+      '<div class="hint" style="margin-top:4px">' + (lv >= 10 ? '已满级' : '经验 ' + S.xp[k] + ' / ' + need + '　·　' + s.src) + '</div>' +
+      perks + '</div>';
   }
   h += '</div>';
   return h;
@@ -2955,7 +3017,12 @@ function checkAch(){
 }
 
 /* ───────────── 商人 ───────────── */
-function merchantRate(){ return 1 + S.day * .02; }   // C09 浮动汇率：活得越久物价越高，堵住后期材料单调爆炸
+function merchantRate(){
+  /* C09 浮动汇率：活得越久物价越高，堵住后期材料单调爆炸。
+     M24：交易技能把它压下来（Lv3 起再 -10%） */
+  const trade = Math.min(.45, (S.skills.trade || 0) * .04 + (hasPerk('trade', 3) ? .10 : 0));
+  return (1 + S.day * .02) * (1 - trade);
+}
 function openMerchant(){
   if(S.over) return;
   const rate = merchantRate();

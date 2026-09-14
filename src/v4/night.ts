@@ -80,10 +80,12 @@ function chewBase(day: number, s: SaveWorld, why: string) {
   return { dmg, wdmg, matLoss, itemLoss };
 }
 
-/** 野睡夜袭：三档递进（打断睡眠 → 丢物资 → 守夜战），只有安全屋不掷 */
+/** 野睡夜袭：三档递进（打断睡眠 → 丢物资 → 守夜战），只有安全屋不掷。
+    M24 生存 Lv3 perk：夜袭概率 ×0.75 */
 function rollFieldRaid(kind: RestKind, block: Block | null, s: SaveWorld): { outcome: string; text: string; foes: string[] } {
   const S = L.S;
-  const p = raidChance(kind, S.day, S.noise);
+  const perk = Number((S as any).skills?.survival ?? 0) >= 3 ? 0.75 : 1;
+  const p = raidChance(kind, S.day, S.noise) * perk;
   if (Math.random() >= p) return { outcome: 'quiet', text: '', foes: [] };
   const roll = Math.random();
   if (roll < 0.45) return { outcome: 'wake', text: '👣 半夜有东西从外面走过去，你一夜没敢合眼。', foes: [] };
@@ -125,7 +127,8 @@ export function rest(kind?: RestKind): void {
   // M6：先走环境（掷天气、接雨水、体温过夜、菜园生长），体温低于阈值会再扣一档 AP 上限
   try { envDayTick(); farmGrow(); pondTick(); } catch (e) { console.warn('[v4] 环境结算失败', e); }
   const tPen = tempPenalty(envOf().temp);
-  const debt = nextDebt(s.debt, atBase);
+  /* M24 体能 Lv3 perk：睡醒多还 1 档睡眠债（把"到处跑"和"睡得好"连起来） */
+  const debt = Math.max(0, nextDebt(s.debt, atBase) - (atBase && Number((S as any).skills?.fitness ?? 0) >= 3 ? 1 : 0));
   const cap = Math.max(1, apMaxOf(debt) + tPen.ap);
   let raid: { outcome: string; text: string; foes: string[] } = { outcome: 'none', text: '', foes: [] };
   if (!atBase) raid = rollFieldRaid(use, block, s);
@@ -141,6 +144,12 @@ export function rest(kind?: RestKind): void {
     if (raid.text) { L.log(raid.text, raid.outcome === 'fight' ? 'danger' : 'dim'); if (raid.outcome === 'loot') { const lost = Math.min(S.mat, L.ri(3, 9)); S.mat -= lost; L.log('　 材料少了 ' + lost + '。', 'dim'); } }
   } else {
     L.log('🏠 睡在自己的床上：AP 满格 ' + cap + '，睡眠债还到 ' + debt + ' 档。', 'success');
+  }
+  /* M24 医疗 Lv3 perk：每夜自动回 3 点生命（"会包扎的人睡一觉也在回血"） */
+  if (Number((S as any).skills?.medic ?? 0) >= 3 && S.hp > 0 && S.hp < S.hpMax) {
+    const heal = Math.min(3, S.hpMax - S.hp);
+    S.hp += heal;
+    L.log('💉 医疗技能让你在睡梦里也在恢复：+ ' + heal + ' 生命。', 'dim');
   }
 
   // 血月/尸群不在家 → 据点被啃（C03）。夜里那场"守夜战"如果被 legacy 开出来，

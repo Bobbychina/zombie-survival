@@ -51,6 +51,8 @@ export function playerProfile(): PlayerProfile {
     weaponId: wid, weaponName: w.n, weaponDmg: e.d, isGun,
     apen: !!w.apen, spread: isGun && L.ITEMS[wid].n === '霰弹枪',
     critBonus: Math.max(0, e.crit - (w.crit ?? 0)),
+    /* M24 射击 Lv5 perk：暴击伤害 +30%（1.8 → 2.1）。纯逻辑的 combat.ts 不读全局存档，这里注入 */
+    critMult: 1.8 + ((S.skills?.shoot ?? 0) >= 5 ? 0.3 : 0),
     dmgMult: mods.dmgMul,
     dodge: Math.max(0, Math.min(0.5, (S.eq.feet && L.ITEMS[S.eq.feet]?.dodge ? L.ITEMS[S.eq.feet].dodge : 0) + L.skillBonus('stealth', 0.015, 0.2))),
     armor: L.armorTotal(),

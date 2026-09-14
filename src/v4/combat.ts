@@ -11,6 +11,8 @@ export interface PlayerProfile {
   weaponId: string; weaponName: string; weaponDmg: number; isGun: boolean;
   apen?: boolean; spread?: boolean;
   critBonus: number;        // 来自技能/改装
+  /** M24：暴击伤害倍率（默认 1.8；射击 Lv5 perk 给 2.1）——纯逻辑层不读全局存档，由 bridge 注入 */
+  critMult?: number;
   dmgMult: number;          // 来自状态与技能
   dodge: number;            // 0..0.5
   armor: number;            // 平摊减伤
@@ -180,7 +182,8 @@ export function playerAct(b: Battle, p: PlayerProfile, moveId: string, targetIdx
     let dmg = m.power * (0.6 + 0.4 * (p.dmgMult || 1));
     dmg *= mult;
     const crit = b.player.critUp > 0 || rnd() < (m.crit + p.critBonus);
-    if (crit) { dmg *= 1.8; anyCrit = true; }
+    /* 暴击倍率由上层注入（射击 Lv5 perk 会给到 2.1；纯逻辑层不读全局存档） */
+    if (crit) { dmg *= p.critMult ?? 1.8; anyCrit = true; }
     if (b.player.weak) dmg *= 0.75;
     dmg *= 0.92 + rnd() * 0.16;
     dmg = Math.max(1, Math.round(dmg - foe.def * 0.8));
