@@ -736,27 +736,59 @@ function deepMerge(base, over){
   }
   return base;
 }
+/** M28：导出 = **加密信封**（ZSE1:…）。
+    为什么加密 / 为什么不去对抗 F12 —— 见 src/v4/save-crypto.ts 的文件头（一句话版：
+    纯前端游戏的解密代码一定在客户端，加密是为了"不明文外泄 + 提高手改门槛"，
+    真正拦改档的是 M8.1 的存档指纹，而不是禁用开发者工具）。 */
 function exportSave(){
-  const code = btoa(unescape(encodeURIComponent(JSON.stringify(S))));
-  modal({ title:'导出存档', body:'<p class="muted">复制下面这段文本即可备份到别处（改游戏目录也不会丢）。</p>'+
-    '<textarea id="exp-box" style="width:100%;height:120px;margin-top:10px;background:#0d0f13;color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:8px;font-family:var(--mono);font-size:11px;">'+code+'</textarea>',
-    footer:'<button class="btn" data-close>关闭</button>' });
+  const box = $('#exp-box');
+  const plain = JSON.stringify(S);
+  if(box) box.value = '正在加密…';
+  const run = (typeof window.__v4PackSave === 'function') ? window.__v4PackSave(plain) : null;
+  if(!run || typeof run.then !== 'function'){
+    modal({ title:'导出存档', body:'<p class="danger">这个构建缺少加密模块（save-crypto 没加载），为安全起见不导出明文。</p>',
+      footer:'<button class="btn" data-close>关闭</button>' });
+    return;
+  }
+  modal({ title:'导出存档', body:'<p class="muted">这一段就是你的存档（<b>已加密</b>）：复制走即可备份到别处，改游戏目录也不会丢。</p>'+
+    '<textarea id="exp-box" readonly style="width:100%;height:130px;margin-top:10px;background:#0d0f13;color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:8px;font-family:var(--mono);font-size:11px;">正在加密…</textarea>'+
+    '<div class="hint" style="margin-top:8px">粘贴回「导入」就能恢复。<b>老实说</b>：这是单机游戏、解密代码就在页面里，'+
+    '加密挡的是"明文被人一眼看懂 / 手一抖改坏"，挡不住铁了心要改档的人；改过的档在云同步与导入时会被<b>指纹校验</b>标出来。</div>',
+    footer:'<button class="btn ok" id="exp-copy">📋 复制</button><button class="btn" data-close>关闭</button>',
+    onMount(){ $('#exp-copy').onclick = () => {
+      try{ const b = $('#exp-box'); b.select(); document.execCommand('copy'); toast('已复制','存档文本已在剪贴板里。','ok'); }
+      catch(e){ toast('复制失败','手动全选文本框内容复制即可。','bad'); }
+    }; } });
+  run.then((code) => { const b = $('#exp-box'); if(b) b.value = code; })
+    .catch((e) => { const b = $('#exp-box'); if(b) b.value = ''; toast('加密失败', (e && e.message) ? e.message : '未知错误', 'bad'); });
 }
 function importSave(){
-  modal({ title:'导入存档', body:'<p class="muted">粘贴导出的存档文本，导入会覆盖当前进度。</p>'+
-    '<textarea id="imp-box" style="width:100%;height:120px;margin-top:10px;background:#0d0f13;color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:8px;font-family:var(--mono);font-size:11px;"></textarea>',
+  modal({ title:'导入存档', body:'<p class="muted">粘贴导出的存档文本，导入会覆盖当前进度（新旧格式都认）。</p>'+
+    '<textarea id="imp-box" style="width:100%;height:130px;margin-top:10px;background:#0d0f13;color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:8px;font-family:var(--mono);font-size:11px;"></textarea>',
     footer:'<button class="btn danger" id="imp-go">导入并覆盖</button><button class="btn" data-close>取消</button>',
     onMount(){ $('#imp-go').onclick = () => {
-      try{
-        let d = JSON.parse(decodeURIComponent(escape(atob($('#imp-box').value.trim()))));
-        if(d && d.s && d.v) d = d.s;              // 兼容带信封的导出格式
-        const mig = migrateSave(d || {});
-        if(mig.error){ toast('导入被拒绝', mig.error, 'bad'); return; }
-        const clean = sanitizeSave(mig.data);
-        if(!clean){ toast('导入失败','存档文本不完整或已损坏。','bad'); return; }
-        S = clean; battle = null; window.__renderErr = null; closeModal(); render();
-        log('📂 导入成功，第 '+S.day+' 天。','info'); autosave();
-      }catch(e){ toast('导入失败','存档文本不完整或已损坏。','bad'); }
+      const txt = $('#imp-box').value.trim();
+      const finish = (jsonText) => {
+        try{
+          let d = JSON.parse(jsonText);
+          if(d && d.s && d.v) d = d.s;              // 兼容带信封的导出格式
+          const mig = migrateSave(d || {});
+          if(mig.error){ toast('导入被拒绝', mig.error, 'bad'); return; }
+          const clean = sanitizeSave(mig.data);
+          if(!clean){ toast('导入失败','存档文本不完整或已损坏。','bad'); return; }
+          S = clean; battle = null; window.__renderErr = null; closeModal(); render();
+          log('📂 导入成功，第 '+S.day+' 天。','info'); autosave();
+        }catch(e){ toast('导入失败','存档文本不完整或已损坏。','bad'); }
+      };
+      /* ① 新格式：ZSE1: 加密信封 ② 老格式：base64(JSON) —— 老导出继续能导入，别让老玩家的备份作废 */
+      if(txt.indexOf('ZSE1:') === 0 && typeof window.__v4UnpackSave === 'function'){
+        Promise.resolve(window.__v4UnpackSave(txt))
+          .then(finish)
+          .catch((e) => toast('导入失败', (e && e.message) ? e.message : '解密失败（文本被改过或复制不完整）', 'bad'));
+        return;
+      }
+      try{ finish(decodeURIComponent(escape(atob(txt)))); }
+      catch(e){ toast('导入失败','存档文本不完整或已损坏。','bad'); }
     }; } });
 }
 

@@ -27,7 +27,7 @@ export const V4: Record<string, unknown> = {};
 (window as any).V4 = V4;
 
 async function main() {
-  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi, integrity, betaNotice, regionEventsCore, regionEvents, regionsCore, worldsUi, tutorial] = await Promise.all([
+  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi, integrity, betaNotice, regionEventsCore, regionEvents, regionsCore, worldsUi, tutorial, saveCrypto] = await Promise.all([
     import('./v4/worldgen'),
     import('./v4/pois'),
     import('./v4/combat'),
@@ -50,6 +50,7 @@ async function main() {
     import('./v4/regions-core'),
     import('./v4/worlds-ui'),
     import('./v4/tutorial'),
+    import('./v4/save-crypto'),
   ]);
   // BETA 声明条：整站/整游戏最上面那一条（本站所有子页面都要有）
   betaNotice.installBetaNotice();
@@ -188,6 +189,9 @@ async function main() {
   /* M27：新手教程 —— 第一次进游戏自动弹（看完了不再自动弹），菜单里也能重看 */
   (window as any).V4Tutorial = tutorial.V4Tutorial;
   (window as any).__v4TutorialBattleTip = tutorial.maybeBattleTip;
+  /* M28：导出存档加密（legacy 的 exportSave/importSave 是同步流程，这里只把两个函数挂出去） */
+  (window as any).__v4PackSave = saveCrypto.packSave;
+  (window as any).__v4UnpackSave = saveCrypto.unpackSave;
   (window as any).V4Camp = camp.V4Camp;
   // M6：季节/天气/体温的最小 HUD（挂在顶栏 chips 里，不动地图面板结构）
   const paintEnv = () => {

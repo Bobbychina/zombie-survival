@@ -18,6 +18,7 @@
  */
 import seedrandom from 'seedrandom';
 import { createNoise2D } from 'simplex-noise';
+import { buildDangerGrid, hash32, makePerlin, dangerStats } from './region-danger';   // M28：柏林噪声难度场
 
 export type RegionType = 'core' | 'residential' | 'suburb' | 'industry' | 'military' | 'farm' | 'forest' | 'water' | 'ruins';
 
@@ -186,6 +187,20 @@ export function buildRegions(seed: string): RegionDef[] {
   /* 危险度要铺满 1..5 整档，所以按"到主城的最远距离"归一化——
      12×12 里主城在中心时最远只有 6 格，用固定除数会让全图最高只有危险 4（评审 #2 说的"角落也很安全"）。 */
   const maxDist = Math.max(homeCol, REGION_COLS - 1 - homeCol, homeRow, REGION_ROWS - 1 - homeRow);
+  /* M28：危险度改成**柏林噪声驱动的难度场**（用户：「现在太有规律了」）。
+     旧版是纯同心圆，一眼看穿；现在 = 径向梯度 + 低频噪声（这一带凶不凶）+ 高频噪声（打散规整的圈）
+     + 一个"深渊孤岛"地标。硬约束由 region-danger.ts 里的邻居钳制保证：
+     新手村恒为 1、相邻最多差 1、越往外整体越危险（三个不变量都有单测钉着）。 */
+  const dLow = makePerlin(hash32(seed + ':danger-low'));
+  const dFine = makePerlin(hash32(seed + ':danger-fine'));
+  /* 深渊孤岛：随机落在离主城 2~5 格的一个方向（不能贴脸，也别孤零零跑到最外圈） */
+  const pitAng = rng() * Math.PI * 2, pitRad = 2 + Math.floor(rng() * 4);
+  const pit = {
+    c: Math.max(0, Math.min(REGION_COLS - 1, homeCol + Math.round(Math.cos(pitAng) * pitRad))),
+    r: Math.max(0, Math.min(REGION_ROWS - 1, homeRow + Math.round(Math.sin(pitAng) * pitRad))),
+  };
+  const dangerGrid = buildDangerGrid(
+    { homeCol, homeRow, maxDist, low: dLow, fine: dFine, pit }, REGION_COLS, REGION_ROWS);
 
   const at = (c: number, r: number) => (c >= 0 && c < REGION_COLS && r >= 0 && r < REGION_ROWS ? r * REGION_COLS + c : -1);
   const coord = (i: number) => ({ c: i % REGION_COLS, r: Math.floor(i / REGION_COLS) });
@@ -390,11 +405,9 @@ export function buildRegions(seed: string): RegionDef[] {
       const t = type[i] ?? 'ruins';
       const info = TYPE_INFO[t];
       const dir = dirWord(dx, dy);
-      /* 危险度：**严格按离主城的距离辐射递增**——主城与紧邻的一圈都是安全区（新手村），
-         之后按圈数均匀铺满 1~5。M17.2 起**没有任何地形加成**：上一版给军管区 +1，
-         结果它旁边一格能出现"4 挨着 2"的断崖（评审 #3 抓到的"平民砍柴一扭头就是哨塔"）。
-         军管的可怕改为由区域内部的生成主题承担（军事 POI 更多、格子更危险）。 */
-      const tier = isHome || dist <= 1 ? 1 : Math.max(1, Math.min(5, 1 + Math.round((dist / maxDist) * 4)));
+      /* M28：危险度来自噪声难度场（见上面 dangerGrid 的构造）。
+         硬约束仍然是：主城与紧邻一圈 = 安全区（新手村）、相邻最多差 1、越往外整体越危险。 */
+      const tier = isHome || dist <= 1 ? 1 : dangerGrid[r][c];
       const key = dir + SUFFIX[t][Math.floor(rng() * SUFFIX[t].length)];
       used[key] = (used[key] ?? 0) + 1;
       const name = isHome ? '余烬市区' : key + (used[key] > 1 ? ' ' + used[key] + ' 号' : '');

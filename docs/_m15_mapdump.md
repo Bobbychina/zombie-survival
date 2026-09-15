@@ -58,7 +58,7 @@
  23 ffffffffff~~MMFFffffffff
 统计 farmland:193 ruins:115 water:99 forest:73 suburb:29 industry:27 military:17 cbd:12 residential:9 open:2 · POI 58 个 · 地表 ruins:105 farm:186 forest:61 suburb:26 water:99 highway:52 industrial:16 city:17 military:14
 
-## 北西采石场（r2-0，tier 5，主题 forest）扎堆指数 0.64（随机基准 0.25，打散后 0.20 → 连片度 3.2x）
+## 北西山区（r2-0，tier 5，主题 forest）扎堆指数 0.64（随机基准 0.25，打散后 0.20 → 连片度 3.2x）
     012345678901234567890123
   0 FFFFFrrrrrr~~rrrrrrr~~~F
   1 FFFFFFrrrr~~~Lrrrrrr~~~F
@@ -114,7 +114,7 @@
  23 F~~rrr~~sRRRRR~RRIIIiIII
 统计 residential:118 ruins:99 industry:95 water:83 forest:54 farmland:54 suburb:43 cbd:20 open:6 military:4 · POI 105 个 · 地表 industrial:89 suburb:34 water:83 forest:50 ruins:89 highway:60 city:121 military:4 farm:46
 
-## 北东码头（r11-0，tier 5，主题 water）扎堆指数 0.61（随机基准 0.17，打散后 0.15 → 连片度 4.2x）
+## 北东滩涂（r11-0，tier 5，主题 water）扎堆指数 0.61（随机基准 0.17，打散后 0.15 → 连片度 4.2x）
     012345678901234567890123
   0 rFffffffrrrrrr~~rrrrr~rr
   1 ffffffffrrrrrr~~Irrrr~rr
