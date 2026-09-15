@@ -8,10 +8,14 @@ import {
 } from './combat';
 import { FOE_TYPE_ICON, FOE_TYPE_NAME, STATUS_NAME, TYPE_NAME, typeMult } from './moves';
 import { onEnd, onFoeFaint, onPlayerHit, playerProfile, syncBack, toFoe } from './bridge';
+import { repeatTarget, repeatLabel } from './qol-core';   // M38：重复上次动作（挑目标/按钮文案）
 import type { Battle, Foe, Move } from '../types';
 
 let cur: { b: Battle; p: PlayerProfile; srcs: any[]; opts: any } | null = null;
 const OV = 'v4b-overlay';
+/* M38：战斗「重复上次」—— 记住上一次成功出招（招式 id + 当时的目标），一键再打一次。
+   连打十只丧尸不用每次都点两下（选招 + 选目标）。 */
+let lastAct: { id: string; target: number } | null = null;
 
 function esc(s: unknown) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] ?? c)); }
 
@@ -32,6 +36,18 @@ function foeCard(f: Foe, i: number, b: Battle) {
 }
 let cachedMoves: Move[] = [];
 function movesForSafe(): Move[] { return cachedMoves; }
+
+/** M38：「重复上次」按钮 —— 没打过 / 招式已经用不了（没弹药、没那个道具）时置灰并说明原因 */
+function repeatBtn(waitPlayer: boolean): string {
+  if (!cur || !lastAct) return '';
+  const { b, p } = cur;
+  const m = movesFor(p).find(x => x.id === lastAct!.id);
+  const chk = m ? canUse(p, m) : { ok: false, why: '这招现在没有对应武器' };
+  const label = repeatLabel(lastAct.id, m?.name);
+  if (!label) return '';
+  const why = chk.ok ? '' : `<span class="hint" style="margin-left:6px">${esc((chk as any).why || '')}</span>`;
+  return `<div class="row" style="margin-top:8px"><button class="btn sm ok" ${chk.ok && waitPlayer ? '' : 'disabled'} onclick="V4UI.repeat()">${esc(label)}</button>${why}</div>`;
+}
 
 function render() {
   if (!cur) return;
@@ -90,6 +106,7 @@ function render() {
               <button class="btn sm" ${waitPlayer ? '' : 'disabled'} onclick="V4UI.switchWeapon()">🔄 换武器（消耗回合）</button>
               <button class="btn sm danger" ${waitPlayer && !b.opts.noFlee ? '' : 'disabled'} onclick="V4UI.flee()">🏃 ${b.opts.noFlee ? '无路可退' : '逃跑 ' + Math.round(fleeChance(b, p) * 100) + '%'}</button>
             </div>
+            ${repeatBtn(waitPlayer)}
             ${opts?.hint ? `<div class="hint" style="margin-top:6px">💡 ${esc(opts.hint)}</div>` : ''}
             ${b.opts.siege ? `<div class="hint" style="margin-top:6px">🚪 门户 ${Math.round(L.S.def.doorHp)} · 🧱 围墙 ${Math.round(L.S.def.wallHp)}　<button class="btn xs ok" onclick="V4UI.repair()">抢修</button></div>` : ''}
           </div>
@@ -145,6 +162,7 @@ export const V4UI = {
   move(id: string) {
     if (!cur || cur.b.over) return;
     const { b, p } = cur;
+    const tgt = b.target;                       // M38：记下这次打谁，给"重复上次"用
     const evFrom = b.events.length;
     playerAct(b, p, id, b.target);
     killFoeHelpers();
@@ -169,7 +187,22 @@ export const V4UI = {
     }
     b.events.length = 0;
     syncBack(p);
+    lastAct = { id, target: tgt };              // M38：成功出招才记（失败的点击不覆盖）
     render();
+  },
+  /** M38：重复上次动作（R 键 / 按钮）—— 目标死了自动改打第一只活的；招式用不了就明说为什么 */
+  repeat() {
+    if (!cur || cur.b.over || !lastAct) return false;
+    const { b, p } = cur;
+    const m = movesFor(p).find(x => x.id === lastAct!.id);
+    if (!m) { L.toast('重复不了', '上次那招的武器不在手上了。', 'bad'); return false; }
+    const chk = canUse(p, m);
+    if (!chk.ok) { L.toast('重复不了', chk.why, 'bad'); return false; }
+    const t = repeatTarget(lastAct.target, b.foes);
+    if (t < 0) return false;
+    b.target = t;
+    V4UI.move(m.id);
+    return true;
   },
   switchWeapon() {
     if (!cur || cur.b.over) return;
@@ -213,9 +246,12 @@ export const V4UI = {
     if (k >= '1' && k <= '4') { const m = movesFor(cur.p)[+k - 1]; if (m) V4UI.move(m.id); return true; }
     if (k === '5') { V4UI.flee(); return true; }
     if (k === '6') { V4UI.switchWeapon(); return true; }
+    if (k === 'r' || k === 'R') { V4UI.repeat(); return true; }   // M38：重复上次
     return false;
   },
   isOpen() { return !!cur; },
+  /** M38：验证/调试用 —— 当前记着的"上次动作" */
+  last() { return lastAct; },
   /** 验证/调试用：拿到当前战斗对象（探针要能强制结算来测 onWin 链） */
   battle() { return cur ? cur.b : null; },
 };
@@ -258,6 +294,7 @@ export function startV4Combat(foes: any[], opts: any = {}) {
     },
   });
   cur = { b: battle, p, srcs, opts };
+  lastAct = null;                               // M38：新战斗没有"上次动作"
   // 守夜战的"提前准备回报"：legacy 是在 startCombat 之后自己改 battle.foes 的，那套现在够不到 v4 的战场，
   // 所以在这里按同样的数值补上（警报器/钉刺/燃烧各消耗一次）。
   if (opts.siege) applySiegeTraps(battle);

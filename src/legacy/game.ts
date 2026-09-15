@@ -6,6 +6,7 @@ import { CALIBERS, penMul, ammoTable, pickLoadedAmmo, ammoShortName, resolveAmmo
 import { MERCHANT_GOODS, badShopRows, shopPrice, ammoShopRows } from '../v4/shop-core';   // M32b：货架（弹药按口径卖）+ 坏货架兜底
 import { apCapOf, fitnessApBonus, phaseOf, PHASE_LABEL } from '../v4/night-core';   // M25.2：行动力上限（睡眠债 + 体能）；M25.3：白昼曲线
 import { resumeFromOver, endDayLabel, endGoalChip, overHint } from '../v4/endless-core';   // M37：无尽模式（通关后继续）的纯逻辑
+import { filterTabs, filterInv, dropCount, depositCount, quickSlots, quickPick, BAG_FILTERS, type BagFilter } from '../v4/qol-core';   // M38：背包筛选/分批丢弃·存入 + 补给快捷键
 
 
 /* ═══════════ legacy/00-data.js ═══════════ */
@@ -2211,6 +2212,7 @@ function renderExplore(){
       ? '⚠️ 今天已经没有行动力了。硬撑着继续只会让饥饿和感染追上来——睡觉吧。'
       : '搜刮会消耗饱食与水分，战斗会消耗弹药与体力。' + (S.base.radio ? '无线电已架设：方舟实验室坐标已解锁。' : '架设无线电（据点 → 建设）后才能定位方舟实验室。')) + '</div>' +
   '</div>';
+  h += quickBarHtml();          // M38：补给快捷键（数字键 1-5，手机也能点）
   h += renderBounties();
   h += renderMap();
   h += renderCalendar();
@@ -2229,6 +2231,18 @@ function renderExplore(){
   }
   h += '</div>';
   return h;
+}
+/* M38：探索页的补给快捷键条 —— 槽位含义固定（1 止血 / 2 治疗 / 3 补水 / 4 进食 / 5 状态药），
+   候选链在 qol-core.QUICK_CHAIN 里；背包里没有的槽整条不显示，键位不会因为少带一样就整体错位。 */
+function quickBarHtml(){
+  const slots = quickSlots(S.inv, ITEMS);
+  if(!slots.length) return '';
+  return '<div class="card" style="margin-bottom:12px"><div class="row" style="flex-wrap:wrap;gap:6px">' +
+    '<span class="hint">⌨️ 补给快捷（键盘数字键 / 点一下就用）</span>' +
+    slots.map(s => '<button class="btn sm" onclick="useConsumable(\'' + s.id + '\')" title="' + s.hint + '">' +
+      '<span class="mono" style="color:var(--warn)">' + s.key + '</span> ' + ITEMS[s.id].n + ' <span class="mono" style="color:var(--dim)">×' + s.n + '</span></button>').join('') +
+    '<span class="spacer"></span><span class="hint">' + slots.map(s => s.key + '=' + s.hint).join(' · ') + '</span>' +
+    '</div></div>';
 }
 function openZone(id){
   const mid = modal({ sticky:true, title:'',
@@ -2491,21 +2505,50 @@ function equipWeapon(id){
   log('🗡️ 换上 ' + ITEMS[id].n + '（伤害 ' + ITEMS[id].dmg + (ITEMS[id].ammo ? ' · 弹药 ' + ITEMS[id].ammo + '/次' : ' · 体力 ' + (ITEMS[id].sta || 0) + '/次') + '）', 'info');
   render(); autosave();
 }
-function dropItem(id){
-  if(!itemCount(id)) return;
-  const n = itemCount(id);
-  delete S.inv[id];
-  log('🗑️ 丢弃了 ' + itemName(id) + ' ×' + n + '。', 'dim');
+/* M38：丢几个 / 存几个 / 背包筛选状态（会话级，跟 codexCat 一样不进存档） */
+function dropItem(id, n){
+  const have = itemCount(id);
+  const k = dropCount(have, n === undefined ? 'all' : n);
+  if(!k) return;
+  if(k >= have) delete S.inv[id]; else S.inv[id] = have - k;
+  log('🗑️ 丢弃了 ' + itemName(id) + ' ×' + k + '。', 'dim');
   render();
 }
+let bagFilter = 'all';
+function setBagFilter(f){ bagFilter = f; sfx('ui'); render(); }
 function deposit(id){
-  const n = itemCount(id); if(!n) return;
+  const have = itemCount(id); if(!have) return;
   const cap = S.base.storage * 12;
   const used = Object.keys(S.store).reduce((a, k) => a + S.store[k], 0);
-  if(used + n > cap && cap > 0){ log('❌ 储物箱满了（' + used + '/' + cap + '），先升级或取出一些。', 'dim'); return; }
-  if(cap === 0){ log('❌ 你还没有储物箱（据点 → 建设）。', 'dim'); return; }
-  delete S.inv[id]; S.store[id] = (S.store[id] || 0) + n;
-  log('📦 存入储物箱：' + itemName(id) + ' ×' + n, 'info');
+  /* M38：以前箱子"塞不下就整笔拒绝"，现在能塞多少塞多少（剩下的留在背包里并说明白） */
+  const plan = depositCount(have, used, cap);
+  if(!plan.n){ log('❌ ' + plan.reason, 'dim'); return; }
+  if(plan.n >= have) delete S.inv[id]; else S.inv[id] = have - plan.n;
+  S.store[id] = (S.store[id] || 0) + plan.n;
+  log('📦 存入储物箱：' + itemName(id) + ' ×' + plan.n + (plan.reason ? '（' + plan.reason + '）' : ''), 'info');
+  render(); autosave();
+}
+/* M38：批量存入 —— 当前筛选那类，或"非消耗品"（材料/武器/装备/投掷/剧情/弹药）。
+   刻意不把食物/饮水/医疗算进"全部"：出门前一键把吃的全塞箱子是纯手滑。 */
+function depositAll(){
+  const cap = S.base.storage * 12;
+  let used = Object.keys(S.store).reduce((a, k) => a + S.store[k], 0);
+  const ids = Object.keys(S.inv).filter(k => !!ITEMS[k]);
+  const pick = bagFilter === 'all'
+    ? ids.filter(k => ['food','drink','med'].indexOf(ITEMS[k].t) < 0)
+    : filterInv(ids, ITEMS, bagFilter);
+  let moved = 0, kinds = 0, reason = '';
+  pick.forEach(id => {
+    const have = itemCount(id); if(!have) return;
+    const plan = depositCount(have, used, cap);
+    if(!plan.n){ reason = plan.reason; return; }
+    if(plan.n >= have) delete S.inv[id]; else S.inv[id] = have - plan.n;
+    S.store[id] = (S.store[id] || 0) + plan.n;
+    used += plan.n; moved += plan.n; kinds++;
+    if(plan.reason) reason = plan.reason;
+  });
+  if(!moved){ log('❌ ' + (reason || '这类东西背包里没有。'), 'dim'); return; }
+  log('📦 批量存入：' + kinds + ' 种 · ' + moved + ' 件' + (reason ? '（' + reason + '）' : ''), 'info');
   render(); autosave();
 }
 function withdraw(id){
@@ -2532,11 +2575,24 @@ function renderInv(){
   h += '<div class="sect-title">携带物品 <span class="badge">' + carryWeight() + ' / ' + capWeight() + ' kg</span></div>';
   /* M24.1：过滤掉 ITEMS 里不存在的 id —— 坏档/旧档里如果混进未知物品，
      原来会在这里 sort 时读 undefined.t 直接抛异常（整个背包页白屏）。 */
-  const ids = Object.keys(S.inv).filter(k => !!ITEMS[k]);
-  if(!ids.length) h += '<p class="muted">背包是空的。去找点能用的东西。</p>';
+  const allIds = Object.keys(S.inv).filter(k => !!ITEMS[k] && S.inv[k] > 0);
+  /* M38：筛选条（空类不显示）+ 批量存入按钮。筛选只作用于随身背包，储物箱永远是全量。 */
+  const tabs = filterTabs(allIds, ITEMS);
+  if(allIds.length){
+    h += '<div class="row" style="margin-bottom:8px;flex-wrap:wrap;gap:4px">' +
+      tabs.map(t => '<button class="btn xs ' + (bagFilter === t.id ? 'warn' : 'ghost') + '" onclick="setBagFilter(\'' + t.id + '\')">' +
+        t.label + (t.id === 'all' ? '' : ' ' + t.n) + '</button>').join('') +
+      '<span class="spacer"></span>' +
+      '<button class="btn xs ok" onclick="depositAll()">📦 ' + (bagFilter === 'all' ? '存入非消耗品' : '把这一类全存') + '</button>' +
+      '</div>';
+  }
+  const ids = (() => { allIds.sort((a, b) => (ITEMS[a].t + a).localeCompare(ITEMS[b].t + b)); return filterInv(allIds, ITEMS, bagFilter); })();
+  if(!allIds.length) h += '<p class="muted">背包是空的。去找点能用的东西。</p>';
+  else if(!ids.length) h += '<p class="muted">这一类里什么都没有。<button class="btn xs ghost" onclick="setBagFilter(\'all\')">看全部</button></p>';
   else {
+    if(bagFilter !== 'all') h += '<div class="hint" style="margin-bottom:6px">筛选「' + (BAG_FILTERS.find(f => f.id === bagFilter) || {}).label + '」· ' + ids.length + ' 种（筛选只作用于随身背包）</div>';
     h += '<div class="grid g2">';
-    ids.sort((a, b) => (ITEMS[a].t + a).localeCompare(ITEMS[b].t + b)).forEach(id => {
+    ids.forEach(id => {
       const it = ITEMS[id], n = S.inv[id];
       const usable = it.t === 'food' || it.t === 'drink' || it.t === 'med';
       h += '<div class="lrow"><div><div class="nm">' + it.n + ' <span class="mono" style="color:var(--dim)">×' + n + '</span></div>' +
@@ -2547,7 +2603,9 @@ function renderInv(){
         (it.t === 'wpn' ? '<button class="btn xs ' + (S.eq.wpn === id ? 'warn' : '') + '" onclick="equipWeapon(\'' + id + '\')">' + (S.eq.wpn === id ? '使用中' : '装备') + '</button>' : '') +
         (it.t === 'thr' ? '<span class="tag">战斗中投掷</span>' : '') +
         '<button class="btn xs ghost" onclick="deposit(\'' + id + '\')">存入</button>' +
-        '<button class="btn xs danger" onclick="dropItem(\'' + id + '\')">丢</button>' +
+        /* M38：丢东西不再"一点全没" —— 单件丢，整叠丢要明说 */
+        '<button class="btn xs danger" onclick="dropItem(\'' + id + '\',1)" title="只丢 1 个">丢1</button>' +
+        (n > 1 ? '<button class="btn xs danger" onclick="dropItem(\'' + id + '\')" title="丢掉全部 ' + n + ' 个">全丢×' + n + '</button>' : '') +
         '</div></div>';
     });
     h += '</div>';
@@ -3530,6 +3588,11 @@ document.addEventListener('keydown', e => {
     return;
   }
   if(k === 'escape'){ closeModal(); return; }
+  /* M38：数字键 1-4 = 用补给（治疗/补水/进食/状态药），弹窗开着时不生效 */
+  if(/^[1-4]$/.test(k) && !document.querySelector('.overlay')){
+    const q = quickPick(S.inv, ITEMS, k);
+    if(q){ useConsumable(q); return; }
+  }
   const tabs = { e:'explore', b:'base', i:'inv', c:'craft', k:'skills', q:'quest', j:'codex', s:'stats' };
   if(tabs[k] && !document.querySelector('.overlay')){ setTab(tabs[k]); return; }
   if(k === 'n' && !document.querySelector('.overlay')) sleepNight();
@@ -3653,7 +3716,9 @@ Object.assign(window, { VER, SAVE_KEY, V1_KEY, ITEMS, itemName, isWpn, ZOMBIES, 
   CALIBERS, AMMO_OF, ammoCount, loadedAmmo, setLoaded, cycleLoaded, penMul, radTier, apCapOf, fitnessApBonus, phaseOf, PHASE_LABEL,
   syncAmmo, materializeAmmoPool, ammoShopRows,   // M32b：弹药镜像收口 + 货架弹药段（验收探针直接调）
   isLab,                                        // M33：教程沙盒（写盘守卫 + 菜单分岔都用它）
+  depositAll, setBagFilter, quickBarHtml,       // M38：背包批量存入/筛选切换 + 补给快捷条（内联 onclick）
   radLevelAt, radGain, radProtect, RAD_SOURCES, geigerText, boot });
+Object.defineProperty(window, "bagFilter", { get: function(){ return bagFilter; }, set: function(v){ bagFilter = v; }, configurable: true });
 Object.defineProperty(window, "S", { get: function(){ return S; }, set: function(v){ S = v; }, configurable: true });
 Object.defineProperty(window, "battle", { get: function(){ return battle; }, set: function(v){ battle = v; }, configurable: true });
 Object.defineProperty(window, "fxLock", { get: function(){ return fxLock; }, set: function(v){ fxLock = v; }, configurable: true });
