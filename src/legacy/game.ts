@@ -5,6 +5,7 @@ import { radTier, radGain, radLevelAt, radProtect, RAD_SOURCES, geigerText } fro
 import { CALIBERS, penMul, ammoTable, pickLoadedAmmo, ammoShortName, resolveAmmoId } from '../v4/ammo-core';
 import { MERCHANT_GOODS, badShopRows, shopPrice, ammoShopRows } from '../v4/shop-core';   // M32b：货架（弹药按口径卖）+ 坏货架兜底
 import { apCapOf, fitnessApBonus, phaseOf, PHASE_LABEL } from '../v4/night-core';   // M25.2：行动力上限（睡眠债 + 体能）；M25.3：白昼曲线
+import { resumeFromOver, endDayLabel, endGoalChip, overHint } from '../v4/endless-core';   // M37：无尽模式（通关后继续）的纯逻辑
 
 
 /* ═══════════ legacy/00-data.js ═══════════ */
@@ -1515,7 +1516,8 @@ const TABS = [
 ];
 function renderTop(){
   const p = phaseName();
-  $('#clock-day').textContent = S.day + ' / ' + GOAL_DAY;
+  /* 无尽模式里天数会越过 GOAL_DAY（"101 / 100"看着像坏档），交给 endless-core 统一处理 */
+  $('#clock-day').textContent = endDayLabel(S.day, !!S.flags.endless, GOAL_DAY);
   const ph = $('#clock-phase');
   ph.textContent = p[0]; ph.className = 'phase' + (p[1] === 'night' ? ' night' : '');
   // C12 昼夜色温：只切 class，颜色由 CSS 变量过渡；RM 下直接切色不过渡
@@ -1592,7 +1594,8 @@ function renderHud(){
 }
 /* C06 下一步建议：按「要死了 → 饿了渴了 → 没行动力 → 主线目标」的优先级给一条 */
 function nextStep(){
-  if(S.over) return { txt:'你倒下了。可以重新开始，或读取上一次存档。', act:'loadGame()', btn:'读取存档' };
+  /* 通关后 over=true 要分两种情形说清楚：已通关还活着不是"倒下了"，否则玩家以为档坏了 */
+  if(S.over) return overHint({ won: !!S.flags.won, endless: !!S.flags.endless, hp: S.hp });
   if(S.hp <= S.hpMax * .3) return { txt:'生命很低：吃东西／用药，或者回据点睡觉。', act:"setTab('inv')", btn:'打开背包' };
   if(S.hun < 30) return { txt:'饿了（饱食 ' + Math.round(S.hun) + '）：背包里的罐头 +30、饼干 +16。', act:"setTab('inv')", btn:'打开背包' };
   if(S.thi < 30) return { txt:'渴了（水分 ' + Math.round(S.thi) + '）：净水 +35，污水会涨感染。', act:"setTab('inv')", btn:'打开背包' };
@@ -3088,7 +3091,7 @@ function renderCalendar(){
     '<span class="chip ' + (daysToHorde() === 0 ? 'heavy warnpulse' : '') + '">🩸 血月 <b>' + (daysToHorde() === 0 ? '今晚' : daysToHorde() + ' 天后') + '</b></span>' +
     '<span class="chip ' + (S.cal.powerOff ? 'heavy' : '') + '">🔌 电网 <b>' + (S.cal.powerOff ? '已断' : '第 14 天断') + '</b></span>' +
     (S.horde.eta > 0 ? '<span class="chip heavy warnpulse">🧟 尸群 <b>' + S.horde.eta + ' 天后抵达</b></span>' : '<span class="chip">🧟 尸群 <b>暂无</b></span>') +
-    '<span class="chip gold">🎯 <b>活到第 ' + GOAL_DAY + ' 天</b></span>' +
+    (S.flags.endless ? '<span class="chip gold">' + endGoalChip(true, GOAL_DAY) + '</span>' : '<span class="chip gold">' + endGoalChip(false, GOAL_DAY) + '</span>') +
   '</div>';
   h += '<div class="hint" style="margin-top:6px">每 7 天一次<b>血月</b>（规模 ×1.9，提前两天预告）；第 14 天<b>断水断电</b>（净水器要烧汽油、蔬菜会烂）；第 100 天救援。<br>开枪、深度搜索与尸潮都会累积<b>噪音</b>——噪音高了会把<b>迁徙尸群</b>引来（3 天后抵达基地）。</div></div>';
   return h;
@@ -3275,6 +3278,13 @@ function finalVictory(){
 }
 function enterEndless(){
   closeAllModals();
+  /* 根因：rescueEnding()（第 100 天好结局）与 gameOver() 都会把 S.over 置 true（那一局"已结束"），
+     但 enterEndless() 原来没清它 —— over=true 时 v4 世界面板整块退出渲染
+     （world-ui mountWorld 的 `if(!S || S.over)` 分支），卡片墙/地图消失退化成旧版探索页，
+     同时 travel/search/nightTick 全部 early-return，玩家看到的就是"进无尽直接死 + 地图变旧版"。
+     所以进无尽 = 重新开一局：清 over、补行动力；血为 0（从死亡界面点进来）时救回三成。 */
+  const back = resumeFromOver(S);
+  if(back.revived) log('💗 你在废墟里又睁开眼——无尽模式不打算这么早收走你（生命恢复到 ' + back.hp + '）。','success');
   S.flags.endless = true;
   award('a_endless');
   log('♾️ 无尽模式开启：它们会一直进化下去。活得越久，越不像人。','system');
