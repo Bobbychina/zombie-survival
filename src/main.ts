@@ -181,6 +181,8 @@ async function main() {
 
   // 大世界：把 legacy 的探索页接上 24×24 区块地图（地图卡插到 #view 最前面，并摘掉 legacy 的旧地图与区域列表）
   (window as any).V4World = worldUi.V4World;
+  /* M26：☰ 菜单（legacy 的 openMenu）要借 v4 的按钮 HTML 渲染「世界与账号」分区 —— 内联 onclick 只认 window 名字 */
+  (window as any).__v4ToolsButtons = worldUi.toolsButtonsHtml;
   (window as any).V4Camp = camp.V4Camp;
   // M6：季节/天气/体温的最小 HUD（挂在顶栏 chips 里，不动地图面板结构）
   const paintEnv = () => {

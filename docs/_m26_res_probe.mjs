@@ -74,9 +74,13 @@ for (const [label, w, h, z] of CASES) {
       if (cs.position === 'fixed') continue
       if (b.right > innerWidth + 2 || b.left < -2) clipped.push((e.id || e.className || e.tagName).toString().slice(0, 28) + ':' + Math.round(b.left) + '..' + Math.round(b.right))
     }
-    /* 顶部工具条/时钟/HUD 是否还在首屏（不能被挤出视野） */
-    const top = box('#topbar'), tabs = box('#tabs'), hud = box('#hud'), tools = box('#v4tools')
+    /* 顶部工具条/时钟/HUD 是否还在首屏（不能被挤出视野）。M26.1 起工具条已搬进 ☰ 菜单，这里不再检查它。 */
+    const top = box('#topbar'), tabs = box('#tabs'), hud = box('#hud'), map = box('#v4world')
     const inView = (b) => !!b && b.t >= -2 && b.b <= Math.min(innerHeight, de.clientHeight) + 2
+    /* 地图卡只在**双列**布局里必须整块在视野（那时它是定高的左列）；
+       叠成一列的档位里它比视口高是正常的，只要起始位置在视野内即可。 */
+    const dual = matchMedia('(min-width:2000px) and (min-height:950px)').matches
+    const mapTopVisible = !!map && map.t >= -2 && map.t <= de.clientHeight
     return JSON.stringify({
       win: innerWidth + 'x' + innerHeight,
       pageScroll: de.scrollHeight > de.clientHeight + 1,
@@ -87,7 +91,8 @@ for (const [label, w, h, z] of CASES) {
       v4board: q('#view').classList.contains('v4-board'),
       cols: grid ? getComputedStyle(grid).gridTemplateColumns.split(' ').length : null,
       clipped: clipped.slice(0, 4), clippedN: clipped.length,
-      inView: { topbar: inView(top), tabs: inView(tabs), hud: inView(hud), tools: inView(tools) },
+      inView: { topbar: inView(top), tabs: inView(tabs), hud: inView(hud), map: dual ? inView(map) : mapTopVisible },
+      dual,
     })
   })()`))
   const bad = []
@@ -97,7 +102,7 @@ for (const [label, w, h, z] of CASES) {
   if (r.pageScroll && w >= 900) bad.push('整页可滚')
   if (!r.inView.topbar) bad.push('顶栏出视野')
   if (!r.inView.tabs) bad.push('标签出视野')
-  if (!r.inView.tools) bad.push('工具条出视野')
+  if (!r.inView.map) bad.push('地图卡出视野')
   if (r.clippedN) bad.push('横向越界 ' + r.clippedN + ' 个')
   if (r.cell && r.cell.split('x')[0] !== r.cell.split('x')[1]) bad.push('方块非方')
   console.log(`${label.padEnd(18)} ${r.win.padEnd(10)} board=${r.v4board ? 'Y' : 'N'} cell=${String(r.cell).padEnd(7)} rows=${String(r.rows).padEnd(4)} 地图滚=${String(r.mapScroll).padEnd(4)} ${bad.length ? '❌ ' + bad.join('、') : '✅'}`)

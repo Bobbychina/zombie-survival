@@ -60,14 +60,17 @@ for (const [w, h] of [[2048, 1105], [2048, 1280], [1440, 900], [1280, 800]]) {
   await sleep(700)
   const r = JSON.parse(await ev(`(() => {
     const de = document.scrollingElement
-    const tools = document.getElementById('v4tools')
-    const tr = tools ? tools.getBoundingClientRect() : null
+    const map = document.getElementById('v4world')
+    const mr = map ? map.getBoundingClientRect() : null
     return JSON.stringify({ win: innerWidth + 'x' + innerHeight, sh: de.scrollHeight, ch: de.clientHeight,
       docScrollable: de.scrollHeight > de.clientHeight + 1, sb: innerWidth - de.clientWidth,
-      toolsBottom: tr ? Math.round(tr.bottom) : -1, toolsInView: tr ? (tr.top >= 0 && tr.bottom <= de.clientHeight) : false })
+      mapTop: mr ? Math.round(mr.top) : -1, mapAtTop: mr ? (mr.top >= 0 && mr.top <= de.clientHeight) : false,
+      toolsGone: !document.getElementById('v4tools') })
   })()`))
   ok(`整页不可滚 @${w}x${h}`, r.docScrollable === false, `sh=${r.sh} ch=${r.ch} 滚动条=${r.sb}px`)
-  ok(`工具条（存档/账号/世界）整条在视野内 @${w}x${h}`, r.toolsInView === true, 'bottom=' + r.toolsBottom)
+  /* M26.1：工具条已搬进 ☰ 菜单，这里改成守"地图卡是 #view 的第一个元素、起始位置在视野内"
+     （起始位置 = 打开页面第一眼能看见地图；卡片墙比视口高时往下滚是预期行为） */
+  ok(`地图卡在视野顶部（探索页第一眼是地图）@${w}x${h}`, r.mapAtTop === true && r.toolsGone === true, 'mapTop=' + r.mapTop)
 }
 await send('Emulation.setDeviceMetricsOverride', { width: 2048, height: 1105, deviceScaleFactor: 1, mobile: false })
 await sleep(500)

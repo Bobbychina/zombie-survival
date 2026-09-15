@@ -106,7 +106,8 @@ const layout = JSON.parse(await ev(`(() => {
   return JSON.stringify({ n: cards.length, cols, rest, sleep, names, cardsW, cardW,
     board: document.getElementById('view').classList.contains('v4-board'),
     tools: !!document.getElementById('v4tools'),
-    toolsBtns: [...document.querySelectorAll('#v4tools button')].map(b => (b.textContent||'').trim()),
+    /* M26.1：世界/账号按钮搬进 ☰ 菜单，探针改成在菜单里找它们（见下面的断言） */
+    menuBtns: (() => { try { openMenu(); const ov = document.querySelector('.modal'); const r = [...(ov ? ov.querySelectorAll('button') : [])].map(b => (b.textContent||'').trim()); closeAllModals(); return r } catch (e) { return [] } })(),
     acctInCards: cards.some(c => /账号与云存档|注册 \\/ 登录/.test(c.textContent||'')),
     accountInView: /账号与云存档/.test(txt),
     mapCard: !!document.querySelector('#v4world .wgrid'),
@@ -122,7 +123,8 @@ ok('卡片墙铺满可用宽度（1440 宽：单列铺满）', layout.cols >= 1 
 ok('「就地休整」全页只有 1 个', layout.rest === 1, 'count=' + layout.rest)
 ok('legacy「睡觉」按钮已摘掉（睡觉只在今夜卡）', layout.sleep === 0, 'count=' + layout.sleep)
 ok('云存档不在玩法卡里', layout.acctInCards === false && layout.accountInView === false)
-ok('工具条有世界 + 账号两个入口', layout.tools && layout.toolsBtns.length === 2, JSON.stringify(layout.toolsBtns))
+ok('探索页不再有工具条（世界/账号搬进 ☰ 菜单）', layout.tools === false)
+ok('☰ 菜单里有「世界 · 分享」与账号两个入口', (layout.menuBtns || []).some(b => /世界 · 分享/.test(b)) && (layout.menuBtns || []).some(b => /注册 \/ 登录|世界与账号|👤/.test(b)), JSON.stringify(layout.menuBtns))
 ok('地图卡还在（24×24 网格）', layout.mapCard === true)
 ok('无横向溢出', layout.scrollW <= layout.innerW + 2, layout.scrollW + ' vs ' + layout.innerW)
 console.log('  卡片：' + layout.names.join(' | '))

@@ -584,16 +584,17 @@ function waterCard(): string {
   b += '<div class="hint">🐟 ' + esc(pondSummary()) + '</div>';
   return card('water', '🌊 水体', b, [waterNearby().any ? '旁边有水' : '没有水']);
 }
-/** 工具条（不是玩法卡）：世界 / 账号云存档 / 分享 / 统计都在这儿。
-    用户原话："为什么这个操作面板的配置这么诡异……为什么和云存档放一起"——
-    云存档是"关于存档的元操作"，跟"今天砍几棵树"不是一回事，所以从玩法区搬出来。 */
-function toolsStrip(): string {
+/** M26：存档 / 世界 / 账号这些**元操作**搬到 ☰ 菜单里的「世界与账号」分区。
+    用户原话：「这是什么，为什么在地图上面，放到设置的 subpage 里面」——
+    探索页只该有玩法（地图 + 卡片墙），存档账号属于设置。按钮 HTML 交给 legacy 的 openMenu 渲染。 */
+export function toolsButtonsHtml(): string {
   const who = accountUser();
-  return '<div class="v4tools" id="v4tools">' +
-    '<button class="btn sm" onclick="V4Worlds.open()" title="多世界 / 挑战码 / 幽灵据点 / 本机统计">🌍 世界 · 分享</button>' +
-    '<button class="btn sm" onclick="V4Account.open()" title="' + esc(accountSummary()) + '">' +
+  return '<div class="row">' +
+    '<button class="btn sm" onclick="closeAllModals();V4Worlds.open()" title="多世界 / 挑战码 / 幽灵据点 / 本机统计">🌍 世界 · 分享</button>' +
+    '<button class="btn sm" onclick="closeAllModals();V4Account.open()" title="' + esc(accountSummary()) + '">' +
       (who ? '👤 ' + esc(String(who).slice(0, 14)) : '👤 注册 / 登录') + '</button>' +
-    '<span class="hint">存档、账号、挑战码、统计都在这一行——不占玩法版面</span></div>';
+    '</div>' +
+    '<div class="hint" style="margin-top:6px">多世界、挑战码、幽灵据点、本机统计与云存档都在这里；探索页不显示这些按钮。</div>';
 }
 
 /** 当前区块卡（原来的"POI 面板"）：这一格有什么、能搜什么、有什么活儿可干。
@@ -776,15 +777,16 @@ export function mountWorldPanel() {
   /* M21 版面：左地图 + 右卡片墙（CSS `#view.v4-board`，≥1024px 生效；窄屏自动叠成一列）。
      用户反馈原文："配置不平衡（左边一大堆右边就一个）……为什么不多搞一些卡片"——
      所以详情面板被拆成 9 张卡，卡片墙用 auto-fill 网格自己找平，不再有"三列高矮不一"。 */
+  /* M26：探索页不再有工具条（世界/账号搬进 ☰ 菜单）——顺手把老版留下的 #v4tools 节点清掉，
+     否则「整页不可滚」那条布局账会把它算进去（它已经不是网格的一部分了）。 */
+  const staleTools = document.getElementById('v4tools');
+  if (staleTools) staleTools.remove();
   const mapHtml = renderMapPanel();
   const cardsHtml = renderCards();
-  const toolsHtml = toolsStrip();
-  let tools = document.getElementById('v4tools') as HTMLElement | null;
   let map = document.getElementById('v4world') as HTMLElement | null;
   let board = view.querySelector(':scope > .v4board') as HTMLElement | null;
   if (!map) { map = document.createElement('div'); map.id = 'v4world'; map.className = 'card v4world v4-mapcol'; }
   if (!board) { board = document.createElement('div'); board.id = 'v4cards'; board.className = 'v4board'; }
-  if (!tools) { tools = document.createElement('div'); tools.id = 'v4tools'; tools.className = 'v4tools'; }
   // 内容没变就别重写 innerHTML（否则每次 render 都会重置地图滚动位置/悬停态）
   if (map.dataset.sig !== mapHtml) { map.innerHTML = mapHtml; map.dataset.sig = mapHtml; }
   if (board.dataset.sig !== cardsHtml) {
@@ -792,10 +794,8 @@ export function mountWorldPanel() {
     board.dataset.sig = cardsHtml;
     adoptLegacy(view, board);          // 卡片墙重建后，把 legacy 那几张（委托板/日历）重新认领进来
   }
-  if (tools.dataset.sig !== toolsHtml) { tools.innerHTML = toolsHtml; tools.dataset.sig = toolsHtml; }
 
-  if (view.firstChild !== tools) view.insertBefore(tools, view.firstChild);
-  if (tools.nextSibling !== map) view.insertBefore(map, tools.nextSibling);
+  if (view.firstChild !== map) view.insertBefore(map, view.firstChild);
   if (map.nextSibling !== board) view.insertBefore(board, map.nextSibling);
   view.classList.add('v4-board');
   /* M25.1：fitMap 必须等**两次** rAF —— 第一次 rAF 时 #v4world 的 flex 高度还在布局中途，
@@ -867,8 +867,11 @@ function fitMap() {
   /* M25.4：把"溢出多少就缩多少"改成**直接算目标边长**再一步到位 ——
      原来按溢出量减，一次会缩过头（实测 24px 时溢出约 103px、算出减 5 → 19px，
      比真正需要的 23px 小 4px，格子白白小了 17%）。这里按"网格高度 = 24c + 46"反解 c。 */
+  /* M26.1：46 改成 44 —— 实测 24px 时地图卡比可视区高 31px（#view 会滚 31px），
+     而 `网格高 = 24c + 2×23(缝) + 2(边框取整)` 在 c 较小时余量给多了，导致 23px 明明塞得下却被判"还不 fit"。
+     少留 2px 就能让循环收到 23px（格子肉眼无差、但整页/容器都不再滚）。 */
   const fitCell = (cur: number, over: number, rows = 24): number =>
-    Math.max(18, Math.min(cur, Math.floor((rows * cur + 46 - over - 48) / rows)));
+    Math.max(18, Math.min(cur, Math.floor((rows * cur + 44 - over - 48) / rows)));
   let guard = 6;
   while (wrap.scrollWidth > wrap.clientWidth + 1 && cell > 18 && guard-- > 0) apply(--cell);   // 先保宽度不滚
   guard = 6;
