@@ -101,7 +101,9 @@ async function main() {
     peek: endings.peekEnding, all: endings.V4Endings.all,
   };
   // 内联 onclick 只认 window 上的名字：今夜（过夜）与撤离
-  (window as any).V4Night = { rest: night.rest, options: night.restOptions, apMaxOf: night.apMaxOf };
+  (window as any).V4Night = { rest: night.rest, options: night.restOptions, apMaxOf: night.apMaxOf,
+    /* M25.2：行动力上限 = 睡眠债 + 体能加成 —— 探针与将来的 UI 都从这里取，别只挂 apMaxOf */
+    apCapOf: night.apCapOf, fitnessApBonus: night.fitnessApBonus, syncApMax: night.syncApMax };
   /* M20：世界管理 / 挑战码 / 幽灵据点 / 开发者统计（一个面板） */
   (window as any).V4Worlds = worldsUi.V4Worlds;
   worldsUi.ensureWorlds();

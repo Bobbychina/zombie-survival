@@ -10,7 +10,7 @@ import { POIS } from './pois';
 import { blockAt } from './worldgen';
 import { ensureSaveWorld, worldOf, type SaveWorld } from './worldstate';
 import {
-  apMaxOf, isBloodMoonDay, nextDebt, raidChance, restTierOf,
+  apMaxOf, apCapOf, fitnessApBonus, isBloodMoonDay, nextDebt, raidChance, restTierOf,
   AP_MAX_BASE, DEBT_CAP, DEBT_HEAL_BASE, DEBT_PER_FIELD, FIELD_RESTORE, RAID_DOOR_MAX, RAID_STORE_MAX,
   type RestKind,
 } from './night-core';
@@ -19,7 +19,7 @@ import { pondTick } from './water';   // M7：鱼塘每天产出
 import type { Block } from '../types';
 
 // 参数真值在 night-core（纯逻辑、可单测）；这里再导出一份，方便 UI 与探针取用
-export { AP_MAX_BASE, DEBT_CAP, DEBT_HEAL_BASE, DEBT_PER_FIELD, FIELD_RESTORE, RAID_DOOR_MAX, RAID_STORE_MAX, apMaxOf, isBloodMoonDay, raidChance };
+export { AP_MAX_BASE, DEBT_CAP, DEBT_HEAL_BASE, DEBT_PER_FIELD, FIELD_RESTORE, RAID_DOOR_MAX, RAID_STORE_MAX, apMaxOf, apCapOf, fitnessApBonus, isBloodMoonDay, raidChance };
 export type { RestKind };
 
 export interface RestOption { kind: RestKind; icon: string; name: string; detail: string; ok: boolean; why?: string }
@@ -37,13 +37,14 @@ export function restOptions(block: Block | null): RestOption[] {
   const hasCar = !!s.veh && s.veh.fuel > 0 && s.veh.hp > 0;
   const tier = tierAt(block, hasCar);
   const debt = s.debt;
-  const cap = apMaxOf(debt);
+  const fit = Number((L.S as any)?.skills?.fitness ?? 0);        // M25.2：体能加成也要算进"明早几点"
+  const cap = apCapOf(debt, fit);
   const field = Math.round(cap * FIELD_RESTORE);
   const nextDebtSafe = Math.max(0, debt - DEBT_HEAL_BASE);
   const nextDebtField = Math.min(DEBT_CAP, debt + DEBT_PER_FIELD);
   const px = '明早 ' + field + ' 行动力';
-  const rb = '债 ' + debt + '→' + nextDebtSafe + ' 档 · AP 上限 ' + apMaxOf(nextDebtSafe);
-  const rf = '债 ' + debt + '→' + nextDebtField + ' 档 · AP 上限 ' + apMaxOf(nextDebtField);
+  const rb = '债 ' + debt + '→' + nextDebtSafe + ' 档 · AP 上限 ' + apCapOf(nextDebtSafe, fit);
+  const rf = '债 ' + debt + '→' + nextDebtField + ' 档 · AP 上限 ' + apCapOf(nextDebtField, fit);
   const night = isBloodMoonDay(L.S.day);
   return [
     { kind: 'base', icon: '🏠', name: '回安全屋睡', detail: 'AP 回满 · ' + rb + ' · 零夜袭' + (night ? ' · 血月夜：这里会打守夜战' : ''),
@@ -130,7 +131,9 @@ export function rest(kind?: RestKind): void {
   const tPen = tempPenalty(envOf().temp);
   /* M24 体能 Lv3 perk：睡醒多还 1 档睡眠债（把"到处跑"和"睡得好"连起来） */
   const debt = Math.max(0, nextDebt(s.debt, atBase) - (atBase && Number((S as any).skills?.fitness ?? 0) >= 3 ? 1 : 0));
-  const cap = Math.max(1, apMaxOf(debt) + tPen.ap);
+  /* M25.2：体能技能换成"一天能做多少事"（每 3 级 +1 行动力，最多 +5）——
+     HUD / 地图 / 路途报价都要走 apCapOf，否则会出现"面板说 16、实际只给 14"。 */
+  const cap = Math.max(1, apCapOf(debt, Number((S as any).skills?.fitness ?? 0)) + tPen.ap);
   let raid: { outcome: string; text: string; foes: string[] } = { outcome: 'none', text: '', foes: [] };
   if (!atBase) raid = rollFieldRaid(use, block, s);
   if (raid.outcome === 'wake') { /* 打断睡眠：行动力再打折 */ }
@@ -191,10 +194,10 @@ export function rest(kind?: RestKind): void {
   }
 }
 
-/** 调试/测试用：把当前 AP 上限按债重算（读档后调用一次，保证 HUD 与债一致） */
+/** 调试/测试用：把当前 AP 上限按债 + 体能重算（读档后调用一次，保证 HUD 与债一致） */
 export function syncApMax(): void {
   const s = ensureSaveWorld(L.S);
-  const cap = apMaxOf(s.debt);
+  const cap = apCapOf(s.debt, Number((L.S as any)?.skills?.fitness ?? 0));
   if (L.S.apMax !== cap) { L.S.apMax = cap; if (L.S.ap > cap) L.S.ap = cap; }
 }
 

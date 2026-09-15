@@ -18,7 +18,9 @@ import { regionHazardTitles } from './region-events-core';
 import { ghostAt, placeGhosts, raidGhost } from './ghosts';
 import { ghostFoes } from './ghosts-core';
 import { pendingFragKeys, takeFragment } from './fragments';
-import { apMaxOf, isBloodMoonDay, rest, restOptions, tierAt, syncApMax } from './night';
+import { apCapOf, isBloodMoonDay, rest, restOptions, tierAt, syncApMax } from './night';
+/** M25.2：当前体能等级 —— 行动力上限的加成来源（每 3 级 +1，最多 +5），面板与地图必须用同一个数 */
+const fitLv = (): number => Number((L.S as any)?.skills?.fitness ?? 0);
 import { ensureEvac, evacAvailable, fireFlare } from './evac';
 import { CROPS, SEASON_INFO, WEATHER, growthDays } from './env-core';
 import { envLine, envOf, seasonNow, tempPenalty } from './env';
@@ -210,7 +212,7 @@ function regionTripFor(s: SaveWorld, to: string) {
     hasVehicle: !!s.veh && s.veh.hp > 0,
     fuel: s.veh ? s.veh.fuel : 0,
     ap: L.S.ap,
-    apMax: apMaxOf(s.debt),
+    apMax: apCapOf(s.debt, fitLv()),
     from: s.region,
     to,
   });
@@ -357,7 +359,7 @@ export function renderRegionPanel(s: SaveWorld): string {
       '汽车修理厂 / 物流园里有能修的车，先弄辆车再说。「本地地图」看区域内部（哪条街、哪栋楼）。</div>';
   } else if (!near) {
     h += '<div class="hint">车在门口，但油/行动力不够开到任何一格：<b>油 ' + s.veh.fuel + '</b> · <b>行动力 ' +
-      L.S.ap + '/' + apMaxOf(s.debt) + '</b>——加油站和物流园能抽油，行动力回安全屋睡一觉。</div>';
+      L.S.ap + '/' + apCapOf(s.debt, fitLv()) + '</b>——加油站和物流园能抽油，行动力回安全屋睡一觉。</div>';
   } else {
     h += '<div class="hint">车已就绪：现在有 <b>' + near + '</b> 个区域开得到（一箱油 + 一天体力最多 ' + MAX_HOPS +
       ' 格，再远得中途落脚）。「本地地图」看区域内部的格子。</div>';
@@ -386,7 +388,7 @@ export function renderMapPanel(): string {
     '</div>' +
     // R5：常驻信息位只有 3 个，睡眠债并进 AP 显示，不新开一格
     '<div class="wveh">' + (s.veh ? '🚗 油 ' + s.veh.fuel + ' · 车况 ' + s.veh.hp + '%' : '🚶 步行') +
-      '　⚡ ' + L.S.ap + '/' + apMaxOf(s.debt) + ' · 债 ' + s.debt + ' 档' +
+      '　⚡ ' + L.S.ap + '/' + apCapOf(s.debt, fitLv()) + ' · 债 ' + s.debt + ' 档' +
       (isBloodMoonDay(L.S.day) ? '　🩸 血月' : '') + '</div>' +
   '</div>';
 
@@ -458,7 +460,7 @@ function todayCard(): string {
     '<button class="btn ok" onclick="restHere()">☕ 就地休整 <span class="mono">(1 行动力)</span></button>' +
     '<button class="btn" onclick="openMerchant()">🏪 呼叫商人</button>' +
     '</div>' +
-    '<div class="hint" style="margin-top:6px">行动力 <b>' + S.ap + '/' + apMaxOf(s.debt) + '</b> · 搜索 1 点 · 深度搜索 2 点 · 走路 1 点/区块' +
+    '<div class="hint" style="margin-top:6px">行动力 <b>' + S.ap + '/' + apCapOf(s.debt, fitLv()) + '</b> · 搜索 1 点 · 深度搜索 2 点 · 走路 1 点/区块' +
     (s.veh ? ' · 开车 1 点/4 区块' : '') + '</div>';
   b += '<div class="hint">' + (S.ap <= 0
     ? '⚠️ 今天已经没有行动力了。硬撑着继续只会让饥饿和感染追上来——去「今夜」卡睡觉。'
@@ -757,7 +759,12 @@ export function mountWorldPanel() {
     view.classList.remove('v4-board');
     return;
   }
-  syncApMax();                  // 读档/换日之后把 AP 上限与睡眠债对齐（R5：债是唯一真值）
+  /* M25.2：读档/换日之后把 AP 上限与睡眠债 + 体能对齐（R5：债是唯一真值）。
+     上限真的变了就补一次 renderHud + renderTop —— 不然会看到"地图上写着 14，
+     HUD 的格子还是 9 个"这种自相矛盾的画面（探针实测过）。 */
+  const capBefore = L.S.apMax;
+  syncApMax();
+  if (L.S.apMax !== capBefore) { L.renderHud(); L.renderTop(); }
   ensureEvac();                 // 第 90 天进入撤离窗口时落盘并提示
   pruneLegacy(view);
 

@@ -3,6 +3,7 @@
 // M25 例外：辐射的分档/累积公式在 src/v4/rad-core.ts（纯逻辑、可单测），这里只 import 公式，不重复实现。
 import { radTier, radGain, radLevelAt, radProtect, RAD_SOURCES, geigerText } from '../v4/rad-core';
 import { CALIBERS, penMul, ammoTable, pickLoadedAmmo, ammoShortName } from '../v4/ammo-core';
+import { apCapOf, fitnessApBonus } from '../v4/night-core';   // M25.2：行动力上限（睡眠债 + 体能）
 
 
 /* ═══════════ legacy/00-data.js ═══════════ */
@@ -441,7 +442,7 @@ const ZONE_SIL = {
 /* ───────────── 状态与存档 ───────────── */
 function newState(){
   return {
-    v:VER, day:1, ap:9, apMax:9,   // v3.0：每天 9 点行动力 —— 远处一趟来回就要 6 点，出门必须算账
+    v:VER, day:1, ap:14, apMax:14,   // M25.2：每天 14 点行动力（原 9 点 —— 用户「一天也太短了」）；成本表没动，所以一天能做的事多了
     __integrity:null,               // M8：存档指纹（内容校验和），随存档一起进 localStorage / 云盘
     hp:100, hpMax:100, sta:100, staMax:100, hun:100, thi:100, infect:0,
     ammo:24, mat:12,
@@ -533,8 +534,8 @@ function sanitizeSave(d){
   const base = newState(), out = {};
   for(const k in base) if(k in d) out[k] = d[k];
   const num = (v, def, lo, hi) => (typeof v === 'number' && isFinite(v)) ? clamp(v, lo, hi) : def;
-  out.day = Math.floor(num(out.day, 1, 1, 100000)); out.ap = Math.floor(num(out.ap, 9, 0, 99));
-  out.apMax = Math.floor(num(out.apMax, 9, 1, 99));
+  out.day = Math.floor(num(out.day, 1, 1, 100000)); out.ap = Math.floor(num(out.ap, 14, 0, 99));
+  out.apMax = Math.floor(num(out.apMax, 14, 1, 99));
   out.hpMax = Math.floor(num(out.hpMax, 100, 1, 1e9)); out.hp = num(out.hp, out.hpMax, 0, out.hpMax);
   out.staMax = Math.floor(num(out.staMax, 100, 1, 1e9)); out.sta = num(out.sta, out.staMax, 0, out.staMax);
   out.hun = num(out.hun, 100, 0, 100); out.thi = num(out.thi, 100, 0, 100); out.infect = num(out.infect, 0, 0, 100);
@@ -1132,11 +1133,14 @@ function has(id, n){ return itemCount(id) >= (n || 1); }
 function ammoInMag(){ return S.ammo; }
 
 /* ───────────── 时段 / 行动力 / 昼夜 ───────────── */
+/* M25.2：一天从 9 点提到 14 点（用户：「一天也太短了」），所以时段阈值改成**按比例**
+   （清晨 1/16、白天 6/16、黄昏 9/16），以后调 AP_MAX_BASE 不用再回来改这三个数。 */
+function apCapNow(){ return Math.max(1, S.apMax || 14); }
 function phaseName(){
-  const used = S.apMax - S.ap;
-  if(used <= 1) return ['清晨','day'];
-  if(used <= 3) return ['白天','day'];
-  if(used <= 5) return ['黄昏','dusk'];
+  const used = apCapNow() - S.ap, cap = apCapNow();
+  if(used <= Math.max(1, Math.round(cap * 0.07))) return ['清晨','day'];
+  if(used <= Math.round(cap * 0.38)) return ['白天','day'];
+  if(used <= Math.round(cap * 0.56)) return ['黄昏','dusk'];
   return ['夜晚','night'];
 }
 function spendAP(n, label){
@@ -3424,7 +3428,7 @@ function boot(){
 /* ── C23 工程加固：显式导出（内联 onclick 与外部验证脚本依赖这些名字）── */
 Object.assign(window, { VER, SAVE_KEY, V1_KEY, ITEMS, itemName, isWpn, ZOMBIES, ZONES, BASE_UP, RECIPES, SKILLS, COMPANIONS, MERCHANT, LORE, ACHIEVEMENTS, AFFIX, BOUNTY_POOL, QUEST_BOUNTIES, SIDE_QUESTS, MODS, ZONE_SIL, newState, RM, BAK_KEY, writeSave, saveGame, autosave, lsGet, lsSet, sanitizeSave, MIGRATIONS, migrateSave, loadGame, confirmRestart, migrateV1, deepMerge, exportSave, importSave, $, $$, clamp, rnd, ri, chance, pick, wpick, esc, AUDIO_MAX, actx, AMB, ambStart, ambBlip, ambStop, ambMode, ambSync, MUS, MUS_MAX, CHORDS, PENTA, mtof, musicMood, musicTempo, musicVoice, musicNoiseHit, musicBar, musicStart, musicStop, musicSting, tone, arnd, noise, SFX, sfx, floatText, shake, toast, firstTip, award, addXP, log, clearLog, replayLog, hr, skillBonus, capWeight, carryWeight, encumbrance, armorTotal, addItem, takeItem, itemCount, has, ammoInMag, phaseName, spendAP, tickVitals, statMods, sleepNight, nightRaid, combatRepair, rescueEnding, recapHtml, TABS, renderTop, bar, renderHud, nextStep, renderTabs, setTab, render, baseLevel, modal, closeModal, closeAllModals, mkFoe, startCombat, openCombatModal, cbLog, drawCombat, battleTarget, siegePanelHtml, effDmg, combatAct, combatAfter, combatResolve, hitFoe, killFoe, afterPlayerTurn, companionTurn, foeTurn, endCombat, gameOver, restart, zoneOpen, zoneLockText, renderExplore, openZone, drawZone, grant, searchZone, applyFirst, lootItem, encounterRoll, survivorEvent, recruit, restHere, useConsumable, equipItem, equipWeapon, dropItem, deposit, withdraw, TYPE_LABEL, TYPE_TAG, renderInv, renderSideQuests, renderMods, renderCraft, craft, renderBase, scaledCost, build, renderSkills, QUEST_STAGES, questProgress, checkQuest, renderQuest, GOAL_DAY, MAP, WOUND_DEF, daysToHorde, nextEventText, threatLevel, travelCost, travelTo, goHome, defMax, defInit, repairDefense, TRAPS, buildTrap, hasWound, addWound, cureWound, woundTick, spoilTick, powerOff, raiseHorde, mapClick, renderMap, renderCalendar, noiseCheck, runScore, bountyBudget, bountyDef, metricValue, rollBounties, bountyTick, claimBounty, renderBounties, affixRoll, applyAffix, sideActive, sideTick, sideAdvance, sideNightCheck, modsOf, modSum, modMul, addMod, shopLeft, shopDayCheck, startFinalBattle, bossPhase2, finalVictory, enterEndless, renderCodex, discoverLore, renderStats, checkAch, merchantRate, openMerchant, buyMerchant, openMenu, openHelp, cheat, firstGesture, togglePace, toggleAmb, toggleMusic, initGame,
   /* M25：口径/弹种/辐射这几个查询函数被验收探针与将来的 UI 直接用，一并挂出去 */
-  CALIBERS, AMMO_OF, ammoCount, loadedAmmo, setLoaded, cycleLoaded, penMul, radTier,
+  CALIBERS, AMMO_OF, ammoCount, loadedAmmo, setLoaded, cycleLoaded, penMul, radTier, apCapOf, fitnessApBonus,
   radLevelAt, radGain, radProtect, RAD_SOURCES, geigerText, boot });
 Object.defineProperty(window, "S", { get: function(){ return S; }, set: function(v){ S = v; }, configurable: true });
 Object.defineProperty(window, "battle", { get: function(){ return battle; }, set: function(v){ battle = v; }, configurable: true });
