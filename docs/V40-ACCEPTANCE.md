@@ -1930,16 +1930,34 @@ M27 的 15 步高亮教程解决的是"第一次不知道怎么点"，但**练�
 
 ### 实测证据
 - `npx tsc --noEmit` 干净；单测 **411/411**（33 个文件，含 M34 并行批次留下的用例）。
-- 真浏览器探针 `docs/_m36_probe.mjs`（headless Thorium + CDP，**真键盘事件**逐字敲 `bobbychina32747`）**9/9 ALL PASS**：
+- 真浏览器探针 `docs/_m36_probe.mjs`（headless Thorium + CDP，**真键盘事件**逐字敲 `bobbychina32747`）**本地 9/9 + 线上 9/9 ALL PASS**：
   ① `window.cheat` / `window.cheatBuf` 均为 `undefined`，`openHelp` 等正常导出未被误删；
   ② 敲完整串后 `hp 100/100、mat 12、ammo 24` 纹丝不动、`flags.cheat` 缺席、日志无「作弊模式 / 权限已激活」；
   ③ 帮助弹窗无「彩蛋 / 作弊码」文案，快捷键段 15 个 `<kbd>` 还在；
   ④ `sanitizeSave({flags:{cheat:true,gotGun:true}})` → `cheat` 没了、`gotGun` 保留；伪造 `flags.cheat=true` 后 `award()` 照样解锁成就；
   ⑤ 全程 0 个未捕获异常。
-- 构建产物复查：`dist/index.html` / `丧尸末日生存.html` / `docs/index.html`（各 617619 字节）对
-  `bobbychina32747|cheatBuf|作弊码|作弊模式|Bobby 模式` 命中 **0**（改动前同一扫描 1 命中）。
-- 截图 OCR 复查（`node E:\Files\myagent\ocr-vision.mjs docs/_m36_shots/a3_help_modal.png --tile 4`）：
-  帮助弹窗四块逐块识别「无空白、无遮挡、无乱码」，且**四块里都没有出现「彩蛋」「作弊码」字样**。
+- 探针第一版在线上跑出 **7/9**（两处 FAIL），排查下来**都是探针自己的问题，不是产品问题**，记一笔免得下次再踩：
+  - ② 拿"逐项相等"当判据 —— 而那串作弊码里含着 `e/b/i/c/k/q/j/s/n` 这些**游戏自己的快捷键**，
+    线上又恰好没有教程浮层挡着，于是敲字过程中真的切了页签、睡了一觉、进了夜间防守战（`hp 100→64`、`ammo 24→0`）。
+    改法：敲字前先 `openHelp()` 把快捷键挡掉（legacy 的 keydown 在 `.overlay` 存在时对页签/睡觉是 no-op），
+    判据换成"作弊签名"（`hpMax` 不变且 < 1e4、材料/弹药 < 1000、`flags.cheat` 缺席、日志无作弊字样）。
+  - ③ 用 `#overlay-root .modal-bd` 取"第一个弹窗" —— 线上那一跑正卡在战斗弹窗上，抓到的是战斗面板（`kbd=0`）。
+    改法：按标题「生存手册」（`.modal-hd h2`）定位那一张弹窗。
+- 构建产物复查：隔离 worktree 里从 HEAD 构建的 `dist/index.html`（617358 字节）与同步后的线上页（617404 字节，含 auth-config 注入）
+  对 `bobbychina32747|cheatBuf|作弊码|作弊模式|Bobby 模式` 命中 **0**；改动前线上那份是 **1 命中**。
+- 截图 OCR 复查（`node E:\Files\myagent\ocr-vision.mjs docs/_m36_shots/a3_help_modal.png --tile 4`，
+  线上版同款复查 `docs/_m36_shots/online/a3_help_modal.png`）：帮助弹窗逐块识别「无空白、无遮挡、无乱码」，
+  且**每一块里都没有出现「彩蛋」「作弊码」字样**。
+
+### 上线（本地 → pages）
+- 游戏仓库：`558a811`（源码 + 探针 + 本节文档）已推送；同仓另一会话随后把 `112c303`（M34 摆法）叠在其上一起推了。
+- pages 仓库：`36f896a`，`games/zombie-survival/index.html` 换新（27 行 diff），`games/account.js` 无 diff。
+- **产物在隔离 worktree 里构建**（`E:\Files\artifacts\zombie-map\wt-m36`：`git worktree add --detach HEAD` + junction `node_modules`，
+  沿用 M35 那套做法）：动手时主工作区正有并行会话在改 M33 第二批（`src/v4/bridge.ts`、`sandbox-core.ts` 未提交），
+  直接拿主工作区的 `dist/` 上线会把别人在飞的源码带上线，所以只发布 **HEAD 的干净构建**。
+  代价：线上暂时不含 M33 第二批，等那一批收工由它自己 build + sync。
+- 线上复核：`https://bobbychina.github.io/games/zombie-survival/`（Pages 构建约 30 秒，用查询串破缓存）探针 **9/9**，
+  帮助弹窗与快捷键段正常，作弊码不再有任何反应。
 
 ### 已知问题
 - **归档不动**：`release/v1-单文件版.html`（`activateCheat()` 弹窗问口令）、`release/v3.0-单文件版.html` 里

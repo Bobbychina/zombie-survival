@@ -61,30 +61,42 @@ const sym = J(await ev(`JSON.stringify({ cheat: typeof window.cheat, cheatBuf: t
 ok('① window.cheat / window.cheatBuf 均已移除', sym.cheat === 'undefined' && sym.cheatBuf === 'undefined', JSON.stringify(sym))
 ok('① 复核：openHelp 这类正常导出没被误删', sym.help === 'function', 'openHelp=' + sym.help)
 
-/* ── ② 真键盘敲老作弊码：状态一个数都不许动 ── */
-const before = J(await ev(`JSON.stringify({ hp:S.hp, hpMax:S.hpMax, mat:S.mat, ammo:S.ammo, infect:S.infect, logLen:S.logBuf.length, active:(document.activeElement||{}).tagName })`))
+/* ── ② 真键盘敲老作弊码：不许出现任何作弊签名 ──
+   注意：这串字里含着 e/b/i/c/k/q/j/s/n 这些游戏快捷键（还有 1-5 战斗键），
+   线上直接敲会真的切页签、睡觉、甚至开打（第一版探针就因此误报 FAIL）。
+   所以先开帮助弹窗把快捷键挡掉（legacy 的 keydown 对 .overlay 存在时的 tab/睡觉是 no-op），
+   判定也只看"作弊签名"：hpMax 不能变成 1e6、材料/弹药不能被拉满到 99999、flags.cheat 必须缺席。 */
+await ev(`(() => { closeAllModals(); openHelp(); return 1 })()`)
+await sleep(800)
+const before = J(await ev(`JSON.stringify({ hp:S.hp, hpMax:S.hpMax, mat:S.mat, ammo:S.ammo, infect:S.infect, logLen:S.logBuf.length,
+  overlay:document.querySelectorAll('#overlay-root .overlay').length, active:(document.activeElement||{}).tagName })`))
 await typeText('bobbychina32747')
 await sleep(900)
 const after = J(await ev(`JSON.stringify({ hp:S.hp, hpMax:S.hpMax, mat:S.mat, ammo:S.ammo, infect:S.infect, logLen:S.logBuf.length,
   cheatFlag:S.flags.cheat === undefined ? 'absent' : String(S.flags.cheat),
   cheatText:(S.logBuf||[]).filter(l => /作弊|Bobby 模式|权限已激活/.test(l.t||'')).length })`))
 const frozen = before.hp === after.hp && before.hpMax === after.hpMax && before.mat === after.mat && before.ammo === after.ammo && before.infect === after.infect
-ok('② 敲完 bobbychina32747 资源/血量纹丝不动', frozen, JSON.stringify({ before, after }))
+/* 判定用"作弊签名"而不是逐项相等：战斗/用药/换页签本来就允许改状态，只有"被拉满"才算作弊生效 */
+const noSignature = after.hpMax === before.hpMax && after.hpMax < 10000 && after.mat < 1000 && after.ammo < 1000 &&
+  after.cheatFlag === 'absent' && after.cheatText === 0
+ok('② 敲完 bobbychina32747 没出现任何作弊签名', noSignature, JSON.stringify({ before, after, 逐项相等: frozen }))
 ok('② 日志里没有"作弊模式/权限已激活"', after.cheatText === 0 && after.cheatFlag === 'absent', JSON.stringify({ cheatText: after.cheatText, cheatFlag: after.cheatFlag }))
 await shot('a2_after_typing_code')
 
-/* ── ③ 帮助弹窗：彩蛋那行必须没了，快捷键段还在 ── */
+/* ── ③ 帮助弹窗：彩蛋那行必须没了，快捷键段还在 ──
+   选择器要认「生存手册」那一张：页面上同时可能有战斗弹窗/教程浮层，取第一个 .modal-bd 会抓错（第一版就抓到了战斗弹窗）。 */
 const help = J(await ev(`(() => {
-  if (typeof closeAllModals === 'function') closeAllModals()
+  closeAllModals()
   openHelp()
-  const body = document.querySelector('#overlay-root .modal-bd') || document.querySelector('.overlay .modal-bd')
+  const ols = [...document.querySelectorAll('#overlay-root .overlay')]
+  const mine = ols.reverse().find(o => /生存手册/.test((o.querySelector('.modal-hd h2') || {}).textContent || ''))
+  const body = mine && mine.querySelector('.modal-bd')
   const txt = body ? body.innerText : ''
-  const closeBtn = document.querySelector('#overlay-root .modal-ft .btn, .overlay .modal-ft .btn')
-  return JSON.stringify({ hasBody: !!body, len: txt.length,
+  return JSON.stringify({ found: !!mine, hasBody: !!body, len: txt.length, overlays: ols.length,
     cheatLine: /彩蛋|作弊码/.test(txt), hasKeySection: /快捷键/.test(txt) && /战斗/.test(txt),
     kbdCount: (body ? body.querySelectorAll('kbd').length : 0), head: txt.slice(0, 40) })
 })()`))
-ok('③ 帮助弹窗里不再有"彩蛋/作弊码"文案', help.hasBody && !help.cheatLine, JSON.stringify(help))
+ok('③ 帮助弹窗里不再有"彩蛋/作弊码"文案', help.found && help.hasBody && !help.cheatLine, JSON.stringify(help))
 ok('③ 快捷键段没被误伤（kbd 还在）', help.hasKeySection && help.kbdCount >= 12, 'kbd=' + help.kbdCount)
 await shot('a3_help_modal')
 
