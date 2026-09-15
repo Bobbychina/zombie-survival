@@ -2,6 +2,7 @@
    本步接管的是「战斗」：把 window.startCombat 换成宝可梦式回合制引擎 + 新界面。 */
 import './styles/game.css';
 import './styles/v4.css';
+import './styles/tutorial.css';
 import './legacy/game.ts';
 // M8：账号库（原生 JS，同一份文件也被 bobbychina.github.io/games 大厅用 <script> 引用——
 // 打进这里是为了让单文件离线版也能注册/登录/存本地档，云同步当然还是要联网）
@@ -26,7 +27,7 @@ export const V4: Record<string, unknown> = {};
 (window as any).V4 = V4;
 
 async function main() {
-  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi, integrity, betaNotice, regionEventsCore, regionEvents, regionsCore, worldsUi] = await Promise.all([
+  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi, integrity, betaNotice, regionEventsCore, regionEvents, regionsCore, worldsUi, tutorial] = await Promise.all([
     import('./v4/worldgen'),
     import('./v4/pois'),
     import('./v4/combat'),
@@ -48,6 +49,7 @@ async function main() {
     import('./v4/region-events'),
     import('./v4/regions-core'),
     import('./v4/worlds-ui'),
+    import('./v4/tutorial'),
   ]);
   // BETA 声明条：整站/整游戏最上面那一条（本站所有子页面都要有）
   betaNotice.installBetaNotice();
@@ -183,6 +185,9 @@ async function main() {
   (window as any).V4World = worldUi.V4World;
   /* M26：☰ 菜单（legacy 的 openMenu）要借 v4 的按钮 HTML 渲染「世界与账号」分区 —— 内联 onclick 只认 window 名字 */
   (window as any).__v4ToolsButtons = worldUi.toolsButtonsHtml;
+  /* M27：新手教程 —— 第一次进游戏自动弹（看完了不再自动弹），菜单里也能重看 */
+  (window as any).V4Tutorial = tutorial.V4Tutorial;
+  (window as any).__v4TutorialBattleTip = tutorial.maybeBattleTip;
   (window as any).V4Camp = camp.V4Camp;
   // M6：季节/天气/体温的最小 HUD（挂在顶栏 chips 里，不动地图面板结构）
   const paintEnv = () => {
@@ -224,6 +229,20 @@ async function main() {
   }
   mountWorld();
   L.log('🧪 v4 引擎已接管战斗：4 招式槽 / 速度出手 / 属性克制。', 'info');
+  /* M27 新手教程：第一次进游戏自动弹一次（看完/跳过之后不再自动弹；☰ 菜单里随时能重看）。
+     ?dev=ready 这类开发钩子不弹，免得探针每次都被挡住。 */
+  const devFlags = String(new URLSearchParams(location.search).get('dev') || '');
+  if (!devFlags.includes('ready') && !devFlags.includes('fresh')) {
+    setTimeout(() => {
+      try {
+        tutorial.maybeAutoStartTutorial();
+        L.log('[教程] 自动启动检查完成（根节点=' + (document.getElementById('v4tut') ? '有' : '无') + '）', 'dim');
+      } catch (e) {
+        console.warn('[v4] 教程启动失败', e);
+        L.log('[教程] 启动失败：' + (e && (e as Error).message ? (e as Error).message : e), 'danger');
+      }
+    }, 900);
+  }
   // file:// 直开时存档只落在本浏览器：给一句提示，免得换个浏览器以为存档丢了
   if (location.protocol === 'file:') {
     L.log('💾 直接双击打开的（file://）：存档写在本浏览器本地，换浏览器或清缓存会丢；想更稳可以跑 start.bat 起本地服务。', 'dim');

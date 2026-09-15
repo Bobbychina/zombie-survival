@@ -1,0 +1,21 @@
+/* ── M27 新手教程：高亮真实界面（圈 + 气泡），overlay 不吃点击 ──
+   设计取舍：教程是"指给你看"，不是"拦着你"。所以整个 overlay 的 pointer-events 全关，
+   唯一能点的是气泡上的按钮；高亮用一圈巨大的 box-shadow 压暗四周（不用 clip-path，
+   免得多边形/圆角在不同浏览器上对不齐）。 */
+#v4tut{position:fixed;inset:0;z-index:2147483200;pointer-events:none}
+.v4tut-spot{position:absolute;border-radius:8px;border:2px solid var(--accent);
+  box-shadow:0 0 0 9999px rgba(4,6,9,.62),0 0 18px rgba(92,200,255,.35) inset;
+  transition:left .18s ease,top .18s ease,width .18s ease,height .18s ease}
+.v4tut-bub{position:absolute;pointer-events:auto;background:#10141b;border:1px solid var(--line2);
+  border-left:3px solid var(--accent);border-radius:8px;padding:10px 12px;
+  box-shadow:0 12px 32px rgba(0,0,0,.55);max-width:86vw}
+.v4tut-hd{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.v4tut-hd b{font-size:13.5px;color:var(--bone);flex:1;line-height:1.35}
+.v4tut-bd{font-size:13px;line-height:1.75;color:var(--ink)}
+.v4tut-bd b{color:var(--bone)}
+.v4tut-ft{display:flex;align-items:center;gap:6px;margin-top:10px;flex-wrap:wrap}
+.v4tut-ft .spacer{flex:1}
+@media (max-width:860px){
+  .v4tut-bub{max-width:94vw;padding:9px 10px}
+  .v4tut-bd{font-size:12.5px}
+}

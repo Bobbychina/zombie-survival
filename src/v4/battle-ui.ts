@@ -196,6 +196,8 @@ export const V4UI = {
     if (result === 'flee' && opts?.onFlee) opts.onFlee();
     if (result === 'lose' && opts?.onLose) opts.onLose();
     if (result === 'win') { L.log('🏁 战斗结束：你活下来了。', 'success'); L.sfx('ok'); }
+    /* M27：第一场胜利后给一次"招式槽/噪音/装甲丧尸"的提示（战斗界面是模态，教程只能这样接） */
+    if (result === 'win') { try { (window as any).__v4TutorialBattleTip?.(); } catch { /* 忽略 */ } }
     onEnd(result);
   },
   key(e: KeyboardEvent) {

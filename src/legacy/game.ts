@@ -3293,9 +3293,14 @@ function openMenu(){
   /* M26：存档 / 世界 / 账号这些元操作从探索页的工具条搬到这里（用户：「这是什么，为什么在地图上面，
      放到设置的 subpage 里面」）。按钮 HTML 由 v4 的 world-ui 提供，拿不到就只少这一段，不影响菜单其它部分。 */
   const v4tools = (typeof window.__v4ToolsButtons === 'function') ? String(window.__v4ToolsButtons() || '') : '';
+  /* M27：新手教程入口 —— 想再看一遍（或朋友第一次玩）就点这里 */
+  const v4tut = (typeof window.V4Tutorial === 'object' && window.V4Tutorial)
+    ? '<button class="btn sm" onclick="closeAllModals();V4Tutorial.start(true)">🎓 新手指南（从头看一遍）</button>' : '';
   modal({ title:'☰ 菜单', body:'<div class="hint" style="line-height:2">' +
     '存档是<b>自动</b>的（每日结束、搜刮、制作、建造、战斗结束时）。手动存档随时可用。<br>导出存档可以把它复制到别的地方，也可以带到另一台电脑。</div>' +
     (v4tools ? '<div class="sect-title" style="margin-top:14px">世界与账号</div>' + v4tools : '') +
+    (v4tut ? '<div class="sect-title" style="margin-top:14px">上手帮助</div>' + v4tut +
+      '<div class="hint" style="margin-top:6px">第一次玩建议先看一遍：15 步，会直接把界面上的东西圈出来给你看（随时能退出，下次从这里继续）。</div>' : '') +
     '<div class="sect-title" style="margin-top:14px">设置</div><div class="row">' +
       '<button class="btn sm ' + (S.ui.pace === 'beat' ? 'warn' : '') + '" onclick="togglePace()">🎬 战斗节奏：' + (S.ui.pace === 'beat' ? '节拍模式' : '即时模式') + '</button>' +
       '<button class="btn sm ' + (S.ui.amb ? 'ok' : '') + '" onclick="toggleAmb()">🌫️ 环境底噪：' + (S.ui.amb ? '开' : '关') + '</button>' +
