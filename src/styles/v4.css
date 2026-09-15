@@ -96,8 +96,20 @@
 .v4world .wname{font-size:14px;font-weight:600;color:var(--bone)}
 .v4world .wveh{font-size:11px;color:var(--dim);border:1px solid var(--line2);border-radius:4px;padding:3px 7px;white-space:nowrap}
 .v4world .wmapwrap{flex:1 1 auto;min-height:0;overflow:auto;border:1px solid var(--line);border-radius:6px;background:#0b0d10;padding:6px}
-.v4world .wgrid{display:grid;gap:2px;min-width:0;grid-template-columns:repeat(24,minmax(18px,28px))!important;justify-content:center}
+/* M25.4：宽屏把"路线预览 + 悬停详情"合成一条 —— 格子尺寸完全由"地图框能拿到多少高度"决定，
+   省下的一整行直接变成格子更大（实测这 32px 正好是 22px 格 与 24px 格 的分界）。
+   悬停详情不再单独占一行：鼠标划过时它会写进上面那条预览条（world-ui 的 hover() 里判断）。 */
+@media (min-width:1700px){
+  .v4world .wbar{gap:2px;margin:4px 0}
+  .v4world .wbar.hoveroff .whover{display:none}
+  .v4world .wpreview{min-height:26px;padding:4px 8px}
+}
+.v4world .wgrid{display:grid;gap:2px;min-width:0;grid-template-columns:repeat(24,minmax(18px,28px));justify-content:center;align-items:start}
 @media (max-width:1399px){.v4world .wgrid{min-width:620px}}
+/* M25.4：这里原来有一条 `grid-template-columns:repeat(24,minmax(20px,28px))!important`（窄屏放大格子），
+   它会把 fitMap 写进去的 inline `repeat(24, Npx)` **整个覆盖掉** —— 实测：inline 写的是 18px、
+   计算值是 27.65px，于是永远缩不下去（地图框滚 210px、方块被压成扁的）。
+   现在格子尺寸只由 fitMap 一个地方决定（它已经考虑了宽度上限），CSS 不再插手列宽。 */
 /* M10 触屏：地图是"点区块"这个核心操作，24px 一格手指点不准。
    窄屏把格子放大到 30~36px（靠左右滑动看地图），并给滚动容器加惯性滚动。 */
 @media (max-width:860px){
@@ -131,7 +143,8 @@
 .v4world .wlegend .sw.ic{display:inline-flex;align-items:center;justify-content:center;font-size:9px;background:#12151a}
 .v4world .wlegend .sw.cur-sw{background:transparent;outline:2px solid var(--bone)}
 .v4world .wlegend .sw.path-sw{background:transparent;outline:1px dashed rgba(207,210,214,.6)}
-.v4world .wcell{aspect-ratio:1/1;min-width:0;min-height:18px;border-radius:2px;display:flex;align-items:center;justify-content:center;
+/* M25.4：box-sizing:border-box 必须写 —— 否则 1px 边框会让每格实际占 2px 多，24 行就多出 48px 的溢出 */
+.v4world .wcell{box-sizing:border-box;aspect-ratio:1/1;min-width:0;min-height:18px;border-radius:2px;display:flex;align-items:center;justify-content:center;
   font-size:11px;line-height:1;border:1px solid transparent;user-select:none}
 .v4world .wcell.seen{cursor:pointer}
 .v4world .wcell.seen:hover{border-color:var(--accent);transform:scale(1.12);z-index:2}

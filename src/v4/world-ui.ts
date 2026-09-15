@@ -383,8 +383,10 @@ export function renderMapPanel(): string {
   h += mapTabs();
   h += '<div class="whead">' +
     '<div class="wmeta">' +
-      '<div class="wname">' + (home ? '🏠 安全屋（' : (poi ? poi.icon + ' ' + poi.name + '（' : '📍 ')) + esc(b.name) + '）</div>' +
-      '<div class="hint">' + biomeName(b) + ' · 危险 ' + b.danger + ' · 距实验室 ' + labTxt + '</div>' +
+      '<div class="wname">' + (home ? '🏠 安全屋（' : (poi ? poi.icon + ' ' + poi.name + '（' : '📍 ')) + esc(b.name) + '）' +
+        /* M25.4：把"地貌 · 危险 · 距实验室"并到同一行 —— 地图格子尺寸是靠"地图框还能拿多少高度"决定的，
+           省下的每一行都是格子变大的一像素（原来这条 hint 单独占一行）。 */
+        '<span class="hint" style="font-weight:400;margin-left:8px">' + biomeName(b) + ' · 危险 ' + b.danger + ' · 距实验室 ' + labTxt + '</span></div>' +
     '</div>' +
     // R5：常驻信息位只有 3 个，睡眠债并进 AP 显示，不新开一格
     '<div class="wveh">' + (s.veh ? '🚗 油 ' + s.veh.fuel + ' · 车况 ' + s.veh.hp + '%' : '🚶 步行') +
@@ -409,11 +411,14 @@ export function renderMapPanel(): string {
 
   // C10/R4：预览条与悬停详情放在**地图上方**（用户反馈：放地图下面等于藏到屏幕最底部，
   // 而这两行恰恰是"这格是谁、去一趟多少钱"的关键信息，必须一眼看到）。
-  h += '<div class="wbar">';
+  // M25.4：宽屏（≥1700px，地图与卡片墙并排）时悬停行合并进预览条（见 .wbar.hoveroff）——
+  // 格子尺寸靠"地图框能拿多少高度"决定，省下的一行直接变成格子更大。
+  h += '<div class="wbar hoveroff">';
   h += '<div class="wpreview' + (preview ? (preview.ok ? ' on' : ' bad') : '') + '" id="v4-preview">' + (preview
     ? '<b>' + (preview.ok ? '🧭 路线预览' : '⛔ 走不了') + '</b> · ' + esc(preview.text) +
       (preview.ok ? ' <button class="btn xs primary" onclick="V4World.confirmTrip()">出发</button><button class="btn xs" onclick="V4World.cancelTrip()">取消</button>' : ' <button class="btn xs" onclick="V4World.cancelTrip()">知道了</button>')
     : '<span class="hint">点一个点亮的区块 → 这里显示路线与花费 → 再点一次（或点「出发」）才动身。</span>') + '</div>';
+  /* M25.4：悬停行保留在 DOM 里（宽屏被 CSS 藏起来、详情改写到预览条），窄屏它才是那一行 */
   h += '<div class="whover" id="v4-hover"><span class="hint">鼠标移到格子上（手机点一下）：这里显示那块地的名字、危险、距离和里面有什么。</span></div>';
   h += '</div>';
 
@@ -833,31 +838,45 @@ function fitMap() {
   const chrome = cardBox.height - wrap.getBoundingClientRect().height;   // 标题行/预览条/悬停行/图例/内边距
   const avail = viewBox.bottom - cardBox.top - chrome - 8;
   if (avail < 300) return;                                             // 太窄就不折腾，交给容器自己滚
-  // M21：格子尺寸同时受**宽**约束（左列一旦是固定宽度，高度算出来的 28px 会把地图撑到横向滚动）。
-  // 另外给卡片墙留 ~150px「露头」：地图再大也是 24×24，操作卡片一张都看不见才是真问题。
+  /* M25.4：预算取 `.wmapwrap` 的**实际高度**（它是 flex:1，卡片高度定死时它才是真可用高度）。
+     上面那个 avail 是按"卡片比视口矮多少"倒推的，在"卡片高度=视口高度、内部 flex 分配"
+     的布局里会高估约 111px —— 于是算出 28px 的格子、塞不进 512px 的框 → 地图又滚了/方块被压扁。
+     宽度仍然按 byW 卡住（左列固定宽度时高度算出来的值会把地图撑出横向滚动）。 */
   const availW = wrap.clientWidth - 14;                                 // 减去 .wmapwrap 的内边距与边框
   const byW = Math.floor((availW - 23 * 2) / 24);
-  /* M25.1：不再给卡片墙留 150px「露头」——≥1700px 时地图与卡片墙是**两列**，各滚各的，
-     留那个余量只会让地图白缩 6px、还把整张图顶出容器（用户：「现在地图怎么又能滚动了」）。
-     下限 18px（点击命中区的绝对底线）：地图面板本身不滚，装不下的唯一出路就是把格子缩小。 */
-  let cell = Math.max(18, Math.min(28, Math.floor((avail - 24) / 24), byW));
+  const byBox = Math.floor((wrap.clientHeight - 16 - 23 * 2) / 24);     // 16 = 上下 padding+边框，23*2 = 留一点余量
+  /* M25.4：下限从 18px 回到 **24px**（R4 定的点击命中区）——之前那版 18px 是为了掩盖"缩不下去"的
+     假象：真正让地图塞得下的手段是方块尺寸**由列宽推导**（不再写死行高）+ 不在别处覆盖列宽。
+     现在 byBox 算得准了，24px 也能塞进 512px 的地图框（24×24 + 2px 缝 = 622px 的内容，
+     靠 .wcell 的 box-sizing:border-box 与 2px 缝的边界取整刚好收进容器）。 */
+  let cell = Math.max(24, Math.min(28, byBox, byW));
   const apply = (c: number) => {
     const tpl = 'repeat(24, ' + c + 'px)';
     if (grid.style.gridTemplateColumns !== tpl) {
       grid.style.gridTemplateColumns = tpl;
-      grid.style.gridAutoRows = c + 'px';
+      /* M25.4：**不要再写 gridAutoRows** —— 行高与列宽分别写两个数，改一个忘一个就会出现
+         "列 28px 行 21px"的扁方块（用户截图：「地图方块被压缩了，现在是扁的长方体」）。
+         格子自己有 aspect-ratio:1/1，让**行高由列宽推导**：只维护一个数，方块永远是正方形。 */
+      grid.style.gridAutoRows = '';
+      grid.style.gridTemplateRows = '';
+      grid.style.alignItems = 'start';        // 行框比格子高时也不许拉伸（双保险）
       grid.style.minWidth = '0';
     }
   };
   apply(cell);
-  /* M25.1：一次算准，不靠"量了再缩"的迭代 —— 网格行是按内容算的，DOM 写完那一刻量到的
-     clientHeight 还是**布局中途**的旧值（实测 wrap.clientHeight=512 时，#v4world 已经 796，
-     按 512 算出来的 28px 会把 514px 的图塞进 512px 的框里）。所以这里改成两遍：
-     先按「卡片高度 - 除地图框以外的兄弟节点高度」反推，再用真实溢出量收口。 */
+  /* M25.4：把"溢出多少就缩多少"改成**直接算目标边长**再一步到位 ——
+     原来按溢出量减，一次会缩过头（实测 24px 时溢出约 103px、算出减 5 → 19px，
+     比真正需要的 23px 小 4px，格子白白小了 17%）。这里按"网格高度 = 24c + 46"反解 c。 */
+  const fitCell = (cur: number, over: number, rows = 24): number =>
+    Math.max(18, Math.min(cur, Math.floor((rows * cur + 46 - over - 48) / rows)));
   let guard = 6;
   while (wrap.scrollWidth > wrap.clientWidth + 1 && cell > 18 && guard-- > 0) apply(--cell);   // 先保宽度不滚
   guard = 6;
-  while (wrap.scrollHeight > wrap.clientHeight + 1 && cell > 18 && guard-- > 0) apply(--cell); // 再保高度不滚
+  while (wrap.scrollHeight > wrap.clientHeight + 1 && cell > 18 && guard-- > 0) {
+    const over = wrap.scrollHeight - wrap.clientHeight;
+    const next = fitCell(cell, over);
+    apply(next >= cell ? cell - 1 : next);
+  }
 }
 
 /** M21.1：大区图（12×12）也要"一屏装下"。用户报障：详情里的路程报价与「出发」被挤在屏幕外。
@@ -1012,11 +1031,15 @@ export const V4World = {
     L.render();
   },
 
-  /** 悬停/长按详情（R6：可读文本，不依赖 emoji 含义） */
+  /** 悬停/长按详情（R6：可读文本，不依赖 emoji 含义）。
+      M25.4：宽屏把悬停行收进预览条（CSS `.v4world .wbar.hoveroff .whover{display:none}`）——
+      所以这里要按"谁看得见"来写：悬停行被藏起来时，详情就写进预览条，别写进一个看不见的盒子。 */
   hover(x: number, y: number) {
     const s = sw(), w = worldOf(s.seed, s.region);
     const b = blockAt(w, x, y);
-    const box = document.getElementById('v4-hover');
+    const hidden = document.getElementById('v4-hover');
+    const merged = hidden ? getComputedStyle(hidden).display === 'none' : false;
+    const box = merged ? document.getElementById('v4-preview') : hidden;
     if (!b || !box) return;
     if (!b.revealed) { box.innerHTML = '<span class="lb">📍 格子详情</span>(' + x + ',' + y + ') 未探索区域——走到边上才能看清。'; return; }
     const d = Math.max(Math.abs(b.x - s.cur.x), Math.abs(b.y - s.cur.y));
