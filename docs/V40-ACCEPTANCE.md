@@ -1858,3 +1858,48 @@ M27 的 15 步高亮教程解决的是"第一次不知道怎么点"，但**练�
 - **P2**：`zone:<POI>` 类委托只检查"当前区域有没有这个 POI"（`rollOffers` 的 `hasPoi`），**不看它还有没有剩余次数**——
   药房被翻空之后板上照样会发「补给清单」。本批之后"搜一次空药房"就能完成（不是死局），但更好的做法是
   在委托卡上标注"这一带的药房已经翻空了"，留待下一批。
+
+---
+
+## 四十五、作弊码机制下线（用户：「删除作弊码机制」）
+
+### 用户口径
+> 「删除作弊码机制」
+
+### 原来挂着什么（v1 起的老彩蛋，一路带进了 v4）
+- `src/legacy/game.ts`：`cheatBuf` 缓存最近 20 个按键，敲出 `bobbychina32747` 就调 `cheat()` ——
+  生命 / 弹药 / 材料拉满（`hpMax=hp=1000000`、`ammo=mat=99999`）、感染清零、饱食口渴回满，
+  并置 `S.flags.cheat = true`（此后 `award()` 第一行就 `return`，**成就永久锁死**）。
+- 帮助弹窗「快捷键」段末尾写着「**彩蛋**：老版本的作弊码仍然有效。」——等于把入口印在说明书里。
+- `window.cheatBuf` 用访问器挂出来（外部脚本可读写），`cheat` 也在 `Object.assign(window, {...})` 的导出名单里。
+- 线上版（`bobbychina.github.io/games/zombie-survival/`）当日命中 `bobbychina32747` **1 处** —— 也就是当时人人可敲。
+
+### 改法（全部在 `src/legacy/game.ts`）
+1. 删 `cheatBuf` + `cheat()`，以及 keydown 处理器里那行按键缓存匹配（战斗/页签快捷键原样保留）；
+2. 删导出名单里的 `cheat`，删 `Object.defineProperty(window, "cheatBuf", ...)` 访问器；
+3. 删帮助弹窗的「彩蛋」那行（快捷键段 15 个 `<kbd>` 未动）；
+4. `award()` 去掉 `if(S.flags.cheat) return;` —— 守卫随机制一起消失；
+5. 老档兼容：`sanitizeSave()` 里加 `delete out.flags.cheat;` —— 旧档里的旗标一并清掉，
+   否则那批档的成就会被永久锁死，且 `flags.cheat` 会跟着加密存档一直传下去。
+   **不回溯**"已经被刷过的数值"（`hpMax=1000000` 这类）：那是玩家自己的档，不做隐形惩罚；
+   而且它在完整性校验里本来就会被 `BOUNDS`（`hpMax ≤ 10000`）判成 `implausible`，M29 口径不变。
+
+### 实测证据
+- `npx tsc --noEmit` 干净；单测 **411/411**（33 个文件，含 M34 并行批次留下的用例）。
+- 真浏览器探针 `docs/_m36_probe.mjs`（headless Thorium + CDP，**真键盘事件**逐字敲 `bobbychina32747`）**9/9 ALL PASS**：
+  ① `window.cheat` / `window.cheatBuf` 均为 `undefined`，`openHelp` 等正常导出未被误删；
+  ② 敲完整串后 `hp 100/100、mat 12、ammo 24` 纹丝不动、`flags.cheat` 缺席、日志无「作弊模式 / 权限已激活」；
+  ③ 帮助弹窗无「彩蛋 / 作弊码」文案，快捷键段 15 个 `<kbd>` 还在；
+  ④ `sanitizeSave({flags:{cheat:true,gotGun:true}})` → `cheat` 没了、`gotGun` 保留；伪造 `flags.cheat=true` 后 `award()` 照样解锁成就；
+  ⑤ 全程 0 个未捕获异常。
+- 构建产物复查：`dist/index.html` / `丧尸末日生存.html` / `docs/index.html`（各 617619 字节）对
+  `bobbychina32747|cheatBuf|作弊码|作弊模式|Bobby 模式` 命中 **0**（改动前同一扫描 1 命中）。
+- 截图 OCR 复查（`node E:\Files\myagent\ocr-vision.mjs docs/_m36_shots/a3_help_modal.png --tile 4`）：
+  帮助弹窗四块逐块识别「无空白、无遮挡、无乱码」，且**四块里都没有出现「彩蛋」「作弊码」字样**。
+
+### 已知问题
+- **归档不动**：`release/v1-单文件版.html`（`activateCheat()` 弹窗问口令）、`release/v3.0-单文件版.html` 里
+  仍留着各自版本的作弊码 —— 它们是历史发布快照，按"归档不改"处理；另有两份独立老工程同样保留
+  （`E:\Files\Games\webGames\丧尸末日生存.html`、`E:\Files\Games\pythonGames\Bobby的丧尸末日生存文字游戏.py`，后者还带"激活作弊码/作弊界面"按钮）。
+  要一并清就以新口径为准，**不在本批范围内**。
+- **反作弊口径未变**：仍然"只取证、不阻止"（加密存档 + 指纹链），不做任何反 DevTools 手段。

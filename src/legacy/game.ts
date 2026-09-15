@@ -688,6 +688,7 @@ function sanitizeSave(d){
     if(MERCHANT.some(m => m.id === id)) out.shop.bought[id] = Math.floor(num(sh.bought[id], 0, 0, 99));
   out.seen = {}; if(out.seen && typeof out.seen === 'object') for(const z in out.seen) if(ZONES[z]) out.seen[z] = 1;
   out.flags = deepMerge(base.flags, (out.flags && typeof out.flags === 'object') ? out.flags : {});
+  delete out.flags.cheat;   // 作弊码机制已下线：老档里留下的旗标一并清掉（不然成就会被永久锁死）
   out.flags.tips = (out.flags.tips && typeof out.flags.tips === 'object') ? out.flags.tips : {};
   out.ui = deepMerge(base.ui, (out.ui && typeof out.ui === 'object') ? out.ui : {});
   out.ui.music = out.ui.music !== false;      // 布尔开关：老档没有这个字段时按"开"处理
@@ -1129,7 +1130,6 @@ function firstTip(key, msg){
 }
 function award(id){
   if(S.ach.indexOf(id) >= 0) return;
-  if(S.flags.cheat) return;   // 作弊模式下不再解锁成就
   const a = ACHIEVEMENTS.find(x => x.id === id); if(!a) return;
   S.ach.push(id); sfx('win');
   toast('🏆 成就解锁 · ' + a.n, a.d, 'ok');
@@ -3507,24 +3507,12 @@ function openHelp(){
     '<div class="sect-title" style="margin-top:14px">快捷键</div>' +
     '<div class="hint" style="line-height:2">' +
     '<kbd>E</kbd> 探索　<kbd>B</kbd> 据点　<kbd>I</kbd> 背包　<kbd>C</kbd> 制作　<kbd>K</kbd> 技能　<kbd>Q</kbd> 任务　<kbd>J</kbd> 图鉴　<kbd>S</kbd> 统计　<kbd>N</kbd> 睡觉<br>' +
-    '战斗中：<kbd>1</kbd> 攻击　<kbd>2</kbd> 防御　<kbd>3</kbd> 用药　<kbd>4</kbd> 投掷　<kbd>5</kbd> 逃跑　<kbd>Esc</kbd> 关闭弹窗<br>' +
-    '<b>彩蛋</b>：老版本的作弊码仍然有效。</div>',
+    '战斗中：<kbd>1</kbd> 攻击　<kbd>2</kbd> 防御　<kbd>3</kbd> 用药　<kbd>4</kbd> 投掷　<kbd>5</kbd> 逃跑　<kbd>Esc</kbd> 关闭弹窗</div>',
     footer:'<button class="btn" data-close>明白了</button>' });
-}
-let cheatBuf = '';
-function cheat(){
-  S.flags.cheat = true;
-  S.hpMax = 1000000; S.hp = 1000000; S.ammo = 99999; S.mat = 99999; S.infect = 0;
-  S.hun = 100; S.thi = 100; S.sta = S.staMax;
-  sfx('win');
-  log('⚡ 权限已激活：Bobby 模式。生命 / 弹药 / 材料拉满（成就已关闭）。', 'success');
-  toast('⚡ 作弊模式', '资源拉满，成就系统关闭。', 'bad');
-  render();
 }
 document.addEventListener('keydown', e => {
   if(e.target && /INPUT|TEXTAREA/.test(e.target.tagName)) return;
   const k = e.key.toLowerCase();
-  if(/^[a-z0-9]$/.test(k)){ cheatBuf = (cheatBuf + k).slice(-20); if(cheatBuf.indexOf('bobbychina32747') >= 0){ cheatBuf = ''; cheat(); return; } }
   if(battle){
     const map = { '1':() => combatAct(ITEMS[S.eq.wpn] && ITEMS[S.eq.wpn].ammo ? 'shoot' : 'melee'), '2':() => combatAct('guard'),
       '3':() => combatAct('item'), '4':() => combatAct('throw'), '5':() => { if(!battle.opts.noFlee) combatAct('flee'); } };
@@ -3632,7 +3620,7 @@ function bootLab(){
 /* 内联 onclick 只能看到 window 上的属性，而顶层 let/const 不是 window 属性：
    这里把状态对象挂成访问器，保证内联事件与外部脚本读写的是同一份状态。 */
 /* ── C23 工程加固：显式导出（内联 onclick 与外部验证脚本依赖这些名字）── */
-Object.assign(window, { VER, SAVE_KEY, V1_KEY, ITEMS, itemName, isWpn, ZOMBIES, ZONES, BASE_UP, RECIPES, SKILLS, COMPANIONS, MERCHANT, LORE, ACHIEVEMENTS, AFFIX, BOUNTY_POOL, QUEST_BOUNTIES, SIDE_QUESTS, MODS, ZONE_SIL, newState, RM, BAK_KEY, writeSave, saveGame, autosave, readSavedRaw, lsGet, lsSet, sanitizeSave, MIGRATIONS, migrateSave, loadGame, confirmRestart, migrateV1, deepMerge, restoreBackup, $, $$, clamp, rnd, ri, chance, pick, wpick, esc, AUDIO_MAX, actx, AMB, ambStart, ambBlip, ambStop, ambMode, ambSync, MUS, MUS_MAX, CHORDS, PENTA, mtof, musicMood, musicTempo, musicVoice, musicNoiseHit, musicBar, musicStart, musicStop, musicSting, tone, arnd, noise, SFX, sfx, floatText, shake, toast, firstTip, award, addXP, log, clearLog, replayLog, hr, skillBonus, capWeight, carryWeight, encumbrance, armorTotal, addItem, takeItem, itemCount, has, ammoInMag, phaseName, spendAP, tickVitals, statMods, sleepNight, nightRaid, combatRepair, rescueEnding, recapHtml, TABS, renderTop, bar, renderHud, nextStep, renderTabs, setTab, render, baseLevel, modal, closeModal, closeAllModals, mkFoe, startCombat, openCombatModal, cbLog, drawCombat, battleTarget, siegePanelHtml, effDmg, combatAct, combatAfter, combatResolve, hitFoe, killFoe, afterPlayerTurn, companionTurn, foeTurn, endCombat, gameOver, restart, zoneOpen, zoneLockText, renderExplore, openZone, drawZone, grant, searchZone, applyFirst, lootItem, encounterRoll, survivorEvent, recruit, restHere, useConsumable, equipItem, equipWeapon, dropItem, deposit, withdraw, TYPE_LABEL, TYPE_TAG, renderInv, renderSideQuests, renderMods, renderCraft, craft, renderBase, scaledCost, build, renderSkills, QUEST_STAGES, questProgress, checkQuest, renderQuest, GOAL_DAY, MAP, WOUND_DEF, daysToHorde, nextEventText, threatLevel, travelCost, travelTo, goHome, defMax, defInit, repairDefense, TRAPS, buildTrap, hasWound, addWound, cureWound, woundTick, spoilTick, powerOff, raiseHorde, mapClick, renderMap, renderCalendar, noiseCheck, runScore, bountyBudget, bountyDef, metricValue, rollBounties, bountyTick, claimBounty, renderBounties, affixRoll, applyAffix, sideActive, sideTick, sideAdvance, sideNightCheck, modsOf, modSum, modMul, addMod, shopLeft, shopDayCheck, startFinalBattle, bossPhase2, finalVictory, enterEndless, renderCodex, discoverLore, renderStats, checkAch, merchantRate, openMerchant, buyMerchant, openMenu, openHelp, cheat, firstGesture, togglePace, toggleAmb, toggleMusic, initGame,
+Object.assign(window, { VER, SAVE_KEY, V1_KEY, ITEMS, itemName, isWpn, ZOMBIES, ZONES, BASE_UP, RECIPES, SKILLS, COMPANIONS, MERCHANT, LORE, ACHIEVEMENTS, AFFIX, BOUNTY_POOL, QUEST_BOUNTIES, SIDE_QUESTS, MODS, ZONE_SIL, newState, RM, BAK_KEY, writeSave, saveGame, autosave, readSavedRaw, lsGet, lsSet, sanitizeSave, MIGRATIONS, migrateSave, loadGame, confirmRestart, migrateV1, deepMerge, restoreBackup, $, $$, clamp, rnd, ri, chance, pick, wpick, esc, AUDIO_MAX, actx, AMB, ambStart, ambBlip, ambStop, ambMode, ambSync, MUS, MUS_MAX, CHORDS, PENTA, mtof, musicMood, musicTempo, musicVoice, musicNoiseHit, musicBar, musicStart, musicStop, musicSting, tone, arnd, noise, SFX, sfx, floatText, shake, toast, firstTip, award, addXP, log, clearLog, replayLog, hr, skillBonus, capWeight, carryWeight, encumbrance, armorTotal, addItem, takeItem, itemCount, has, ammoInMag, phaseName, spendAP, tickVitals, statMods, sleepNight, nightRaid, combatRepair, rescueEnding, recapHtml, TABS, renderTop, bar, renderHud, nextStep, renderTabs, setTab, render, baseLevel, modal, closeModal, closeAllModals, mkFoe, startCombat, openCombatModal, cbLog, drawCombat, battleTarget, siegePanelHtml, effDmg, combatAct, combatAfter, combatResolve, hitFoe, killFoe, afterPlayerTurn, companionTurn, foeTurn, endCombat, gameOver, restart, zoneOpen, zoneLockText, renderExplore, openZone, drawZone, grant, searchZone, applyFirst, lootItem, encounterRoll, survivorEvent, recruit, restHere, useConsumable, equipItem, equipWeapon, dropItem, deposit, withdraw, TYPE_LABEL, TYPE_TAG, renderInv, renderSideQuests, renderMods, renderCraft, craft, renderBase, scaledCost, build, renderSkills, QUEST_STAGES, questProgress, checkQuest, renderQuest, GOAL_DAY, MAP, WOUND_DEF, daysToHorde, nextEventText, threatLevel, travelCost, travelTo, goHome, defMax, defInit, repairDefense, TRAPS, buildTrap, hasWound, addWound, cureWound, woundTick, spoilTick, powerOff, raiseHorde, mapClick, renderMap, renderCalendar, noiseCheck, runScore, bountyBudget, bountyDef, metricValue, rollBounties, bountyTick, claimBounty, renderBounties, affixRoll, applyAffix, sideActive, sideTick, sideAdvance, sideNightCheck, modsOf, modSum, modMul, addMod, shopLeft, shopDayCheck, startFinalBattle, bossPhase2, finalVictory, enterEndless, renderCodex, discoverLore, renderStats, checkAch, merchantRate, openMerchant, buyMerchant, openMenu, openHelp, firstGesture, togglePace, toggleAmb, toggleMusic, initGame,
   /* M25：口径/弹种/辐射这几个查询函数被验收探针与将来的 UI 直接用，一并挂出去 */
   CALIBERS, AMMO_OF, ammoCount, loadedAmmo, setLoaded, cycleLoaded, penMul, radTier, apCapOf, fitnessApBonus, phaseOf, PHASE_LABEL,
   syncAmmo, materializeAmmoPool, ammoShopRows,   // M32b：弹药镜像收口 + 货架弹药段（验收探针直接调）
@@ -3649,4 +3637,3 @@ Object.defineProperty(window, "modalStack", { get: function(){ return modalStack
 Object.defineProperty(window, "modalSeq", { get: function(){ return modalSeq; }, set: function(v){ modalSeq = v; }, configurable: true });
 Object.defineProperty(window, "combatModalId", { get: function(){ return combatModalId; }, set: function(v){ combatModalId = v; }, configurable: true });
 Object.defineProperty(window, "codexCat", { get: function(){ return codexCat; }, set: function(v){ codexCat = v; }, configurable: true });
-Object.defineProperty(window, "cheatBuf", { get: function(){ return cheatBuf; }, set: function(v){ cheatBuf = v; }, configurable: true });
