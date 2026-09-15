@@ -25,6 +25,10 @@ const uiZoom = (): number => {
   const z = Number((window as any).V4Scale?.zoomNow?.() ?? 1);
   return (isFinite(z) && z > 0) ? z : 1;
 };
+/** M34：地图摆法（float=右上角悬浮窗 / inline=探索页顶部）。理由同 uiZoom —— 不 import ui-scale，走 window 上那份。 */
+const prefsMapStyle = (): 'float' | 'inline' => {
+  try { return (window as any).V4Scale?.mapStyle?.() === 'inline' ? 'inline' : 'float'; } catch { return 'float'; }
+};
 /** M25.2：当前体能等级 —— 行动力上限的加成来源（每 3 级 +1，最多 +5），面板与地图必须用同一个数 */
 const fitLv = (): number => Number((L.S as any)?.skills?.fitness ?? 0);
 import { ensureEvac, evacAvailable, fireFlare } from './evac';
@@ -608,13 +612,17 @@ export function toolsButtonsHtml(): string {
   const who = accountUser();
   /* M32：地图开关也放这里（用户要「在哪里都能开」）——顶栏还有一个 🗺️ 按钮，两处等价 */
   const mapOpen = (window as any).V4Scale ? (window as any).V4Scale.mapOpen() : true;
+  /* M34：地图摆法可配置，说明文案跟着偏好走（免得写成"地图是悬浮窗"而玩家其实选的是嵌入） */
+  const mapWhere = (() => {
+    try { return String((window as any).V4Scale?.mapStyleNote?.() || ''); } catch { return ''; }
+  })() || '地图是右上角的悬浮窗（任何页签都能开关，按 M 也行）。';
   return '<div class="row">' +
     '<button class="btn sm ' + (mapOpen ? 'ok' : '') + '" onclick="closeAllModals();V4Scale.toggleMap()" title="本地/大区地图（快捷键 M）">🗺️ 地图：' + (mapOpen ? '开' : '关') + '</button>' +
     '<button class="btn sm" onclick="closeAllModals();V4Worlds.open()" title="多世界 / 挑战码 / 幽灵据点 / 本机统计">🌍 世界 · 分享</button>' +
     '<button class="btn sm" onclick="closeAllModals();V4Account.open()" title="' + esc(accountSummary()) + '">' +
       (who ? '👤 ' + esc(String(who).slice(0, 14)) : '👤 注册 / 登录') + '</button>' +
     '</div>' +
-    '<div class="hint" style="margin-top:6px">地图是右上角的悬浮窗（任何页签都能开关，按 M 也行）；多世界、挑战码、幽灵据点、本机统计与云存档也都在这里。</div>';
+    '<div class="hint" style="margin-top:6px">' + mapWhere + '　多世界、挑战码、幽灵据点、本机统计与云存档也都在这里。</div>';
 }
 
 /** 当前区块卡（原来的"POI 面板"）：这一格有什么、能搜什么、有什么活儿可干。
@@ -781,10 +789,19 @@ export function mountWorldPanel() {
   const view = document.getElementById('view');
   if (!view) return;
   /* M32：地图不再塞进探索页 —— 它住在右上角的悬浮窗里（#v4mapwin），**任何页签都能开**。
-     所以 mountWorldPanel 现在只管两件事：
-       ① 确保悬浮窗存在，并把地图卡放进它的 body；
+     所以 mountWorldPanel 现在管两件事：
+       ① 把地图卡摆到该在的地方（M34：摆法可配置 —— 悬浮窗 / 探索页顶部，同一张 #v4world 换个宿主）；
        ② 探索页这边只维护卡片墙（整宽、单列），并把 legacy 的旧节点收进卡片墙。 */
   ensureMapWindow();
+  const style = prefsMapStyle();
+  const winBody = document.querySelector('#v4mapwin .mwbody') as HTMLElement | null;
+  /* inline 只在探索页生效：背包/人体页里地图卡留在窗 body 待命，
+     否则它会跟着 legacy 那些页面的内容一起渲染出来（那不叫"嵌入探索页"）。 */
+  const inlineHere = style === 'inline' && !!S && !S.over && S.tab === 'explore';
+  let map = document.getElementById('v4world') as HTMLElement | null;
+  if (!map) { map = document.createElement('div'); map.id = 'v4world'; map.className = 'card v4world'; }
+  const host = inlineHere ? view : (winBody || view);
+  if (map.parentElement !== host) host.appendChild(map);     // 换宿主（两种摆法共用同一张卡）
   if (!S || S.over) {
     view.classList.remove('v4-board');
     paintMapWindow();
@@ -805,12 +822,8 @@ export function mountWorldPanel() {
 
   const mapHtml = renderMapPanel();
   const cardsHtml = renderCards();
-  /* M32：地图卡现在住在悬浮窗里 —— 注意 **必须自己创建** #v4world（旧代码是插进 #view 时顺手建的，
+  /* M32：**必须自己创建** #v4world（旧代码是插进 #view 时顺手建的，
      改成悬浮窗之后那条路径没了，实测第一次就是这里漏了：窗口在、body 空的、地图压根没画）。 */
-  let map = document.getElementById('v4world') as HTMLElement | null;
-  if (!map) { map = document.createElement('div'); map.id = 'v4world'; map.className = 'card v4world'; }
-  const body = document.querySelector('#v4mapwin .mwbody') as HTMLElement | null;
-  if (map.parentElement !== body && body) body.appendChild(map);
   if (map.dataset.sig !== mapHtml) { map.innerHTML = mapHtml; map.dataset.sig = mapHtml; }
   paintMapWindow();
 
@@ -827,7 +840,18 @@ export function mountWorldPanel() {
     board.dataset.sig = cardsHtml;
     adoptLegacy(view, board);          // 卡片墙重建后，把 legacy 那几张（委托板/日历）重新认领进来
   }
-  if (view.firstChild !== board) view.insertBefore(board, view.firstChild);
+  /* M34：inline 时地图卡也在 #view 里，而且必须排在卡片墙**前面**（DOM 顺序 = 网格行顺序：地图在上）。
+     守卫要写全：节点已经是第一个子节点时再 insertBefore 也算一次 childList 变更，
+     会触发 main.ts 那个 MutationObserver → mountWorld 再进来一次（死循环）。
+     ⚠ 探针实测抓到的坑：legacy 的 render() 会把 #view 的 outerHTML 整块换掉 —— 卡片墙是**新建**的
+     （`board.parentElement` 为 null），所以 inline 分支里也必须把它挂回 #view，否则嵌入模式下
+     行动卡片整块消失（地图在、卡片没了）。 */
+  if (inlineHere) {
+    if (view.firstChild !== map) view.insertBefore(map, view.firstChild);
+    if (board.parentElement !== view) view.appendChild(board);
+  } else if (view.firstChild !== board) {
+    view.insertBefore(board, view.firstChild);
+  }
   view.classList.add('v4-board');
   /* M32：卡片墙是刚刚才建的，字号（zoom）要在这里补一次 —— applyScale 在 boot 时跑过一次，
      那时 #v4cards 还不存在（实测：探针读到的 zoom 一直是 none）。 */
@@ -911,9 +935,12 @@ function fitMap() {
   const view = document.getElementById('view');
   const card = document.getElementById('v4world');
   if (!view || !card || !view.classList.contains('v4-board')) return;
-  /* M32：地图在悬浮窗里，折叠时量不到尺寸 —— 直接跳过（否则会拿 0 去反推格子边长） */
+  /* M32：地图在悬浮窗里，折叠时量不到尺寸 —— 直接跳过（否则会拿 0 去反推格子边长）。
+     M34：inline 模式下地图在探索页里，"窗开着没"不再是判据 —— 改成看**卡片自己有没有尺寸**，
+     两种摆法（悬浮窗折叠 / 嵌入页折叠）都由这一条兜住。 */
   const win = document.getElementById('v4mapwin');
-  if (!win || !win.classList.contains('open')) return;
+  if (prefsMapStyle() !== 'inline' && (!win || !win.classList.contains('open'))) return;
+  if (!card.offsetWidth && !card.offsetHeight) return;
   const rgrid = card.querySelector('.rgrid') as HTMLElement | null;
   if (rgrid) { fitRegion(view, card, rgrid); return; }        // 大区图走 12×12 那套算法
   const wrap = card.querySelector('.wmapwrap') as HTMLElement | null;
@@ -1119,6 +1146,8 @@ function runTrip(target: { x: number; y: number }, t: Trip) {
 }
 
 export const V4World = {
+  /** M34：重挂一次世界面板（切换地图摆法后必须重挂 —— 地图卡要换宿主） */
+  remount() { try { mountWorldPanel(); } catch (e) { console.warn('[v4] 世界面板重挂失败', e); } },
   /** M16：本地地图 / 大区地图切换（内联 onclick：V4World.mapMode('region')） */
   mapMode(m: string) { return setMapMode(m); },
   /** M17.2：大区地图上色图层（地貌 / 危险度） */

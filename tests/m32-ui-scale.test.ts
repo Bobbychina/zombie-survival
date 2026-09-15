@@ -1,10 +1,12 @@
 /* M32 单测：字号适配 + 地图悬浮窗（纯逻辑）
    ① 档位吸附与步进；② 脏数据不崩；③ 偏好读写（含无痕模式存不了）；④ zoom 换算；
-   ⑤ 悬浮窗标题/头部文案；⑥ 卡片数估算随字号变小。 */
+   ⑤ 悬浮窗标题/头部文案；⑥ 卡片数估算随字号变小。
+   M34 追加：⑦ 地图摆法（悬浮窗 / 嵌入页内）的校验、文案与存取。 */
 import { describe, expect, it } from 'vitest';
 import {
-  DEFAULT_PREFS, FS_KEY, FS_MAX, FS_MIN, FS_STEPS, cardsPerScreen, clampFs, fsLabel, mapTitle, readPrefs,
-  scaleStatus, stepFs, worldHeadline, writePrefs, zoomOf,
+  DEFAULT_PREFS, FS_KEY, FS_MAX, FS_MIN, FS_STEPS, MAP_STYLES, cardsPerScreen, clampFs, fsLabel,
+  mapStyleLabel, mapStyleNote, mapTitle, normalizeMapStyle, readPrefs, scaleStatus, stepFs, worldHeadline,
+  writePrefs, zoomOf,
 } from '../src/v4/ui-scale-core';
 
 const memStore = (init: Record<string, string> = {}) => {
@@ -48,31 +50,64 @@ describe('M32 字号档位', () => {
 });
 
 describe('M32 偏好存取（不入存档）', () => {
-  it('没存过 → 默认值（字号标准、地图开着）', () => {
+  it('没存过 → 默认值（字号标准、地图开着、悬浮窗）', () => {
     expect(readPrefs(memStore())).toEqual(DEFAULT_PREFS);
     expect(readPrefs(null)).toEqual(DEFAULT_PREFS);
   });
 
   it('写进去能读回来；脏 JSON 回落默认值而不是崩', () => {
     const s = memStore();
-    writePrefs(s, { fs: 145, mapOpen: false });
-    expect(readPrefs(s)).toEqual({ fs: 145, mapOpen: false });
-    expect(JSON.parse(s.dump().get(FS_KEY)!)).toEqual({ fs: 145, mapOpen: false });
+    writePrefs(s, { fs: 145, mapOpen: false, mapStyle: 'inline' });
+    expect(readPrefs(s)).toEqual({ fs: 145, mapOpen: false, mapStyle: 'inline' });
+    expect(JSON.parse(s.dump().get(FS_KEY)!)).toEqual({ fs: 145, mapOpen: false, mapStyle: 'inline' });
     const bad = memStore({ [FS_KEY]: '{oops' });
     expect(readPrefs(bad)).toEqual(DEFAULT_PREFS);
     const weird = memStore({ [FS_KEY]: JSON.stringify({ fs: 37, mapOpen: 'yes' }) });
-    expect(readPrefs(weird)).toEqual({ fs: 100, mapOpen: true });     // 37 吸附到 100，非布尔回落 true
+    expect(readPrefs(weird)).toEqual({ fs: 100, mapOpen: true, mapStyle: 'float' });   // 37 吸附到 100，非布尔回落 true
   });
 
   it('localStorage 存不了（无痕模式）时静默失败、不抛错', () => {
     const boom = { getItem: () => { throw new Error('denied'); }, setItem: () => { throw new Error('denied'); } };
-    expect(() => writePrefs(boom, { fs: 130, mapOpen: true })).not.toThrow();
+    expect(() => writePrefs(boom, { fs: 130, mapOpen: true, mapStyle: 'float' })).not.toThrow();
     expect(readPrefs(boom)).toEqual(DEFAULT_PREFS);
   });
 
   it('偏好 key 是独立的（不跟存档混在一起）', () => {
     expect(FS_KEY).toBe('zsv-ui-v1');
     expect(FS_KEY.indexOf('zombie_survival')).toBe(-1);
+  });
+});
+
+describe('M34 地图摆法可配置', () => {
+  it('只有两种摆法，默认悬浮窗', () => {
+    expect(MAP_STYLES).toEqual(['float', 'inline']);
+    expect(DEFAULT_PREFS.mapStyle).toBe('float');
+  });
+
+  it('脏值一律回落悬浮窗（老偏好里没有这个字段也不能变成"哪都没有地图"）', () => {
+    expect(normalizeMapStyle('inline')).toBe('inline');
+    expect(normalizeMapStyle('float')).toBe('float');
+    expect(normalizeMapStyle(undefined)).toBe('float');
+    expect(normalizeMapStyle(null)).toBe('float');
+    expect(normalizeMapStyle('悬浮')).toBe('float');
+    expect(normalizeMapStyle(1)).toBe('float');
+  });
+
+  it('按钮文案与说明跟着摆法走', () => {
+    expect(mapStyleLabel('float')).toBe('悬浮窗');
+    expect(mapStyleLabel('inline')).toBe('嵌入页内');
+    expect(mapStyleLabel('???')).toBe('悬浮窗');
+    expect(mapStyleNote('float')).toContain('悬浮窗');
+    expect(mapStyleNote('inline')).toContain('探索页顶部');
+    expect(mapStyleNote('inline')).not.toContain('悬浮窗');
+  });
+
+  it('摆法随偏好一起存取，探针读得到', () => {
+    const s = memStore();
+    writePrefs(s, { fs: 100, mapOpen: true, mapStyle: 'inline' });
+    expect(readPrefs(s).mapStyle).toBe('inline');
+    expect(scaleStatus({ fs: 100, mapOpen: true, mapStyle: 'inline' }))
+      .toMatchObject({ mapStyle: 'inline', mapStyleLabel: '嵌入页内' });
   });
 });
 
@@ -96,8 +131,8 @@ describe('M32 悬浮地图与排版参照', () => {
   });
 
   it('探针状态里带档位、名字与 zoom', () => {
-    const st = scaleStatus({ fs: 130, mapOpen: false });
-    expect(st).toMatchObject({ fs: 130, label: '特大', mapOpen: false, key: FS_KEY });
+    const st = scaleStatus({ fs: 130, mapOpen: false, mapStyle: 'float' });
+    expect(st).toMatchObject({ fs: 130, label: '特大', mapOpen: false, mapStyle: 'float', key: FS_KEY });
     expect(st.zoom).toBeCloseTo(1.3, 5);
   });
 });

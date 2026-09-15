@@ -296,13 +296,18 @@ async function main() {
     travelExtra: medical.bodyTravelExtra, hudLine: medical.bodyHudLine, bodyNow: medical.bodyNow,
   };
   (V4 as any).medical = medical;
-  /* M32：字号适配 + 地图悬浮窗（顶栏 🗺️、☰ 菜单里的 A−/A+、快捷键 Ctrl±/M 都走这里） */
+  /* M32：字号适配 + 地图悬浮窗（顶栏 🗺️、☰ 菜单里的 A−/A+、快捷键 Ctrl±/M 都走这里）
+     M34：地图摆法（悬浮窗 / 嵌入页内）也在这一份里 —— ☰ → 显示 → 地图位置 */
   (window as any).V4Scale = {
     step: uiScale.stepFsBtn, set: uiScale.setFs, name: uiScale.fsName, prefs: uiScale.uiPrefs,
     toggleMap: uiScale.toggleMap, mapOpen: uiScale.mapOpenNow, paintMap: uiScale.paintMapOverlay,
     buttons: uiScale.scaleButtonsHtml, status: uiScale.scaleStatusNow,
     applyCardsZoom: uiScale.applyCardsZoom,        // mountWorldPanel 每次重建卡片墙后都要补一次
     zoomNow: uiScale.zoomNow,                      // M32.1：fitMap/fitRegion 按它把像素下限折回渲染尺寸
+    mapStyle: uiScale.mapStyleNow,                  // M34：当前摆法
+    setMapStyle: uiScale.setMapStyle,               // M34：切换摆法（☰ 菜单两个按钮调它）
+    mapStyleNote: uiScale.mapStyleNoteNow,          // M34：说明文案（☰ 菜单/世界与账号分区共用）
+    paintMapTop: uiScale.paintMapTop,               // M34.1：按实测顶栏底边写 --v4-maptop（别写死 52px）
   };
   (V4 as any).uiScale = uiScale;
   uiScale.applyScale();
