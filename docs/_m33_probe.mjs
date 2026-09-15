@@ -64,6 +64,9 @@ const saveBefore = JSON.parse(await ev(`(() => {
 })()`))
 ok('主档是密文（ZSV1）且能读到进度', saveBefore.enc.startsWith('ZSV1') && saveBefore.len > 200, JSON.stringify({ len: saveBefore.len, day: saveBefore.day }))
 
+/* 沙盒进度是本机键，跑过一遍之后六章全是"已通关"—— 探针要自己有干净的前置状态（像 m27 清教程键那样） */
+await ev(`localStorage.removeItem('zsv-lab-v1'); 1`)
+
 /* ── 1) 从 ☰ 菜单里真的能点开沙盒 ── */
 const open = JSON.parse(await ev(`(() => {
   openMenu();
@@ -85,6 +88,20 @@ ok('iframe 带 ?sandbox=1&ch=survival（且只带 dev，不带别的查询串）
 ok('章节壳列出 6 章、全部可玩（没有"下一批"占位）', shell.chs.length === 6 && shell.chs.every(c => !c.soon) && shell.chs[0].on === true, JSON.stringify(shell.chs.map(c => c.id + (c.soon ? '(soon)' : ''))))
 ok('目标清单有 4 条（开局全空）', shell.objs.length === 4 && shell.objs.every(o => !o.done), JSON.stringify(shell.objs.map(o => o.id)))
 await shot('01_lab_ch1')
+
+/* ── 1b) M33.1 入门动线：默认选中"第一个没通关的章" + 章节卡上的"建议从这里开始" ── */
+const onboarding = JSON.parse(await ev(`(() => {
+  const cards = [...document.querySelectorAll('#v4lab-chapters .lab-ch')];
+  const onCard = cards.find(c => c.classList.contains('on'));
+  return JSON.stringify({
+    next: cards.filter(c => c.classList.contains('next')).map(c => c.dataset.ch),
+    badges: cards.map(c => c.dataset.ch + ':' + ((c.querySelector('.tag') || {}).textContent || '')),
+    cur: onCard ? onCard.dataset.ch : null,
+    title: (document.getElementById('v4lab-frametitle') || {}).textContent,
+  })
+})()`))
+ok('首次打开沙盒默认落在第一个没通关的章（第 1 章）', onboarding.cur === 'survival' && /第 1 章/.test(onboarding.title || ''), JSON.stringify({ cur: onboarding.cur, title: onboarding.title }))
+ok('只有"下一个该做的章"带「👉 建议从这里开始」标记', onboarding.next.join() === 'survival' && /建议从这里开始/.test(onboarding.badges[0]) && !/建议从这里开始/.test(onboarding.badges[1]), JSON.stringify(onboarding.badges.slice(0, 3)))
 
 /* ── 2) 沙盒真的没读主档：day=1、固定种子、预设背包 ── */
 let boot = null
@@ -173,6 +190,14 @@ const prog = JSON.parse(await ev(`JSON.stringify({ raw: localStorage.getItem('zs
 ok('睡一觉进入第 2 天（目标④绿）', sleepOk && done.snap.day >= 2 && done.eval.items.find(i => i.id === 'sleep').done === true, JSON.stringify({ day: done.snap.day, click: sleepOk }))
 ok('四条目标全绿 → 判定通关（passed=true，4/4）', done.eval.passed === true && done.eval.green === 4, JSON.stringify({ green: done.eval.green, total: done.eval.total }))
 ok('通关写进本机进度 zsv-lab-v1（章节徽章变"已通关"）', /"survival":\d+/.test(prog.raw) && /已通关/.test(prog.badge), JSON.stringify({ raw: prog.raw.slice(0, 60), objs: prog.obj }))
+const afterCh1 = JSON.parse(await ev(`(() => {
+  const cards = [...document.querySelectorAll('#v4lab-chapters .lab-ch')];
+  return JSON.stringify({ next: cards.filter(c => c.classList.contains('next')).map(c => c.dataset.ch),
+    b1: (cards[0].querySelector('.tag') || {}).textContent, b2: (cards[1].querySelector('.tag') || {}).textContent,
+    hint: (document.querySelector('#v4lab-objectives') || {}).textContent });
+})()`))
+ok('通关第 1 章后「建议从这里开始」自动移到第 2 章', afterCh1.next.join() === 'combat' && /已通关/.test(afterCh1.b1 || '') && /建议从这里开始/.test(afterCh1.b2 || ''), JSON.stringify({ next: afterCh1.next, b1: afterCh1.b1, b2: afterCh1.b2 }))
+ok('通关后目标清单下面写着"下一章建议"', /下一章建议/.test(afterCh1.hint || ''), String(afterCh1.hint).replace(/\s+/g, ' ').slice(-60))
 await shot('02_lab_passed')
 
 /* ── 5) 隔离：玩了一整轮之后，主档与父页面进度一个字节都没变 ── */
@@ -384,6 +409,32 @@ ok('「↻ 重来这一章」按当前章重置（第 6 章 → 同种子、计�
 await ev(`document.querySelector('#v4lab button[onclick*="V4Lab.close"]').click(); 1`); await sleep(600)
 const closed = JSON.parse(await ev(`JSON.stringify({ lab: !!document.getElementById('v4lab'), frame: !!document.getElementById('v4lab-frame'), day: S.day, cards: document.querySelectorAll('#v4cards .v4card').length })`))
 ok('「✕ 关闭沙盒」把 iframe 与覆盖层都摘掉，主页面照常', closed.lab === false && closed.frame === false && closed.cards > 0 && closed.day === saveBefore.day, JSON.stringify(closed))
+
+/* ── 8) M33.1：教程最后一步给"去沙盒练一章"的出口 ── */
+await ev(`(() => { try { V4Tutorial.start(true); } catch (e) { return 'ERR'; } return 1 })()`); await sleep(800)
+/* 走到最后一步：看徽章而不是看根节点 —— 教程关掉之后 #v4tut 这个根节点还留着（只是空了） */
+let tutBadge = ''
+for (let i = 0; i < 18; i++) {
+  const b = String(await ev(`(() => { const x = document.querySelector('#v4tut .v4tut-bub .badge'); return x ? x.textContent : ''; })()`))
+  tutBadge = b
+  if (/15 \/ 15/.test(b)) break
+  await ev(`V4Tutorial.next()`); await sleep(280)
+}
+const tutLast = JSON.parse(await ev(`(() => {
+  const b = document.querySelector('#v4tut .v4tut-bub');
+  if (!b) return JSON.stringify({ open: false });
+  const btn = [...b.querySelectorAll('button')].find(x => /去沙盒练一章/.test(x.textContent || ''));
+  const badge = (b.querySelector('.badge') || {}).textContent;
+  return JSON.stringify({ open: true, badge, hasBtn: !!btn, body: (b.querySelector('.v4tut-bd') || {}).textContent });
+})()`))
+ok('新手教程最后一步有「🧪 去沙盒练一章（不写主档）」按钮', tutLast.open === true && tutLast.hasBtn === true && /15 \/ 15/.test(tutLast.badge || ''), JSON.stringify({ badge: tutLast.badge, hasBtn: tutLast.hasBtn }))
+ok('教程最后一步的正文也指明了沙盒（六章练习 + 不碰主档）', /沙盒/.test(tutLast.body || '') && /六章/.test(tutLast.body || ''), String(tutLast.body).replace(/\s+/g, ' ').slice(-70))
+await ev(`(() => { const b = [...document.querySelectorAll('#v4tut .v4tut-bub button')].find(x => /去沙盒练一章/.test(x.textContent || '')); if (b) b.click(); return 1 })()`)
+await sleep(1200)
+const backToLab = JSON.parse(await ev(`JSON.stringify({ lab: !!document.getElementById('v4lab'), tut: !!document.getElementById('v4tut'), done: (localStorage.getItem('dsh.tutorial.done') || '') })`))
+ok('点它真的能进沙盒（教程关掉、沙盒打开）', backToLab.lab === true && backToLab.tut === false, JSON.stringify(backToLab))
+await ev(`document.querySelector('#v4lab button[onclick*="V4Lab.close"]').click(); 1`); await sleep(500)
+await ev(`localStorage.removeItem('dsh.tutorial.done'); localStorage.removeItem('dsh.tutorial.step'); 1`)
 
 ok('控制台无异常', errs.length === 0, errs.slice(0, 2).join(' | '))
 

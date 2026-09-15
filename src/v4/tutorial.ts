@@ -8,6 +8,7 @@
  *  - **点击穿透**（overlay 的 pointer-events 全关）：教程只是"指给你看"，不该挡住任何操作；
  *    唯一的按钮在气泡上（上一步 / 下一步 / 跳过 / 结束）。
  *  - 步骤写成数据（STEPS 数组），文案与顺序都在一处 —— 以后加系统只改这一张表。
+ *  - M33.1：最后一步挂一个「去沙盒练一章」的按钮 —— 看过一遍 ≠ 会玩，练一遍才是。
  */
 const KEY_DONE = 'dsh.tutorial.done';
 const KEY_STEP = 'dsh.tutorial.step';
@@ -23,8 +24,11 @@ export interface TutStep {
   place?: 'top' | 'bottom';
 }
 
-export const STEPS: TutStep[] = [
-  {
+/** M33.1：沙盒按钮只在"看完最后一步"时给 —— 看过一遍 ≠ 会玩，练一遍才是。
+    这里必须**运行时**判断 V4Lab 在不在（tutorial 模块是在 main.ts 挂 window.V4Lab 之前 import 的）。 */
+const labReady = (): boolean => typeof (globalThis as any).V4Lab === 'object' && !!(globalThis as any).V4Lab;
+
+export const STEPS: TutStep[] = [  {
     title: '欢迎来到《丧尸末日生存》· 先花 2 分钟看完这个',
     body: '你在一座叫「余烬」的城市里醒来，外面全是丧尸。目标很简单：<b>活到第 90 天，从撤离点离开</b>。'
       + '<br><br>这个教程<b>只是指给你看</b>——它不会挡住任何操作，随时可以点「跳过」或按 Esc 关掉；'
@@ -140,7 +144,9 @@ export const STEPS: TutStep[] = [
     body: '① <b>搜两处家门口的区块</b>，凑齐布条 / 罐头 / 胶带；'
       + '<br>② <b>做两个绷带 + 煮一壶水</b>（工作台与灶台，没有灶台就先在背包里用净化片）；'
       + '<br>③ <b>建净水装置</b>，之后每天有水；把菜园接上，食物就自给自足了。'
-      + '<br><br>然后就可以去医院接主线了。祝你好运——<b>活到第 90 天</b>。',
+      + '<br><br>然后就可以去医院接主线了。祝你好运——<b>活到第 90 天</b>。'
+      + '<br><br>看完这一页，右下角还有一个「🧪 去沙盒练一章」：那是个<b>不碰你主档</b>的平行世界，'
+      + '六章练习（生存 / 战斗 / 人体 / 据点 / 大区 / 背包），照着目标练一遍就会了。',
   },
 ];
 
@@ -250,6 +256,8 @@ function paint(i: number): boolean {
       '<div class="v4tut-ft">' +
         '<button class="btn xs ghost" onclick="V4Tutorial.skip()">跳过教程</button>' +
         '<span class="spacer"></span>' +
+        /* M33.1：最后一步多给一个"去沙盒练"的出口（运行时判断沙盒在不在） */
+        (last && labReady() ? '<button class="btn xs ok" onclick="V4Tutorial.close(true);V4Lab.open()">🧪 去沙盒练一章（不写主档）</button>' : '') +
         (i > 0 ? '<button class="btn xs" onclick="V4Tutorial.prev()">上一步</button>' : '') +
         '<button class="btn xs ' + (last ? 'ok' : 'primary') + '" onclick="V4Tutorial.next()">' + (last ? '开始游戏' : '下一步') + '</button>' +
       '</div>' +

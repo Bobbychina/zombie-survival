@@ -300,6 +300,31 @@ export function progressLine(p: LabProgress): string {
 }
 
 /**
+ * M33.1 入门动线：**第一个还没通关的可玩章节**。
+ * 六章之间没有硬解锁（都直接可玩），但新手需要一个"从哪开始"的答案：
+ * 章节卡上给它挂「👉 建议从这里开始」，打开沙盒时也默认选中它。
+ * 全通关了就回第一章（复看/重练）。
+ */
+export function firstOpenChapter(p: LabProgress): string {
+  const next = LAB_CHAPTERS.find(c => c.ready && !isDone(p, c.id));
+  return next ? next.id : (LAB_CHAPTERS.find(c => c.ready) || LAB_CHAPTERS[0]).id;
+}
+
+/** 章节卡右上角那枚徽章（文案在这里，UI 只负责贴） */
+export function chapterBadge(ch: LabChapter, p: LabProgress): { text: string; cls: string } {
+  if (!ch.ready) return { text: '下一批', cls: 'wpn' };
+  if (isDone(p, ch.id)) return { text: '✅ 已通关', cls: 'key' };
+  return ch.id === firstOpenChapter(p) ? { text: '👉 建议从这里开始', cls: 'ok' } : { text: '可玩', cls: '' };
+}
+
+/** 通关一章之后给一句接话（没有下一章就说"六章都通了"） */
+export function nextChapterHint(p: LabProgress, justDone: string): string {
+  const next = LAB_CHAPTERS.find(c => c.ready && c.id !== justDone && !isDone(p, c.id));
+  if (!next) return '🎉 六章全部通关 —— 想复看的话随时点章节卡重进。';
+  return '下一章建议：' + next.icon + ' ' + next.name + '（点左边的章节卡继续）。';
+}
+
+/**
  * 沙盒 iframe 的地址：**丢掉父页面除 `dev` 之外的查询串**（`?dev=ready` 这类开发标记要带进去 ——
  * 探针要在沙盒里用 `DEV.gotoPoi` 之类；生产环境父页面本来就没有 dev 参数，所以等于不带），
  * 只保留路径 + `sandbox=1&ch=<章节>`。

@@ -3,9 +3,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   BAG_PRESET, BASE_PRESET, COMBAT_PRESET, LAB_CHAPTERS, LAB_KEY, MEDICAL_PRESET, SURVIVAL_PRESET, WORLD_PRESET,
-  chapterById, evalChapter, isDone, labFromSearch, labStateOf, markDone, mergeSticky, parseProgress, progressLine,
-  sandboxUrl, serializeProgress, snapOf, type LabSnap,
+  chapterBadge, chapterById, evalChapter, firstOpenChapter, isDone, labFromSearch, labStateOf, markDone, mergeSticky,
+  nextChapterHint, parseProgress, progressLine, sandboxUrl, serializeProgress, snapOf, type LabSnap,
 } from '../src/v4/sandbox-core';
+
+const CHAPTER_NAMES = LAB_CHAPTERS.map(c => c.name);
 
 const snap = (over: Partial<LabSnap> = {}): LabSnap => ({
   day: 1, hp: 100, hun: 62, thi: 58, ap: 14, scav: 0, deep: 0, crafted: 0, kills: 0, meleeKills: 0, ammoUsed: 0,
@@ -213,6 +215,38 @@ describe('进度（存父页面，不进 iframe、不进存档）', () => {
     expect(progressLine(parseProgress(null))).toBe('已通关 0 / 6 章');
     expect(progressLine(markDone(parseProgress(null), 'survival', 1))).toBe('已通关 1 / 6 章');
     expect(progressLine(markDone(parseProgress(null), 'world', 1))).toBe('已通关 1 / 6 章');
+  });
+});
+
+describe('M33.1 入门动线（新手该从哪一章开始）', () => {
+  it('"建议从这里开始"指向第一个还没通关的章；六章全通就回第 1 章（复看/重练）', () => {
+    let p = parseProgress(null);
+    expect(firstOpenChapter(p)).toBe('survival');
+    p = markDone(p, 'survival', 1);
+    expect(firstOpenChapter(p)).toBe('combat');
+    p = markDone(p, 'combat', 2);
+    expect(firstOpenChapter(p)).toBe('medical');
+    for (const id of ['medical', 'base', 'world', 'bag']) p = markDone(p, id, 3);
+    expect(firstOpenChapter(p)).toBe('survival');
+  });
+
+  it('章节卡徽章：未通关的那一章拿"👉 建议从这里开始"，通关的拿 ✅', () => {
+    const empty = parseProgress(null);
+    expect(chapterBadge(CH1, empty)).toEqual({ text: '👉 建议从这里开始', cls: 'ok' });
+    expect(chapterBadge(CH2, empty).text).toBe('可玩');
+    const after = markDone(empty, 'survival', 1);
+    expect(chapterBadge(CH1, after)).toEqual({ text: '✅ 已通关', cls: 'key' });
+    expect(chapterBadge(CH2, after)).toEqual({ text: '👉 建议从这里开始', cls: 'ok' });
+    expect(chapterBadge(CH3, after).text).toBe('可玩');
+  });
+
+  it('通关后的接话：没通完就点下一章，通完就道贺', () => {
+    const empty = parseProgress(null);
+    expect(nextChapterHint(markDone(empty, 'survival', 1), 'survival')).toContain(CHAPTER_NAMES[1]);
+    expect(nextChapterHint(markDone(empty, 'survival', 1), 'survival')).toContain('第 2 章');
+    let all = empty;
+    for (const id of ['survival', 'combat', 'medical', 'base', 'world', 'bag']) all = markDone(all, id, 9);
+    expect(nextChapterHint(all, 'bag')).toContain('六章全部通关');
   });
 });
 

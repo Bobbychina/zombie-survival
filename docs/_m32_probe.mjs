@@ -62,7 +62,15 @@ const layout = JSON.parse(await ev(`(() => {
 })()`))
 ok('地图搬进悬浮窗（不在 #view 里了）', layout.winExists && layout.mapInWin && !layout.mapInView, JSON.stringify({ inWin: layout.mapInWin, inView: layout.mapInView }))
 ok('探索页整宽留给行动卡片', layout.board && layout.cardsInView && layout.cardsW >= layout.viewW - 40, JSON.stringify({ cards: layout.cardsW, view: layout.viewW }))
-ok('悬浮窗里的地图真的画出来了（24×24 格）', layout.cells >= 576, 'cells=' + layout.cells)
+ok('悬浮窗里的地图真的画出来了（24×24 格）', layout.cells >= 576, 'cells=' + layout.cells + (layout.cells >= 576 ? '' : ' | ' + await ev(`(() => {
+  /* 连跑多套探针时偶发 cells=0（单独跑 3 次都正常）—— 失败时把现场打出来，省得下次靠猜 */
+  const map = document.getElementById('v4world')
+  const win = document.getElementById('v4mapwin')
+  return JSON.stringify({ tab: S && S.tab, over: !!(S && S.over), day: S && S.day, loc: S && S.loc,
+    hasWorld: !!(S && S.world), region: S && S.world && S.world.region,
+    mapHere: !!map, htmlLen: map ? map.innerHTML.length : -1, sigLen: map ? (map.dataset.sig || '').length : -1,
+    winOpen: win ? win.classList.contains('open') : null, viewCls: (document.getElementById('view') || {}).className })
+})()`)))
 await shot('a0_map_float_100')
 
 /* ── ② 折叠 / 在任何页签都能开 ── */

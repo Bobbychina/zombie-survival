@@ -8,8 +8,8 @@
  */
 import { L } from '../main';
 import {
-  LAB_CHAPTERS, LAB_KEY, chapterById, evalChapter, isDone, markDone, mergeSticky, parseProgress,
-  progressLine, sandboxUrl, serializeProgress, type LabChapter, type LabEval, type LabSnap,
+  LAB_CHAPTERS, LAB_KEY, chapterBadge, chapterById, evalChapter, firstOpenChapter, isDone, markDone, mergeSticky,
+  nextChapterHint, parseProgress, progressLine, sandboxUrl, serializeProgress, type LabChapter, type LabEval, type LabSnap,
 } from './sandbox-core';
 
 let root: HTMLElement | null = null;
@@ -70,10 +70,11 @@ function ensureListener() {
 /* ── 渲染 ── */
 function chapterCard(c: LabChapter): string {
   const on = cur && cur.id === c.id;
-  const ok = isDone(readProg(), c.id);
-  const badge = ok ? '<span class="tag key">✅ 已通关</span>' : (c.ready ? '<span class="tag">可玩</span>' : '<span class="tag wpn">下一批</span>');
-  return '<div class="lab-ch' + (on ? ' on' : '') + (c.ready ? '' : ' soon') + '" data-ch="' + c.id + '"' + (c.ready ? '' : ' aria-disabled="true"') + '>' +
-    '<div class="row"><span class="nm">' + c.icon + ' ' + c.name + '</span><span class="spacer"></span>' + badge + '</div>' +
+  const b = chapterBadge(c, readProg());
+  const isNext = c.ready && !isDone(readProg(), c.id) && c.id === firstOpenChapter(readProg());
+  return '<div class="lab-ch' + (on ? ' on' : '') + (c.ready ? '' : ' soon') + (isNext ? ' next' : '') + '" data-ch="' + c.id + '"' + (c.ready ? '' : ' aria-disabled="true"') + '>' +
+    '<div class="row"><span class="nm">' + c.icon + ' ' + c.name + '</span><span class="spacer"></span>' +
+    '<span class="tag ' + b.cls + '">' + b.text + '</span></div>' +
     '<div class="ds">' + c.desc + '</div></div>';
 }
 
@@ -86,7 +87,8 @@ function objectivesHtml(): string {
   const rows = ev.items.map(i => '<div class="lab-obj' + (i.done ? ' done' : '') + '" data-obj="' + i.id + '">' +
     '<span class="mk">' + (i.done ? '✅' : '⬜') + '</span><span>' + i.text + '</span></div>').join('');
   const tip = ev.passed
-    ? '<div class="hint" style="margin-top:8px;color:var(--accent,#5cc8ff)">🎉 全绿通关！这一章记在本机进度里了（沙盒里的东西不会进主档）。</div>'
+    ? '<div class="hint" style="margin-top:8px;color:var(--accent,#5cc8ff)">🎉 全绿通关！这一章记在本机进度里了（沙盒里的东西不会进主档）。</div>' +
+      '<div class="hint" style="margin-top:6px">' + nextChapterHint(readProg(), cur.id) + '</div>'
     : (snap && snap.over
       ? '<div class="hint" style="margin-top:8px;color:var(--warn,#e0b050)">你倒下了 —— 沙盒里<b>不惩罚</b>，点「↻ 重来这一章」从头再练。</div>'
       : '<div class="hint" style="margin-top:8px">在右边的沙盒里照着目标做；每 0.5 秒自动核对一次。死了也不惩罚，随时可以重来。</div>');
@@ -103,10 +105,16 @@ function paintObjectives() {
   if (ev && ev.passed && cur && !finished) {
     finished = true;
     writeProg(markDone(readProg(), cur.id, Date.now()));
-    try { L.log('🧪 教程沙盒：' + cur.name + ' 全绿通关。', 'success'); L.toast('章节通关', cur.name + ' 的目标全部达成。', 'ok'); } catch { /* 还没 boot 完 */ }
+    const hint = nextChapterHint(readProg(), cur.id);
+    try {
+      L.log('🧪 教程沙盒：' + cur.name + ' 全绿通关。', 'success');
+      L.toast('章节通关', cur.name + ' 的目标全部达成。' + hint, 'ok');
+    } catch { /* 还没 boot 完 */ }
     const list = root.querySelector('#v4lab-chapters');
     if (list) list.innerHTML = LAB_CHAPTERS.map(chapterCard).join('');
     bindChapters();
+    const pl = root.querySelector('#v4lab-progress');
+    if (pl) pl.textContent = progressLine(readProg());
   }
 }
 
@@ -117,7 +125,7 @@ function bindChapters() {
     const id = box.dataset.ch || '';
     box.onclick = () => {
       const c = chapterById(id);
-      if (!c || !c.ready) { try { L.toast('这一章还没做', '第一批只放了第 1 章（生存基础），其余下一批。', 'info'); } catch { /* 忽略 */ } return; }
+      if (!c || !c.ready) { try { L.toast('这一章还没做', '其余章节会在后续批次补齐。', 'info'); } catch { /* 忽略 */ } return; }
       openChapter(c);
     };
   });
@@ -135,8 +143,10 @@ function openChapter(c: LabChapter) {
   ping();
 }
 
-export function openLab(chId = 'survival') {
-  const c = chapterById(chId) || LAB_CHAPTERS[0];
+/** 打开沙盒：默认落在**第一个还没通关的章**（六章没有硬解锁，但新手需要"从哪开始"的答案） */
+export function openLab(chId?: string) {
+  const target = chId || firstOpenChapter(readProg());
+  const c = chapterById(target) || LAB_CHAPTERS[0];
   if (root) { openChapter(c); return; }
   cur = c;                    // M33.1：先定当前章节再拼 HTML —— 否则首次打开时"当前章"没有任何高亮
   finished = false;
@@ -155,7 +165,8 @@ export function openLab(chId = 'survival') {
       '<div class="labbody">' +
         '<div class="labside"><div class="sect-title" style="margin-top:0">章节</div><div id="v4lab-chapters">' +
           LAB_CHAPTERS.map(chapterCard).join('') +
-        '</div><div class="hint" style="margin-top:10px">第一批只有第 1 章可玩；其余 5 章的目标与预设会在下一批补上（形态已经定好：独立沙盒 + 目标清单全绿才算过）。</div></div>' +
+        '</div><div class="hint" style="margin-top:10px">六章都直接可玩、没有硬解锁；建议按 1→6 的顺序走（卡上那枚 <b>👉 建议从这里开始</b> 就是下一个该做的）。' +
+        '每章三条目标全绿才算过，进度只记在本机。</div></div>' +
         '<div class="labmain">' +
           '<div class="row" style="padding:4px 2px"><span class="nm" id="v4lab-frametitle">' + c.icon + ' ' + c.name + '</span>' +
           '<span class="spacer"></span><span class="hint" style="margin:0">沙盒地址带 <span class="mono">?sandbox=1</span>：不读档、不落盘</span></div>' +
