@@ -37,7 +37,11 @@ await send('Page.navigate', { url: url + '?dev=ready' }); await sleep(4200)
 /* 读档会恢复"上次停在哪一页"，所以先显式回到探索页 —— 否则量到的是别页的 DOM（cards=0）。 */
 await ev(`(() => { if (typeof setTab === 'function') setTab('explore'); if (typeof render === 'function') render(); return 1 })()`); await sleep(900)
 /* 等地图真的画完再量：悬浮窗里的图是"世界就绪后才挂上去"的，冷门区域首次生成会慢一点
-   （实测偶发第一帧还是空的）。这里最多等 12 秒，并把**实际等待时长**打出来 —— 它本身是个性能信号。 */
+   （实测偶发第一帧还是空的）。这里最多等 12 秒，并把**实际等待时长**打出来 —— 它本身是个性能信号。
+   M36：连跑多套探针时这里偶发 cells=0（回归电池批跑实测栽过一次，单独跑 17/17）——
+   多半是上一支探针把页签/悬浮窗留在了别的状态，所以先把"探索页 + 悬浮窗开着"按下去再等。 */
+await ev(`(() => { try { closeAllModals(); setTab('explore') } catch {} ; try { window.V4Scale && V4Scale.setMapStyle && V4Scale.setMapStyle('float') } catch {} ; try { window.V4Scale && V4Scale.toggleMap && V4Scale.toggleMap(true) } catch {} ; return 1 })()`)
+await sleep(800)
 let mapWaitMs = 0
 for (let i = 0; i < 30; i++) {
   if (Number(await ev(`document.querySelectorAll('#v4world .wcell').length`)) >= 576) break

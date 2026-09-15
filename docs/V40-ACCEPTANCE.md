@@ -2050,3 +2050,66 @@ M27 的 15 步高亮教程解决的是"第一次不知道怎么点"，但**练�
   （`E:\Files\Games\webGames\丧尸末日生存.html`、`E:\Files\Games\pythonGames\Bobby的丧尸末日生存文字游戏.py`，后者还带"激活作弊码/作弊界面"按钮）。
   要一并清就以新口径为准，**不在本批范围内**。
 - **反作弊口径未变**：仍然"只取证、不阻止"（加密存档 + 指纹链），不做任何反 DevTools 手段。
+
+---
+
+## 四十六、M36 自查：两个真 bug —— 加密存档被误判「被修改过」+ 指纹链静默失效（用户：「好好debug一下，确定没有bug」）
+
+### 怎么查的
+- 新写 `docs/_m36_audit.mjs`（21 项）：全局符号 / CDP 真键盘逐字敲码 / 全键盘三态扫描（无弹窗·弹窗开着·战斗中）/
+  帮助弹窗 DOM 结构与键位段 / 存档加密往返 / 老档 `flags.cheat` / 输入框守卫 / 全程异常与 console 收集。
+- 再把仓库现有 16 套探针整批跑一遍（`_m8_integrity` … `_m36`），单测全量。
+- 两个 bug 都不是"改坏"的，是**查出来的既有问题**（M8 的完整性 × M29 的加密没接上）。
+
+### BUG ①（P1，线上每个有档的玩家每次启动都会中）
+**现象**：第二次启动起，日志必刷一条 danger「⚠️ 存档检查：⛔ 存档损坏：存档 JSON 解析失败 —— 成就与排行不再计入本档」，
+伴随 toast「存档被修改过」；并且之后任何一次盖章都会把 `tampered: true` 永久写进本地档与云端档。
+**根因**（实测三处证据链）：
+1. M29 起主档在 `localStorage['zombie_survival_save_v2']` 里是 `ZSV1:` 密文（`v4/save-vault.ts`）；
+2. M8 的 `integrity.inspectBeforeBoot()` 仍旧 `JSON.parse(localStorage.getItem(SAVE_KEY))` → 密文必然抛 → 判 `corrupt` + `tampered = true`；
+3. `main.ts` 里 `await SaveVault.init()`（第 271 行，还会把老明文档当场加密回写）在 `inspectBeforeBoot()`（第 320 行）**之前**，
+   所以连"明文老档的第一次启动"也会踩到。
+**改法**：`integrity-core.ts` 新增纯函数 `rawForInspect(stored, decrypted)` —— 优先用保险箱解密后的明文；
+只有密文且这次没解开 → 按"读不出来"处理（`tampered: false`，`reportAfterBoot` 单独给文案）；明文存档照旧 = 原行为。
+
+### BUG ②（P2，M8 的指纹链在加密时代基本是死的）
+**现象**：解密出来的档里 `__integrity` 恒为 `null`，每次启动只会说"这份存档没有指纹（老版本存档）**本次会补上**"——
+但永远不补；`stampInPlace(L.S)`（上传云端前）盖的指纹又和落盘内容对不上，`verifyForeign` 会把干净云端档判成 `mismatch`。
+**根因**（两条，实测定位）：
+1. 落盘走 `V4Vault.write()`（密文），而 `installWriteHook()` 只包了 `Storage.prototype.setItem` —— 拿到密文 `JSON.parse` 失败，
+   钩子直接放行：**本地档从来没有被盖过章**；
+2. `liveDigest()` 用 `canon(L.S)` 与 JSON 口径不一致：值为 `undefined` 的键在 `JSON.stringify` 里会被丢掉，
+   `canon` 却写成 `"k":null`（`JSON.stringify(undefined) ?? 'null'`）。实测现场：委托里的
+   `reward:{item:undefined, mat:8, n:undefined}` 就让"内存指纹 ≠ 落盘指纹" → 印章被静默跳过。
+**改法**：① `installWriteHook()` 再挂一层 `V4Vault.write`（明文进加密器**之前**盖章，口径与 localStorage 钩子一致：只盖"游戏自己写的那份"）；
+② `canon` 与 `JSON.stringify` 同口径（`undefined` / 函数值的键不算；存档对象来自 JSON，对已落盘的档零行为变化）；
+③ `liveDigest()` 先按落盘样子 JSON 往返再算指纹；④ 跳过盖章时 `console.warn`（以前是静默，所以藏了这么久）。
+
+### 顺手修的三处测试资产（不是产品 bug，但会让自查变成"假绿"）
+- `docs/_m36_probe.mjs`：作弊日志判定读的是 `l.t`，而 `S.logBuf` 存的是 `[type, msg]` → 恒 `undefined`，判定形同虚设；改读 `l[1]`。
+- `docs/_m8_integrity_probe.mjs`：还在 `JSON.parse(localStorage...)`（M29 之后必崩，整支探针跑不起来）→ 改用 `V4Vault.read()` 读明文、
+  等一下异步落盘；改档手法改成"改明文再按同一密钥封回去"（这才是加密时代玩家能做的改法）。已现代化并全绿。
+- `docs/_m32_probe.mjs`：回归电池批跑时偶发 `cells=0`（单独跑 17/17）→ 测量前先把"探索页 + 悬浮窗开着"按下去再等首帧，批跑复现为 17/17。
+
+### 实测证据
+- 单测 **434/434**（34 文件）：`tests/m36-cheat-removed.test.ts` 10 条护栏（源码里不许再出现 `bobbychina32747|cheatBuf|彩蛋`、
+  导出名单不许有 `cheat`、`sanitizeSave` 必须保留 `delete out.flags.cheat`、键位段结构完整）+ `tests/integrity.test.ts`
+  新增 6 条（`rawForInspect` 四态 + `canon` 与 JSON 同口径）。
+- `docs/_m36_audit.mjs` **21/21 ALL PASS**（隔离 worktree 的 HEAD+修复构建、线上同款各跑一次）：
+  ① `window` 上 0 个 cheat 属性；② 塞 `flags.cheat=true` 的档重载后旗标消失、`hpMax` 其它数值原样、**判 ok 且日志是「🔒 存档指纹校验通过」**；
+  ③ 全键盘三态扫描 0 异常、页签映射未受影响、弹窗开着时敲完整作弊码资源纹丝不动；④ v4 战斗 1/2/3/4/6 键正常；
+  ⑤ 帮助弹窗 15 个 `<kbd>`、无彩蛋行、Esc 可关；⑥ 输入框里打字不触发快捷键；⑦ 0 未捕获异常 / 0 `console.error`。
+- `docs/_m8_integrity_probe.mjs`（现代化后）逐步符合设计：`firstSave.saved=true`（以前是 `false`，指纹根本没盖）、
+  干净重载 `verdict=ok`（**修复前是 corrupt+tampered**）、改档 `mismatch`、越界 `implausible`（数值仍被夹回合法区间）、
+  `tamperSticky.flagOnSave=true`（标记真的落进档了）、外来档 `good=ok / bad=mismatch` 且 `confirm=false` 时不覆盖本机、0 pageerror。
+- 回归电池（16 套）：m21 31/31、m24 全 ✓、m25 33/33、m26 errors: none、m27 12/12、m29 23/23、m30 20/20、m31 15/15、
+  m32 17/17（批跑偶发一次，已加固）、m32b 19/19、m33 56/56、m34 24/24、m34b 11/11、m35 10/10、m36 9/9、m8 见上。
+- 截图 OCR 复查：`docs/_m36_shots/audit/audit_boot2.png`（第二次启动的日志区应只见「🔒 校验通过」）与
+  `docs/_m36_shots/{local-head,online}/a3_help_modal.png` 四块均无「彩蛋 / 作弊码」字样。
+
+### 已知问题
+- **不回溯旧档标记**：历史上被误导判成 `tampered` 并盖进档/云端的档（M29 之后、本次修复前上传过的），本批不清洗——
+  它下次校验仍会报一次 `mismatch`；口径仍是"游戏照常能玩"，要干净档就重开一局。
+- **M29 之后"直接改密文"不再是可判定的篡改**（解不开就只是解不开）：取证重心在云端/导入路径（`verifyForeign`）与明文老档，
+  与既定口径一致（加密优先于取证）。
+- 本批只动 `src/v4/integrity*.ts` 与两个测试资产，**没动**数值/玩法/存档格式；线上构建由 M33.1 那批的 HEAD 干净构建叠加本次修复。

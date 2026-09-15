@@ -22,12 +22,16 @@ const ev = (fn, arg) => page.evaluate(fn, arg);
 /* ① 正常存档 + 重载 */
 await page.goto(base + '?dev=fresh', { waitUntil: 'load' });
 await page.waitForTimeout(2500);
-out.steps.firstSave = await ev(() => {
+/* M36 起要按 M29 的加密存档来写：localStorage 里那份是 `ZSV1:` 密文，明文走 V4Vault.read()；
+   而且 saveGame 是"内存立刻、落盘异步"，读之前得等一下。 */
+out.steps.firstSave = await ev(async () => {
   const S = window.DEV.state();
   S.mat = 41; S.day = 6;
   window.saveGame(true);
-  const raw = JSON.parse(localStorage.getItem('zombie_survival_save_v2'));
-  return { saved: !!raw.__integrity, digest: raw.__integrity && raw.__integrity.d, tamperedFlag: !!(raw.__integrity && raw.__integrity.tampered) };
+  await new Promise((r) => setTimeout(r, 1500));
+  const plain = window.V4Vault && window.V4Vault.read ? window.V4Vault.read() : localStorage.getItem('zombie_survival_save_v2');
+  const raw = JSON.parse(plain);
+  return { cipherPrefix: (localStorage.getItem('zombie_survival_save_v2') || '').slice(0, 5), saved: !!raw.__integrity, digest: raw.__integrity && raw.__integrity.d, tamperedFlag: !!(raw.__integrity && raw.__integrity.tampered) };
 });
 await page.goto(base, { waitUntil: 'load' });
 await page.waitForTimeout(2500);
@@ -38,13 +42,13 @@ out.steps.afterCleanReload = await ev(() => ({
   mat: window.S.mat,
 }));
 
-/* ② 手改数值：不重算指纹 */
-out.steps.tamper = await ev(() => {
+/* ② 手改数值：不重算指纹（加密档要改明文再按同一密钥封回去——这是"拿到密钥的人"能做的唯一改法） */
+out.steps.tamper = await ev(async () => {
   const key = 'zombie_survival_save_v2';
-  const raw = JSON.parse(localStorage.getItem(key));
-  const before = { mat: raw.mat, digest: raw.__integrity.d };
+  const raw = JSON.parse(window.V4Vault.read());
+  const before = { mat: raw.mat, digest: raw.__integrity && raw.__integrity.d };
   raw.mat = 5000;                       // 改钱：不动指纹
-  localStorage.setItem(key, JSON.stringify(raw));
+  localStorage.setItem(key, await window.V4Vault.encrypt(JSON.stringify(raw)));
   return before;
 });
 await page.goto(base, { waitUntil: 'load' });
@@ -57,12 +61,12 @@ out.steps.afterTamper = await ev(() => ({
 }));
 
 /* ③ 越界值：hp 超过 hpMax */
-out.steps.implausible = await ev(() => {
+out.steps.implausible = await ev(async () => {
   const key = 'zombie_survival_save_v2';
-  const raw = JSON.parse(localStorage.getItem(key));
+  const raw = JSON.parse(window.V4Vault.read());
   raw.hp = 99999;                       // hpMax 只有 100 → 典型改档手法
-  localStorage.setItem(key, JSON.stringify(raw));
-  return window.V4Integrity.verdict ? 'written' : 'written';
+  localStorage.setItem(key, await window.V4Vault.encrypt(JSON.stringify(raw)));
+  return 'written';
 });
 await page.goto(base, { waitUntil: 'load' });
 await page.waitForTimeout(2500);
@@ -74,15 +78,16 @@ out.steps.afterImplausible = await ev(() => ({
 }));
 
 /* ④ 被改过之后继续玩：标记必须一直带着 */
-out.steps.tamperSticky = await ev(() => {
+out.steps.tamperSticky = await ev(async () => {
   window.saveGame(true);
-  const raw = JSON.parse(localStorage.getItem('zombie_survival_save_v2'));
+  await new Promise((r) => setTimeout(r, 1500));
+  const raw = JSON.parse(window.V4Vault.read());
   return { flagOnSave: !!(raw.__integrity && raw.__integrity.tampered), api: window.V4Integrity.tampered() };
 });
 
 /* ⑤ 云端/文件来的被改档：先判、再拦 */
 out.steps.foreign = await ev(() => {
-  const good = JSON.parse(localStorage.getItem('zombie_survival_save_v2'));
+  const good = JSON.parse(window.V4Vault.read());
   const bad = JSON.parse(JSON.stringify(good));
   bad.mat = 888888;
   const goodV = window.V4Integrity.verdictOf(JSON.parse(JSON.stringify(good)));

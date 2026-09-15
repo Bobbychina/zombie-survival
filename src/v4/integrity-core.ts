@@ -31,12 +31,17 @@ export interface Verdict {
   tampered: boolean;
 }
 
-/** 稳定序列化：键排序 + 去掉指纹字段本身，保证"同一份存档"永远得到同一个字符串 */
+/** 稳定序列化：键排序 + 去掉指纹字段本身，保证"同一份存档"永远得到同一个字符串。
+ *  M36 修：**要和 JSON.stringify 保持同一套口径** —— 值为 undefined / 函数的键在 JSON 里会被丢掉，
+ *  而这里以前会写成 `"k":null`，于是"内存里的 S"和"落盘的字符串"算出两个指纹：
+ *  实测（M36 自查）委托里的 `reward:{item:undefined, mat:8, n:undefined}` 就会让
+ *  `liveDigest() !== digest(payload)` → 盖章被静默跳过（本地档永远没有指纹、上传云端的档验不过）。
+ *  存档对象来自 JSON，所以对已经落盘的档没有任何行为变化；变的只是"活对象"这一侧。 */
 export function canon(v: unknown): string {
   if (v === null || typeof v !== 'object') return JSON.stringify(v) ?? 'null';
   if (Array.isArray(v)) return '[' + v.map(canon).join(',') + ']';
   const o = v as Record<string, unknown>;
-  const keys = Object.keys(o).filter(k => k !== INTEGRITY_KEY).sort();
+  const keys = Object.keys(o).filter(k => k !== INTEGRITY_KEY && o[k] !== undefined && typeof o[k] !== 'function').sort();
   return '{' + keys.map(k => JSON.stringify(k) + ':' + canon(o[k])).join(',') + '}';
 }
 
@@ -118,6 +123,19 @@ export function verify(raw: unknown, prevDigest?: string): Verdict {
     return { state: 'mismatch', ok: false, detail: '链条断了（中间某一环被替换过）', tampered: true };
   }
   return { state: 'ok', ok: true, detail: '指纹一致', tampered: false };
+}
+
+/** M29 之后主档在 localStorage 里是 `ZSV1:` 密文（MAGIC 见 v4/save-vault.ts）：
+ *  这里纯逻辑地判"这次启动该拿哪一份来验"，因为直接 JSON.parse 密文必然失败、
+ *  会被误判成 corrupt + tampered（实测就是这个原因让每次启动都弹「存档被修改过」）。
+ *    · 保险箱解出了明文 → 用明文
+ *    · 只有密文且没解开（保险箱未就绪 / 本机密钥丢了）→ 不验，且不算玩家改档
+ *    · 明文存档（M29 之前的老档、或降级直写路径）→ 原样验 */
+export const SAVE_MAGIC = 'ZSV1:';
+export function rawForInspect(stored: string | null, decrypted: string | null): { text: string | null; encryptedUnreadable: boolean } {
+  if (typeof decrypted === 'string' && decrypted) return { text: decrypted, encryptedUnreadable: false };
+  if (typeof stored === 'string' && stored.startsWith(SAVE_MAGIC)) return { text: null, encryptedUnreadable: true };
+  return { text: stored, encryptedUnreadable: false };
 }
 
 /** 人话结论（界面直接用） */

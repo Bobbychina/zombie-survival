@@ -1,4 +1,4 @@
-// M36 取证：作弊码机制已下线（用户：「删除作弊码机制」）
+﻿// M36 取证：作弊码机制已下线（用户：「删除作弊码机制」）
 //   ① window.cheat / window.cheatBuf 都不该存在；② 真键盘敲 bobbychina32747 不该有任何反应；
 //   ③ 帮助弹窗里"彩蛋：老版本的作弊码仍然有效"这行必须没了（快捷键段还在）；
 //   ④ 老档里遗留的 flags.cheat 会被 sanitizeSave 清掉，且不再锁死成就解锁。
@@ -74,7 +74,7 @@ await typeText('bobbychina32747')
 await sleep(900)
 const after = J(await ev(`JSON.stringify({ hp:S.hp, hpMax:S.hpMax, mat:S.mat, ammo:S.ammo, infect:S.infect, logLen:S.logBuf.length,
   cheatFlag:S.flags.cheat === undefined ? 'absent' : String(S.flags.cheat),
-  cheatText:(S.logBuf||[]).filter(l => /作弊|Bobby 模式|权限已激活/.test(l.t||'')).length })`))
+  cheatText:(S.logBuf||[]).filter(l => /作弊|Bobby 模式|权限已激活/.test(l[1]||'')).length })`))
 const frozen = before.hp === after.hp && before.hpMax === after.hpMax && before.mat === after.mat && before.ammo === after.ammo && before.infect === after.infect
 /* 判定用"作弊签名"而不是逐项相等：战斗/用药/换页签本来就允许改状态，只有"被拉满"才算作弊生效 */
 const noSignature = after.hpMax === before.hpMax && after.hpMax < 10000 && after.mat < 1000 && after.ammo < 1000 &&
