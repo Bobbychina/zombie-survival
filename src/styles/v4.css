@@ -77,6 +77,19 @@
     display:flex;flex-direction:column;min-height:0}
   #v4cards{grid-area:cards;height:100%;max-height:100%;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;
     columns:340px;column-gap:12px}
+  /* M26.2：切到大区地图时，地图卡**独占整行**（不再只占 670px 的左列）——
+     大区图只有 144 格，用户要「放大到跟小区地图一样」，而并排布局下它被列宽卡在 50px 上下。
+     现在它按整行宽度 + 可用高度自适应（实测 2048 宽下 46px 上下，接近本地地图的观感），
+     卡片墙顺着挪到下一行，纵向照常滚。
+     注意 `height:100%` 必须保留：卡片的 flex 子项（.rmain/.rgridcol）只有在**父高确定**时才会被拉满，
+     否则 `.rgridcol` 只有内容高（441px），fitRegion 反推出来的格子永远卡在 34px。 */
+  /* 注意：行模板必须是 `auto minmax(0,1fr)` —— 两行都写 `1fr` 会把可视高度**对半分**
+     （实测地图卡只剩 413px，格子被卡在 34px 上不去）；`auto` 让地图卡按自己的内容拿高度，
+     同时 `fitRegion` 用"卡片可视高 − 兄弟节点高"反推格子边长，格子就能长到 60px 上下。 */
+  #view.v4-board.v4-region{grid-template-areas:"map" "cards";grid-template-columns:minmax(0,1fr);
+    grid-template-rows:auto minmax(0,1fr)}
+  #view.v4-board.v4-region #v4world{position:static;height:100%;max-height:100%}
+  #view.v4-board.v4-region #v4cards{height:100%;max-height:100%}
   /* M25.1：多列流容器的 scrollWidth 会把整列高度也算进去（实测 843px 宽报 1270px），
      而 `overflow-y:auto` 会把 overflow-x 从 visible 自动变成 auto → 卡片墙白白多一条横向滚动条。
      显式关掉横向滚动即可（列内容不会横向溢出：卡片本身已经 anywhere 断行 + max-width:100%）。 */
@@ -217,8 +230,11 @@
 .v4world .rgrid{display:grid;grid-template-columns:repeat(12,1fr);gap:3px;margin:8px 0 6px;max-width:520px}
 /* M21.1：大区图与选中详情并排（窄卡片自动换行）。详情里有"路程报价 + 出发"，
    堆在地图下面会被挤到屏幕外——玩家报障"这边也溢出了"。 */
-.v4world .rmain{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
-.v4world .rgridcol{flex:0 1 auto;min-width:0}
+.v4world .rmain{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap;flex:1 1 auto}
+/* M26.2：给地图列留出"12 格 × 60px"的宽度 —— 否则 flex 会把 1607px 宽的行分给右侧详情，
+   地图列只剩 441px，格子被宽度卡在 34px（用户要「放大到跟小区地图一样」）。
+   flex-basis 写死这个宽度后，剩余宽度才轮到详情列；窄屏（<880px）仍然走栈式布局。 */
+.v4world .rgridcol{flex:0 0 auto;min-width:min(100%,756px)}
 .v4world .rmain>.rdetail{flex:1 1 320px;min-width:280px;margin-top:8px}
 /* 窄卡片：详情挪到地图上面（点完格子先看到"怎么去、花多少"） */
 .v4world .rmain.stack{flex-direction:column}

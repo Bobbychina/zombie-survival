@@ -798,6 +798,10 @@ export function mountWorldPanel() {
   if (view.firstChild !== map) view.insertBefore(map, view.firstChild);
   if (map.nextSibling !== board) view.insertBefore(board, map.nextSibling);
   view.classList.add('v4-board');
+  /* M26.2：大区图（12×12）单独一个 class —— 它只有 144 格，用户要「放大到跟小区地图一样」。
+     并排布局下地图列只有 670px 宽，12 列被宽度卡死在 50px 上下；这里让**大区模式下地图卡独占整行**，
+     格子尺寸只受高度约束（实测 2048 宽下能到 40px 上下，接近本地地图的观感）。 */
+  view.classList.toggle('v4-region', mapMode === 'region');
   /* M25.1：fitMap 必须等**两次** rAF —— 第一次 rAF 时 #v4world 的 flex 高度还在布局中途，
      量出来的 clientHeight 是旧值（会算错格子边长，实测把 514px 的图塞进 512px 的框 → 地图又滚了）。 */
   requestAnimationFrame(() => requestAnimationFrame(fitMap));
@@ -900,10 +904,26 @@ function fitRegion(view: HTMLElement, card: HTMLElement, rgrid: HTMLElement) {
   const main = card.querySelector('.rmain') as HTMLElement | null;
   if (main) main.classList.toggle('stack', card.clientWidth < 880);
   const wrapH = wrap ? wrap.clientHeight - 16 : 0;                       // 减 wrapper 的 padding 与边框
+  /* M26.2：大区图（12×12）翻倍放大 —— 用户：「大区地图为什么这么小，放大到跟小区地图一样」。
+     预算口径改成"卡片可视高度 − 除 .rmain 以外的兄弟节点高度"：原来的 `availH - chrome` 在
+     "卡片高度被网格行定死"的布局里会**低估**（实测 731px 的卡片、只按 482px 的 .rgridcol 反推 → 格子卡在 34px）。
+     上限 60 → 72（12×12 本来就该比 24×24 的格子大），下限 18 不变。 */
+  const sibs = (() => {
+    let s = 0;
+    for (const el of Array.from(card.children)) {
+      if (el === main) continue;
+      const cs2 = getComputedStyle(el);
+      s += el.getBoundingClientRect().height + (parseFloat(cs2.marginTop) || 0) + (parseFloat(cs2.marginBottom) || 0);
+    }
+    const cs = getComputedStyle(card);
+    return s + (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0)
+      + (parseFloat(cs.borderTopWidth) || 0) + (parseFloat(cs.borderBottomWidth) || 0);
+  })();
+  const byBox = Math.floor((card.clientHeight - sibs - 40) / 12);
+  const colCell = col ? Math.floor((col.clientHeight - 33) / 12) : 0;
   const byH = Math.floor(((wrap ? wrapH : availH - chrome - 33)) / 12);
   const byW = Math.floor(((col ? col.clientWidth : box.width) - 33) / 12);
-  // 下限 18px：地图面板本身不滚，"装不下"的唯一出路是把格子缩小（小时只留危险数字 .tiny）
-  let cell = Math.max(18, Math.min(60, byH, byW));
+  let cell = Math.max(18, Math.min(72, Math.max(byH, byBox), byW, colCell || 999));
   const apply = (c: number) => {
     const tpl = 'repeat(12, ' + c + 'px)';
     if (rgrid.style.gridTemplateColumns !== tpl) {

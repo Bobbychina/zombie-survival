@@ -106,8 +106,9 @@ const layout = JSON.parse(await ev(`(() => {
   return JSON.stringify({ n: cards.length, cols, rest, sleep, names, cardsW, cardW,
     board: document.getElementById('view').classList.contains('v4-board'),
     tools: !!document.getElementById('v4tools'),
-    /* M26.1：世界/账号按钮搬进 ☰ 菜单，探针改成在菜单里找它们（见下面的断言） */
-    menuBtns: (() => { try { openMenu(); const ov = document.querySelector('.modal'); const r = [...(ov ? ov.querySelectorAll('button') : [])].map(b => (b.textContent||'').trim()); closeAllModals(); return r } catch (e) { return [] } })(),
+    /* M26.1：世界/账号按钮搬进 ☰ 菜单，探针改成在菜单里找它们（见下面的断言）。
+       注意：探针跑到这里可能已经打完一场仗（战斗弹窗也在 .modal 里），所以要按标题精确找菜单那个弹窗。 */
+    menuBtns: (() => { try { openMenu(); const ov = [...document.querySelectorAll('.modal')].find(m => /☰ 菜单/.test(m.innerText || '')); const r = [...(ov ? ov.querySelectorAll('button') : [])].map(b => (b.textContent||'').trim()); closeAllModals(); return r } catch (e) { return [] } })(),
     acctInCards: cards.some(c => /账号与云存档|注册 \\/ 登录/.test(c.textContent||'')),
     accountInView: /账号与云存档/.test(txt),
     mapCard: !!document.querySelector('#v4world .wgrid'),
