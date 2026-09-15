@@ -114,14 +114,22 @@ export function envLine(): string {
   const e = envOf(), season = seasonNow(), fx = WEATHER[e.weather];
   const p = tempPenalty(e.temp);
   const tempTxt = e.temp < TEMP_LOW ? '体温偏低' : e.temp > 80 ? '体温偏高' : '体温正常';
+  /* M30：湿度/病症那一行由 survival.ts 追加（这里不 import 它，避免 env ↔ survival 循环依赖）。
+     用 try/catch 兜住：这一行要是挂了，不能把整块天气 HUD（乃至世界地图挂载）一起带走。 */
+  let sv = '';
+  try {
+    const s = (typeof window !== 'undefined' ? (window as any).V4Survival : null);
+    if (s && typeof s.survivalLine === 'function') sv = String(s.survivalLine() || '');
+  } catch { sv = ''; }
   return `${SEASON_INFO[season].icon}${SEASON_INFO[season].name}季 · ${fx.icon}${fx.name} · 体温 ${Math.round(e.temp)}（${tempTxt}）` +
-    (p.note ? ' ⚠️' : '') + ` · 明日 ${WEATHER[e.tomorrow].icon}${WEATHER[e.tomorrow].name}`;
+    (p.note ? ' ⚠️' : '') + (sv ? ' · ' + sv : '') + ` · 明日 ${WEATHER[e.tomorrow].icon}${WEATHER[e.tomorrow].name}`;
 }
 
 /** HUD 用：体温条 + 季节天气（会议 R11：最小 HUD，不动地图面板结构） */
 export function envChips(): string {
   const e = envOf(), season = seasonNow(), fx = WEATHER[e.weather];
   const cls = e.temp < TEMP_LOW ? 'cold' : e.temp > 80 ? 'heavy' : '';
+  /* M30：湿度/淋湿/病症的 chips 由 main.ts 追加（见 paintEnv） */
   return `<span class="chip ${cls}" title="${envLine()}">${SEASON_INFO[season].icon}${SEASON_INFO[season].name} ${fx.icon}${fx.name}</span>` +
     `<span class="chip ${cls}" title="体温：火堆/室内可回，低于 ${TEMP_LOW} 会掉一档行动力与命中">🌡️ <b>${Math.round(e.temp)}</b></span>`;
 }

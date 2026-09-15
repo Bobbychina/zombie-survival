@@ -84,6 +84,9 @@ const ITEMS = {
   backpack: {n:'军用背包',  t:'gear',  w:1.0, slot:'bag',  cap:40, desc:'负重上限 +40。'},
   // 剧情
   keycard:  {n:'门禁卡碎片',t:'key',   w:0.1, desc:'破坏伞公司的生物识别卡，缺了三块中的一块就毫无意义。'},
+  /* M30：湿度计的预报道具（用户点名要的"工作台里加一个天气预报类的东西"）。
+     用一次看三天：哪天有雨（能接水/会淋湿）、哪天干燥（中暑脱水）、哪天寒潮。 */
+  hygro:    {n:'湿度计',    t:'gear', w:0.4, forecast:true, desc:'玻璃管里的水银柱。用它看一眼未来三天的湿度走势：该备水还是该备柴，一眼就知道。'},
   data:     {n:'实验数据',  t:'key',   w:0.1, desc:'“方舟”第 6 层的读取记录，能证明解药配方是真的。'},
   cure:     {n:'解药',      t:'key',   w:0.2, desc:'淡蓝色的液体，在灯下像活的一样。'},
   flare:    {n:'信号枪',    t:'mat',   w:0.6, desc:'打出一发红色信号弹。第 90 天之后的撤离点靠它叫人来接。'},   // v4.0：撤离结局（C07）
@@ -254,6 +257,8 @@ const RECIPES = [
   {out:'cooked',   n:1, need:{meat:1, wood:1},           st:'kitchen', lv:0, desc:'把生肉做熟：饱食与治疗都更高。'},
   {out:'jerky',    n:2, need:{meat:2, chem:1},           st:'kitchen', lv:1, desc:'风干肉 ×2：占位小、不腐坏。'},
   {out:'stew',     n:1, need:{meat:1, veg:1, water:1},   st:'kitchen', lv:2, desc:'热炖菜：回满饱食并且压感染。'},
+  /* ── M30 工作台：湿度计（天气预报） ── */
+  {out:'hygro',    n:1, need:{metal:1, chem:1, tape:1},  st:'bench', lv:1, desc:'湿度计：看一眼未来三天的雨/旱/寒潮，出门前先规划。'},
 ];
 /* M25 兼容：归一化统一由 normalizeRecipes() 负责（定义在文件后段、两批配方都加完之后）。 */
 
@@ -1196,12 +1201,17 @@ function spendAP(n, label){
 function tickVitals(mult){
   mult = mult || 1;
   const cut = 1 - skillBonus('survival', .03, .35);
+  /* M30：干燥/中暑/脱水放大水分消耗（湿度是天气的导出量，所以玩家能靠看天预判） */
+  const sv = (typeof window.V4Survival === 'object' && window.V4Survival) ? window.V4Survival : null;
+  const vm = sv ? sv.vitalsMul() : { thirst: 1, temp: 1 };
   S.hun = clamp(S.hun - 3.6 * cut * mult, 0, 100);
-  S.thi = clamp(S.thi - 4.4 * cut * mult, 0, 100);
+  S.thi = clamp(S.thi - 4.4 * cut * mult * vm.thirst, 0, 100);
   const enc = encumbrance();
-  /* M25：体内辐射压低体力上限（重度辐射时几乎跑不动） */
-  const radCap = S.staMax * radTier(S.rad).staMul;
+  /* M25：体内辐射压低体力上限（重度辐射时几乎跑不动）；M30：病症再压一档（中暑 −30% 等） */
+  const radCap = S.staMax * radTier(S.rad).staMul * (sv ? sv.staCapMul() : 1);
   S.sta = clamp(S.sta - (6 + enc * 6) * mult, 0, radCap);
+  /* M30：病症链推进（每若干步结算一次病程，掉血在 step 里扣） */
+  if(sv) sv.step(1);
   if(S.hun <= 0){ S.hp -= 4; log('🍖 饥饿到了极限，身体在消耗自己。','danger'); }
   else if(S.hun < 18) log('🍖 你饿得手在抖（伤害与命中下降）。','dim');
   if(S.thi <= 0){ S.hp -= 5; log('💧 严重脱水，视线开始发黑。','danger'); }   // C08：归零掉血 6/8 → 4/5，别让饥饿单独构成死亡螺旋
@@ -1221,6 +1231,15 @@ function statMods(){
   // 流血的提示交给 HUD 的伤口 chip，不再塞进 note（避免同一屏重复两次）
   if(hasWound('fracture')){ m.dodge -= .10; }
   if(hasWound('sick')){ m.dmgMul -= .10; }
+  /* M30：湿度病症（中暑/脱水/呼吸道/真菌）合并进来 —— 数值在 survival-core，这里只合账 */
+  const sv2 = (typeof window.V4Survival === 'object' && window.V4Survival) ? window.V4Survival : null;
+  if(sv2){
+    const cp = sv2.penaltyNow();
+    m.dmgMul -= (1 - cp.apMul) * 0.5;        // 体力上限被压 → 伤害也弱一点（不叠加到 0，取一半）
+    m.dodge -= cp.hit;
+    const names = sv2.condNames();
+    if(names.length) m.note.push(names.join('/'));
+  }
   /* M25：辐射分档惩罚（轻度只提示、明显以上真的扣战力与治疗） */
   {
     const rt = radTier(S.rad);
@@ -1242,6 +1261,8 @@ function sleepNight(){
   const cut = 1 - skillBonus('survival', .03, .35);
   S.hun = clamp(S.hun - 12 * cut, 0, 100);
   S.thi = clamp(S.thi - 14 * cut, 0, 100);
+  /* M30：病程在夜里推进得更快（"病了就早睡"要真的有用） */
+  { const svN = (typeof window.V4Survival === 'object' && window.V4Survival) ? window.V4Survival : null; if(svN) svN.nightStep(); }
   S.sta = S.staMax;
   const bedHeal = Math.round((12 + S.base.bed * 9) * (atBase ? 1 : .45));
   S.hp = Math.min(S.hpMax, S.hp + bedHeal);
@@ -2362,7 +2383,7 @@ function useConsumable(id, inCombat){
   }
   if(it.heal){ const h = Math.round(it.heal * healMul); S.hp = Math.min(S.hpMax, S.hp + h); notes.push('生命 +' + h); }
   if(it.hun){ const h = Math.round(it.hun * (1 + skillBonus('survival', .05, .4))); S.hun = clamp(S.hun + h, 0, 100); notes.push('饱食 +' + h); }
-  if(it.thi){ const h = Math.round(it.thi * (1 + skillBonus('survival', .05, .4))); S.thi = clamp(S.thi + h, 0, 100); notes.push('水分 +' + h); }
+  if(it.thi){ const sv3 = (typeof window.V4Survival === 'object' && window.V4Survival) ? window.V4Survival : null; const dryMul = sv3 ? sv3.drinkGain() : 1; const h = Math.round(it.thi * (1 + skillBonus('survival', .05, .4)) * dryMul); S.thi = clamp(S.thi + h, 0, 100); notes.push('水分 +' + h + (dryMul < 1 ? '（干燥天只补七成）' : '')); }
   if(it.sta){ S.sta = clamp(S.sta + it.sta, 0, S.staMax); notes.push('体力 +' + it.sta); }
   if(it.infect){
     const v = Math.round(it.infect * (1 - skillBonus('medic', .05, .5)));
@@ -2371,6 +2392,13 @@ function useConsumable(id, inCombat){
   }
   if(it.cure && battle && battle.pSt[it.cure]){ battle.pSt[it.cure] = 0; notes.push('已解除' + (it.cure === 'bleed' ? '流血' : '中毒')); }
   if(it.cureWound && cureWound(it.cureWound)) notes.push('已处理' + WOUND_DEF[it.cureWound].n);
+  /* M30：湿度计 —— 看一眼未来三天的湿度走势（确定性：由种子+天数决定，和 env.ts 的翻日同一套） */
+  if(it.forecast){
+    const sv4 = (typeof window.V4Survival === 'object' && window.V4Survival) ? window.V4Survival : null;
+    const lines = sv4 ? sv4.forecastLines(3) : ['（湿度计坏了，读数一片模糊）'];
+    log('🌡️ 湿度计读数：' + lines.join(' / '), 'info');
+    notes.push('未来三天读出');
+  }
   if(it.sick && chance(it.sick)){ addWound('sick', 1); notes.push('吃坏了肚子'); }
   sfx('ok');
   log('💊 使用 ' + it.n + '：' + notes.join('，'), 'success');

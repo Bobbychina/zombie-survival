@@ -9,8 +9,7 @@ import {
   type SaveWorld, type Trip,
 } from './worldstate';
 import {
-  META_COLS, META_ROWS, MAX_HOPS, REGIONS, REGION_TYPES as TYPES, TYPE_INFO, dangerColor, dangerLabel, homeRegion,
-  metaGrid, planRegionTrip, regionById, regionName, typeColor, typeLabel, type RegionDef,
+  META_COLS, META_ROWS, MAX_HOPS, REGIONS, REGION_TYPES as TYPES, TYPE_INFO, dangerColor, dangerLabel, homeRegion,  metaGrid, planRegionTrip, regionById, regionName, typeColor, typeLabel, type RegionDef,
 } from './regions-core';
 import { poiLeft, searchPoi } from './search';
 import { lastRegionEvent, onEnterRegion } from './region-events';
@@ -24,6 +23,7 @@ const fitLv = (): number => Number((L.S as any)?.skills?.fitness ?? 0);
 import { ensureEvac, evacAvailable, fireFlare } from './evac';
 import { CROPS, SEASON_INFO, WEATHER, growthDays } from './env-core';
 import { envLine, envOf, seasonNow, tempPenalty } from './env';
+import { abundanceTier } from './region-danger';       // M30：资源丰度档位（大区格子右下角那格小方块）
 import { farmSummary, cropList, harvest, plant, plotSlots, farmBuildCost } from './farm';
 import { radGain, radLevelAt, radProtect, RAD_SOURCES, geigerText } from './rad-core';
 import { chopInfo, forageInfo, salvageInfo } from './gather';
@@ -324,15 +324,20 @@ export function renderRegionPanel(s: SaveWorld): string {
       const seen = isHere || !!s.seenRegions[def.id];
       const cls = 'rcell2 d' + def.tier + (isHere ? ' here' : '') + (def.homeBase ? ' home' : '') +
         (sel && sel.id === def.id ? ' sel' : '') + (onPath[def.id] ? ' onpath' : '') + (seen ? '' : ' unseen');
+      /* M30：悬停/详情里带上**资源丰度**档位（"跑这一趟值不值"的另一个维度） */
+      const ab = abundanceTier(def.abundance ?? 1);
       const tip = def.name + ' · ' + typeLabel(def.type) + ' · 危险 ' + def.tier + '：' + def.desc +
+        ' · 资源' + ab.icon + ab.label + '（×' + (def.abundance ?? 1).toFixed(2) + '）' +
         (seen ? '' : '（你还没去过这一带，物资是按地貌推的）');
       const bg = dangerMode ? dangerColor(def.tier) : typeColor(def.type);
       /* M24：两个图层各管各的（用户原话："为什么地貌上色还有危险度……危险度不是有单独的上色吗"）。
          地貌层 = 只有颜色（地名/危险数字都不画，看名字点开详情、或切到危险度层）；
-         危险度层 = 只有数字。图例、悬停 title、点开的详情都还在，信息没丢。 */
+         危险度层 = 只有数字。图例、悬停 title、点开的详情都还在，信息没丢。
+         M30：右下角一个小方块标资源丰度（0~3 格，不写字，免得盖住地图）。 */
       h += '<div class="' + cls + '" style="background:' + bg + ';--dc:' + dangerColor(def.tier) + '"' +
         ' title="' + esc(tip) + '" role="button" tabindex="0" onclick="V4World.pickRegion(\'' + def.id + '\')">' +
         (dangerMode ? '<i class="rnum d' + def.tier + '">' + def.tier + '</i>' : '') +
+        '<i class="rab ab' + ab.tier + '" title="资源' + ab.label + '"></i>' +
         (isHere ? '<i class="rpin">📍</i>' : '') +
         '</div>';
     }
@@ -481,7 +486,12 @@ function envCard(): string {
   const fi = forageInfo(), ci = chopInfo();
   const badges = [SEASON_INFO[seasonNow()].name + '季', WEATHER[env.weather].icon + WEATHER[env.weather].name];
   if (p.note) badges.push('⚠️ 体温异常');
+  /* M30：湿度/病症也进徽章与正文（否则玩家得去 HUD 悬停才知道自己为什么掉体力） */
+  const svHud = (window as any).V4Survival as { riskLine?: () => string; status?: () => { conds: string[]; hum: number } } | undefined;
+  const conds = svHud?.status ? svHud.status().conds : [];
+  for (const c of conds) badges.push('🩺 ' + c);
   let b = '<div class="hint">' + esc(envLine()) + '</div>';
+  if (svHud?.riskLine) b += '<div class="hint" style="color:#e0b06a">' + esc(svHud.riskLine()) + '</div>';
   if (p.note) b += '<div class="hint" style="color:#e0b06a">' + esc(p.note) + '</div>';
   b += '<div class="hint">今日：采集 ×' + WEATHER[env.weather].forage + ' · 作物 ×' + WEATHER[env.weather].crop +
     ' · 腐坏 ×' + (SEASON_INFO[seasonNow()].rot * WEATHER[env.weather].rot).toFixed(2) +

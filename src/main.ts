@@ -27,7 +27,7 @@ export const V4: Record<string, unknown> = {};
 (window as any).V4 = V4;
 
 async function main() {
-  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi, integrity, betaNotice, regionEventsCore, regionEvents, regionsCore, worldsUi, tutorial, saveVault, accountVault] = await Promise.all([
+  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi, integrity, betaNotice, regionEventsCore, regionEvents, regionsCore, worldsUi, tutorial, saveVault, accountVault, survival, envCore] = await Promise.all([
     import('./v4/worldgen'),
     import('./v4/pois'),
     import('./v4/combat'),
@@ -52,6 +52,8 @@ async function main() {
     import('./v4/tutorial'),
     import('./v4/save-vault'),
     import('./v4/account-vault'),
+    import('./v4/survival'),
+    import('./v4/env-core'),
   ]);
   // BETA 声明条：整站/整游戏最上面那一条（本站所有子页面都要有）
   betaNotice.installBetaNotice();
@@ -191,21 +193,53 @@ async function main() {
   (window as any).__v4TutorialBattleTip = tutorial.maybeBattleTip;
   (window as any).V4Camp = camp.V4Camp;
   // M6：季节/天气/体温的最小 HUD（挂在顶栏 chips 里，不动地图面板结构）
+  // M30：湿度 / 淋湿 / 病症也挂在这里（数值在 survival-core，运行时在 survival.ts）
+  /* 注意：legacy 的 renderHud() 会**整块重写** #hud 的 innerHTML —— 只"添加一次"的写法会被下一次
+     渲染抹掉（实测第一版就是这样：mountWorld 里塞进去的 .v4-env 在首次 render 后就不见了）。
+     所以这里既补内容、也用 MutationObserver 盯着 #hud，legacy 每次重画都把我们这一块补回去。 */
   const paintEnv = () => {
     try {
-      const hud = document.querySelector('.hud-chips');
-      if (!hud || hud.querySelector('.v4-env')) {
-        const old = hud?.querySelector('.v4-env');
-        if (old) old.innerHTML = env.envChips();
-        return;
+      const hud = document.getElementById('hud');
+      if (!hud) return;
+      const chips = (() => { try { return env.envChips() + (L.S ? survival.survivalChips() : ''); } catch { return env.envChips(); } })();
+      const inner = hud.querySelector<HTMLElement>('.hud-chips');
+      const host: HTMLElement = inner ?? hud;
+      let env0 = hud.querySelector<HTMLElement>('.v4-env');
+      if (!env0) {
+        env0 = document.createElement('span');
+        env0.className = 'v4-env';
+        host.appendChild(env0);
+      } else if (env0.parentElement !== host) {
+        host.appendChild(env0);
       }
-      const span = document.createElement('span');
-      span.className = 'v4-env';
-      span.style.display = 'contents';
-      span.innerHTML = env.envChips();
-      hud.appendChild(span);
-    } catch (e) { console.warn('[v4] 环境 HUD 挂载失败', e); }
+      if (chips && env0.innerHTML !== chips) env0.innerHTML = chips;
+      return true;
+    } catch (e) { console.warn('[v4] 环境 HUD 挂载失败', e); return false; }
   };
+  const hudEl = document.getElementById('hud') as (HTMLElement & { __v4Patched?: boolean }) | null;
+  if (hudEl) {
+    /* 关键：legacy 的 renderHud() 每次都是 `$('#hud').innerHTML = h` —— **整块重写**。
+       所以"渲染完再 append"这种写法必然被下一次重写抹掉（实测：MutationObserver 版本在探针里
+       反复 MISSING）。真正稳的做法是在赋值那一刻就把我们这段 HTML 拼进去（synchronous，不靠时序）。
+       副作用几乎为零：只拦 #hud 这一个元素的 innerHTML。 */
+    const proto = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
+    if (proto && proto.set && proto.get) {
+      Object.defineProperty(hudEl, 'innerHTML', {
+        configurable: true,
+        get() { return proto.get!.call(this); },
+        set(v: string) {
+          let out = String(v);
+          try {
+            const chips = env.envChips() + (L.S ? survival.survivalChips() : '');
+            if (chips) out = out.replace('</div>', '</div><span class="v4-env">' + chips + '</span>');
+          } catch { /* HUD 少一条 chip 不该让整屏挂掉 */ }
+          proto.set!.call(this, out);
+        },
+      });
+      hudEl.__v4Patched = true;
+    }
+    paintEnv();                                   // 首屏（自动读档那条路）也补一次
+  }
   const mountWorld = () => {
     try { worldUi.mountWorldPanel(); } catch (e) { console.error('[v4] 世界地图挂载失败', e); }
     paintEnv();
@@ -223,6 +257,25 @@ async function main() {
   /* M29：账号库那条链路（本机记录 / GitHub Gist / OneDrive）也走同一把 worker 密钥加密 —— */
   accountVault.initAccountVault();
   (window as any).V4AccountVault = { status: accountVault.accountVaultStatus, warmUp: accountVault.warmUp };
+  /* M30：湿度 / 淋湿 / 病症链 —— legacy 与 env.ts 通过 window.V4Survival 读写。
+     名字必须与调用方**逐字一致**：叫错一个的后果不是"少个 chip"，而是整屏挂掉 ——
+     探针实测撞了两次（`e.penaltyNow is not a function` → render() 走 catch 分支换成"界面渲染出错"；
+     `window.V4Survival.survivalLine is not a function` → 世界地图与环境 HUD 一起挂）。
+     所以这里显式写全，**不用简写别名**（survivalLine / survivalChips / forecastLines…）。 */
+  (window as any).V4Survival = {
+    step: survival.step, nightStep: survival.nightStep, status: survival.survivalStatus,
+    chips: survival.survivalChips, survivalChips: survival.survivalChips,
+    line: survival.survivalLine, survivalLine: survival.survivalLine, riskLine: survival.riskLine,
+    humidityNow: survival.humidityNow, wetNow: survival.wetNow, condsNow: survival.condsNow, hasCond: survival.hasCond,
+    penaltyNow: survival.penaltyNow, staCapMul: survival.staCapMul, vitalsMul: survival.vitalsMul,
+    condNames: survival.condNames, forecastLines: survival.forecastLines,
+    drinkGain: survival.drinkGain, fireOk: survival.fireOk, rotMul: survival.rotMul, refreshHum: survival.refreshHum,
+  };
+  (V4 as any).survival = survival;
+  /* 探针/调试用的纯函数出口（只在本地探针里读，游戏逻辑不依赖它） */
+  (window as any).V4Debug = Object.assign((window as any).V4Debug || {}, {
+    salvageYields: envCore.salvageYields, regionById: regionsCore.regionById,
+  });
   /* M8：存档完整性——必须在 L.boot() 读档之前看原始 JSON（loadGame 会 sanitize，夹取之后就查不出越界了） */
   const preVerdict = integrity.inspectBeforeBoot();
   integrity.installWriteHook();

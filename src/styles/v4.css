@@ -181,6 +181,10 @@
 .v4world .wenv{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
 .v4world .wplot{font-size:11px;color:var(--dim);align-self:center}
 .hud-chips .chip.cold{border-color:#4a6f8a;background:#101a22;color:#9cc7e0}
+/* M30：湿度 / 淋湿 / 病症的 chips 容器（由 main.ts 拼进 legacy 的 #hud innerHTML 里）。
+   注意**不能用 display:contents** —— 那样 Chromium 的 innerText 会跳过整棵子树，
+   屏幕上看得见、探针与无障碍读不到（实测就是"视觉有、innerText 空"）。 */
+.hud-chips .v4-env{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
 .v4world .wlegend .sw.ic{display:inline-flex;align-items:center;justify-content:center;font-size:9px;background:#12151a}
 .v4world .wlegend .sw.cur-sw{background:transparent;outline:2px solid var(--bone)}
 .v4world .wlegend .sw.path-sw{background:transparent;outline:1px dashed rgba(207,210,214,.6)}
@@ -250,6 +254,13 @@
 .v4world .rcell2 .rnum{font-size:9px;line-height:1.1;font-style:normal;font-family:var(--mono,monospace);
   padding:0 3px;border-radius:6px;background:rgba(6,8,11,.62);pointer-events:none}
 .v4world .rcell2 .rpin{position:absolute;left:1px;bottom:3px;font-size:9px;font-style:normal;pointer-events:none}
+/* M30：右下角的小方块 = 资源丰度（0~3 格）。不写字，免得盖住地图；点开详情/悬停看档位与倍率。 */
+.v4world .rcell2 .rab{position:absolute;right:2px;bottom:5px;width:7px;height:7px;border-radius:1px;
+  background:#4a5058;box-shadow:0 0 0 1px rgba(0,0,0,.55);pointer-events:none}
+.v4world .rcell2 .rab.ab1{background:#7d8a94}
+.v4world .rcell2 .rab.ab2{background:#e0b45c}
+.v4world .rcell2 .rab.ab3{background:#e8d27a;box-shadow:0 0 5px rgba(232,210,122,.8)}
+.v4world .rgrid.tiny .rcell2 .rab{width:5px;height:5px;bottom:4px;right:1px}
 /* 底边条 = 危险度（绿→红）。底色管"是什么地貌"，底边管"多危险"——两个维度互不抢戏，
    整张图一眼就能看出危险度是**从中心往外涨**的（评审 #2 要的效果）。 */
 .v4world .rcell2::after{content:'';position:absolute;left:0;right:0;bottom:0;height:3px;background:var(--dc,#555)}

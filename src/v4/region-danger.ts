@@ -53,25 +53,56 @@ export interface DangerFieldOpts {
   fine: (x: number, y: number) => number;
   /** 深渊孤岛中心（少数"特别凶"的块，给地图一个可记忆的地标） */
   pit?: { c: number; r: number } | null;
+  /** 噪声系数等于 `low` 的**连续**柏林场（不是格点表）：C1 连续化时用它做双线性采样 */
+  cont?: (x: number, y: number) => number;
+}
+
+/** 一格的噪声坐标（格心）：危险度场要能"格与格之间"取连续值，所以坐标必须落在 0.5 而不是整数上
+    —— 整数坐标正好落在格点，双线性插值会退化成"每格一个随机数"，看起来还是一格一个色块。 */
+export const cellNoiseXY = (c: number, r: number, f = 1 / 3): { x: number; y: number } => ({ x: (c + 0.5) * f, y: (r + 0.5) * f });
+
+/** 危险度场的**连续**取值（不取整、不钳制）—— 给"大区每一格"和"区域内部的 24×24 格"共用。
+    同一张噪声、同一个口径，所以区与区之间的难度是连续的（不再出现"过了边界突然 +2 档"）。 */
+export function dangerAt(opts: DangerFieldOpts, c: number, r: number): number {
+  const dist = Math.max(Math.abs(c - opts.homeCol), Math.abs(r - opts.homeRow));
+  const base = 1 + (dist / Math.max(1, opts.maxDist)) * 4;
+  const { x, y } = cellNoiseXY(c, r);
+  /* 低频噪声管"这一片凶不凶"，高频噪声打破规整的圈。
+     频率与幅度都是**量出来的**：高频那层周期只有 2.6 格、幅度 0.26 时，它一格能变 ~1.0 档
+     （最坏叠加点实测相邻格差 2.10 档，"格与格之间连续"就成了空话）；
+     压到 0.15 后最坏差落在 1.4 档左右，径向梯度重新成为唯一的陡峭来源。 */
+  const wob = opts.low(x * (3 / 7), y * (3 / 7)) * 0.62 + opts.fine(x / 2.6, y / 2.6) * 0.15;
+  /* 深渊孤岛：离孤岛中心 4 格以内按平滑曲线加成（中心 +1.6）。
+     用衰减曲线而不是"≤1 格 +1.6 / 2 格 +0.8"的台阶：台阶会在孤岛边缘留下 0.5 档/格的断崖，
+     实测那一格差 1.76 档 —— 噪声白做，全靠邻居钳制救。曲线半径 4 之后峰值差落在 1.4 档内。 */
+  let pitBoost = 0;
+  if (opts.pit) {
+    const d = Math.max(Math.abs(c - opts.pit.c), Math.abs(r - opts.pit.r));
+    if (d <= 5) { const t = 1 - d / 5; pitBoost = 1.6 * t * t * (3 - 2 * t); }
+  }
+  /* 边缘（离主城 ≥ maxDist - 1）是"死地"：M17 的硬约束是"最外圈至少危险 4"（不能出现安全角落），
+     所以噪声在这里要**衰减**，否则一个负波谷就会把角落拉到 3（实测就被老测试抓到了）。 */
+  const edge = Math.min(1, Math.max(0, (dist - (opts.maxDist - 2)) / 2));
+  const v = 1 + (base - 1 + wob * (1 - edge * 0.65)) + edge * 0.6 + pitBoost;
+  /* 硬约束①：新手村（主城 + 紧邻一圈）恒为 1。但**不能写成 `if (dist<=1) return 1`** ——
+     那会造出一个断崖：圈内恒 1、圈外按噪声可能是 3，实测相邻格心差 2.05 档（量出来的），
+     最后只能靠邻居钳制把外圈一格格拉下来。改成"从主城向外平滑压到 1"：
+     dist 1 / 2 / 3 处分别按 0.25 / 0.6 / 0.85 的权重回到安全值，两格之内的数字仍然恒为 1。 */
+  const safe = 1 - Math.min(1, Math.max(0, (dist - 1) / 2));   // dist 1 → 1，dist ≥3 → 0
+  const w = safe * safe * (3 - 2 * safe);
+  const out = Math.max(1, Math.min(5, v * (1 - w) + 1 * w));
+  return out;
 }
 
 /** 单格原始危险值（没做邻居钳制、也没取整） */
-export function rawDanger(opts: DangerFieldOpts, c: number, r: number): number {
-  const dist = Math.max(Math.abs(c - opts.homeCol), Math.abs(r - opts.homeRow));
-  if (dist <= 1) return 1;                                     // 硬约束①：新手村
-  const base = 1 + (dist / Math.max(1, opts.maxDist)) * 4;
-  /* 噪声坐标除以 3：让"这片凶"覆盖 3×3 格以上，玩家能看出"一整片"，而不是一格一个数 */
-  const wob = opts.low(c / 3, r / 3) * 0.9 + opts.fine(c / 1.5, r / 1.5) * 0.4;
-  /* 深渊孤岛：离孤岛中心 ≤1 格 +1.7 —— 城里人管那叫"别去的地方"。
-     实测 +1.3 时会被边缘衰减吃掉（12×12 里孤岛常常落在离主城 4~5 格的位置），
-     整张图只剩 3 格危险 5，"最凶的地方"没有存在感；+1.7 后孤岛稳定成片。 */
-  const pitBoost = opts.pit && Math.max(Math.abs(c - opts.pit.c), Math.abs(r - opts.pit.r)) <= 1 ? 1.7 : 0;
-  /* 边缘（离主城 ≥ maxDist - 1）是"死地"：M17 的硬约束是"最外圈至少危险 4"（不能出现安全角落），
-     所以噪声在这里要**衰减**，否则一个负波谷就会把角落拉到 3（实测就被老测试抓到了）。
-     噪声在这里只当微调（±0.45），保证外面一圈落在 4~5、不会掉回 3。 */
-  const edge = Math.min(1, Math.max(0, (dist - (opts.maxDist - 2)) / 2));
-  const v = 1 + (base - 1 + wob * (1 - edge * 0.65)) + edge * 0.6 + pitBoost;
-  return Math.max(1, Math.min(5, v));
+export const rawDanger = (opts: DangerFieldOpts, c: number, r: number): number => dangerAt(opts, c, r);
+
+/** 区域内部（24×24）的**局部**难度：大区那一格是"这一带有多难"的基准，
+    格子内部再叠一层小尺度噪声（玩家在大区图上看到的数字 = 这一带；踩进去才知道具体哪几格更凶）。 */
+export function localDanger(cont: (x: number, y: number) => number, baseTier: number, c: number, r: number): number {
+  const n = cont((c + 0.5) * 0.55, (r + 0.5) * 0.55);        // 小尺度：大约 2~3 格一片
+  const v = baseTier - 0.5 + n * 1.35;                        // 基准上下浮动 ~±1.35 档
+  return Math.max(1, Math.min(5, Math.round(v)));
 }
 
 /**
@@ -82,7 +113,7 @@ export function buildDangerGrid(opts: DangerFieldOpts, cols: number, rows: numbe
   const grid: number[][] = [];
   for (let r = 0; r < rows; r++) {
     grid[r] = [];
-    for (let c = 0; c < cols; c++) grid[r][c] = Math.max(1, Math.min(5, Math.round(rawDanger(opts, c, r))));
+    for (let c = 0; c < cols; c++) grid[r][c] = Math.max(1, Math.min(5, Math.round(dangerAt(opts, c, r))));
   }
   const nbs = (c: number, r: number) => {
     const out: Array<[number, number]> = [];
@@ -136,4 +167,45 @@ export function dangerStats(grid: number[][], homeCol: number, homeRow: number) 
     }
   }
   return { hist, maxJump, safe, total };
+}
+
+/* ── M30：大区「资源丰度」层 ──
+   用户要的是"大区每格难度用柏林噪声分布"（危险度已经做了），顺手把**资源丰度**也做成同一套噪声：
+   不然 144 个区域除了危险度以外没有任何差别，"跑远路"这件事就没有收益梯度。
+   丰度只影响"能搜到多少"（材料/拾取数量），不影响作物与钓鱼——那些有自己的一套数值。 */
+export const ABUNDANCE_MIN = 0.75;      // 最贫瘠
+export const ABUNDANCE_MAX = 1.35;      // 最肥
+
+/** 两次平滑插值的值噪声（比 makePerlin 更"团块化"，正适合做资源分布） */
+export function makeField(seed: number): (x: number, y: number) => number {
+  const h = (i: number, j: number): number => {
+    const s = Math.sin(i * 127.1 + j * 311.7 + (seed >>> 0) * 0.0001) * 43758.5453;
+    return s - Math.floor(s);
+  };
+  const sm = (t: number) => t * t * (3 - 2 * t);
+  return (x: number, y: number): number => {
+    const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+    const a = h(xi, yi), b = h(xi + 1, yi), c2 = h(xi, yi + 1), d = h(xi + 1, yi + 1);
+    const u = sm(xf), v = sm(yf);
+    return (a + (b - a) * u) + ((c2 + (d - c2) * u) - (a + (b - a) * u)) * v;
+  };
+}
+
+/** 丰度倍率：噪声的 4 次采样均值 → 近似正态 → 平滑映射到 0.75~1.35
+    （4 次采样必须取**地图上彼此远离**的点，否则均值还是同一个数；
+     用均值是为了"大部分格子普通、少数格子特别好/特别差"，而不是均匀分布） */
+export function abundanceAt(field: (x: number, y: number) => number, c: number, r: number): number {
+  const f = cellNoiseXY(c, r);
+  const a = field(f.x, f.y), b = field(f.x - 5.7, f.y + 3.1), d = field(f.x + 7.3, f.y - 4.2), e = field(f.x + 2.4, f.y + 9.4);
+  const n = (a + b + d + e) / 4;
+  const t = Math.max(0, Math.min(1, (n - 0.5) * 2.6 + 0.5));        // 拉开分布，避免全挤在中间
+  return ABUNDANCE_MIN + t * (ABUNDANCE_MAX - ABUNDANCE_MIN);
+}
+
+/** 丰度档位（UI 显示用）：贫瘠 / 一般 / 丰富 / 富矿 */
+export function abundanceTier(mul: number): { tier: number; label: string; icon: string } {
+  if (mul < 0.88) return { tier: 0, label: '贫瘠', icon: '▁' };
+  if (mul < 1.02) return { tier: 1, label: '一般', icon: '▃' };
+  if (mul < 1.18) return { tier: 2, label: '丰富', icon: '▅' };
+  return { tier: 3, label: '富矿', icon: '█' };
 }

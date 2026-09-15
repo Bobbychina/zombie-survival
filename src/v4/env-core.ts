@@ -193,13 +193,17 @@ export function forageYields(
 /** 拆解：每区块有资源池，拆光了就没了（禁止无限材料机） */
 export const SALVAGE_AP = 1;
 export const SALVAGE_POOL: Record<string, number> = { industrial: 6, ruins: 5, city: 4, military: 5, suburb: 3, highway: 3, farm: 2, forest: 2, water: 0 };
-export function salvageYields(rng: () => number, biome: string, danger: number): { items: { id: string; n: number }[]; ap: number } {
-  const mats = 2 + Math.floor(rng() * 2) + Math.floor(danger / 2);
+export function salvageYields(rng: () => number, biome: string, danger: number, abundance = 1): { items: { id: string; n: number }[]; ap: number } {
+  /* M30：大区的**资源丰度**倍率乘在材料与附加物上（危险度仍然管"值不值得去"）。
+     基础量按 1.0 算，丰度只放大/缩小产出，不给"零产出"（贫瘠区也有 1 份，不然跑一趟白跑）。 */
+  const ab = Math.max(0.6, Math.min(1.6, Number(abundance) || 1));
+  const mats = Math.max(1, Math.round((2 + Math.floor(rng() * 2) + Math.floor(danger / 2)) * ab));
   const items: { id: string; n: number }[] = [{ id: 'MAT', n: mats }];
-  if (rng() < 0.3) items.push({ id: 'metal', n: 1 });
-  if (rng() < 0.22) items.push({ id: 'wood', n: 1 });
-  if (rng() < 0.12) items.push({ id: 'tape', n: 1 });
-  if (rng() < 0.1) items.push({ id: 'cloth', n: 1 });
+  const roll = (p: number, cap = 0.95) => rng() < Math.min(cap, p * ab);
+  if (roll(0.3)) items.push({ id: 'metal', n: 1 + (ab >= 1.2 && rng() < 0.35 ? 1 : 0) });
+  if (roll(0.22)) items.push({ id: 'wood', n: 1 });
+  if (roll(0.12)) items.push({ id: 'tape', n: 1 });
+  if (roll(0.1)) items.push({ id: 'cloth', n: 1 });
   return { items, ap: SALVAGE_AP };
 }
 

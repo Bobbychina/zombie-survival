@@ -18,7 +18,7 @@
  */
 import seedrandom from 'seedrandom';
 import { createNoise2D } from 'simplex-noise';
-import { buildDangerGrid, hash32, makePerlin, dangerStats } from './region-danger';   // M28：柏林噪声难度场
+import { abundanceAt, buildDangerGrid, dangerStats, hash32, makeField, makePerlin } from './region-danger';   // M28 柏林噪声难度场 / M30 资源丰度
 
 export type RegionType = 'core' | 'residential' | 'suburb' | 'industry' | 'military' | 'farm' | 'forest' | 'water' | 'ruins';
 
@@ -36,6 +36,8 @@ export interface RegionDef {
   resources: string[];   // M17：这区能弄到什么（评审建议：地图上要有玩法暗示）
   homeBase: boolean;
   dist: number;          // 离主城的切比雪夫距离（UI 显示 + 危险度依据）
+  /** M30：这一带的资源丰度倍率（0.75~1.35）——搜刮/拾取的数量乘它，UI 用档位显示 */
+  abundance: number;
   firstEnter?: string;
 }
 
@@ -200,7 +202,10 @@ export function buildRegions(seed: string): RegionDef[] {
     r: Math.max(0, Math.min(REGION_ROWS - 1, homeRow + Math.round(Math.sin(pitAng) * pitRad))),
   };
   const dangerGrid = buildDangerGrid(
-    { homeCol, homeRow, maxDist, low: dLow, fine: dFine, pit }, REGION_COLS, REGION_ROWS);
+    { homeCol, homeRow, maxDist, low: dLow, fine: dFine, pit, cont: dLow }, REGION_COLS, REGION_ROWS);
+  /* M30：资源丰度也是**同一套噪声**（4 次采样求均值 → 近似正态 → 0.75~1.35 倍率）。
+     不看危险度、只看地理：所以「危险的穷地方」和「安全的富地方」都会存在，跑远路才有取舍。 */
+  const resField = makeField(hash32(seed + ':resources'));
 
   const at = (c: number, r: number) => (c >= 0 && c < REGION_COLS && r >= 0 && r < REGION_ROWS ? r * REGION_COLS + c : -1);
   const coord = (i: number) => ({ c: i % REGION_COLS, r: Math.floor(i / REGION_COLS) });
@@ -430,13 +435,15 @@ export function buildRegions(seed: string): RegionDef[] {
       (placedShort[short] = placedShort[short] ?? []).push({ c, r });
       (wordAt[short.slice(1)] = wordAt[short.slice(1)] ?? []).push({ c, r });
       const desc = info.desc[Math.floor(rng() * info.desc.length)];
+      /* M30：资源丰度（主城固定 1.0：新手村不该被噪声判成富矿或贫瘠） */
+      const abundance = isHome ? 1 : abundanceAt(resField, c, r);
 
       out.push({
         id: 'r' + c + '-' + r,
         name, short: isHome ? '余烬' : short, icon: isHome ? '🏠' : info.icon,
         col: c, row: r, tier, type: t, biomeBias: info.biomeBias,
         desc: isHome ? '你醒来的地方。超市、医院、警局都在这儿，安全屋也在。' : desc,
-        resources: info.resources, homeBase: isHome, dist,
+        resources: info.resources, homeBase: isHome, dist, abundance,
         /* 每个非主城区域第一次踏进去都有一句固定叙事（跨区是有仪式感的事，不该只有几个类型才有） */
         firstEnter: isHome ? undefined : FIRST_ENTER[t],
       });

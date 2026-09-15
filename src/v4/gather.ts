@@ -11,10 +11,20 @@ import {
   CHOP_AP, chopEstimate, chopLeft, chopOnce, chopSpots, chopToolOf, type ChopTool,
 } from './wood-core';
 import { envOf, seasonNow, tempTick } from './env';
+import { regionById } from './regions-core';
 import type { Block } from '../types';
 
 const sw = () => ensureSaveWorld(L.S);
 const curBlock = (): Block | null => { const s = sw(); return (worldOf(s.seed, s.region).blocks[bkey(s.cur.x, s.cur.y)] as Block) ?? null; };
+
+/** M30：当前大区的资源丰度倍率（0.75~1.35）——主城缺省 1.0 */
+export function currentAbundance(): number {
+  try {
+    const s = sw();
+    const r = regionById(s.region);
+    return r && isFinite(r.abundance) ? r.abundance : 1;
+  } catch { return 1; }
+}
 
 /** 采集点的剩余次数：每区块一份，采完要等几天再生 */
 function forageLeft(s: SaveWorld, b: Block): number {
@@ -163,7 +173,9 @@ export function salvage(): boolean {
   const k = bkey(b.x, b.y);
   s.salvage = s.salvage && typeof s.salvage === 'object' ? s.salvage : {};
   s.salvage[k] = { left: Math.max(0, info.left - 1) };
-  const got = salvageYields(Math.random, b.biome, b.danger);
+  /* M30：大区资源丰度乘进产出（当前所在区域的 abundance；拿不到就是 1.0） */
+  const ab = currentAbundance();
+  const got = salvageYields(Math.random, b.biome, b.danger, ab);
   /* M24 采集技能：拆解同样吃加成 */
   const bonus = Math.min(0.6, Number((L.S as any).skills?.gather ?? 0) * 0.08);
   const extra = scoutExtra(1);
