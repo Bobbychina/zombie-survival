@@ -1,4 +1,4 @@
-﻿# 丧尸末日生存 v4.0「余烬」—— 接手必知（交接时间：2026-09-15 深夜，M32 / M32b 已上线）
+# 丧尸末日生存 v4.0「余烬」—— 接手必知（交接时间：2026-09-15 深夜，M37 无尽修复 + M38 QoL 第一批 已上线）
 
 > 写给下一个 agent 会话。**先读这份，再读 `docs/V40-ACCEPTANCE.md`**（每个里程碑的完整验收证据，最后两节是 M32 / M32b）。
 > 本文件只讲"怎么干活、现在到哪了、哪里有坑"，不讲历史。
@@ -114,30 +114,49 @@ tests/*.test.ts          vitest 单测（385 条）
 
 ### 下一批
 
-1. **M33.1 入门动线已完成**（六章都做完之后补的"从哪开始"）：章节卡上第一未通关章挂「👉 建议从这里开始」、
-   打开沙盒默认落在那一章、通关后徽章自动挪到下一章 + 目标清单下面常驻"下一章建议"、
-   15 步教程的**最后一步**多了「🧪 去沙盒练一章（不写主档）」按钮。探针 56/56。
-2. **还没做的**：第 2 章"穿甲弹打死装甲目标"的硬验证（要新计数器）、第 5 章"真的开出去跨一次区"的探针
+1. **M37 已完成（玩家报障 P0）**：通关好结局 → 进无尽模式"直接死 + 地图变旧版"。
+   根因是 `rescueEnding()`（第 100 天好结局）和 `gameOver()` 都把 `S.over = true`，而 `enterEndless()` 没清它；
+   `S.over` 是 v4 世界层的总闸（`world-ui mountWorld` 的 `if (!S || S.over)` 整块退出渲染 → 卡片墙/地图消失，
+   `travel/search/nightTick` 全部 early-return → 动不了）。修法：新 `src/v4/endless-core.ts`（`resumeFromOver()` 清 over +
+   补行动力 + 血为 0 救回三成、`endDayLabel/endGoalChip/overHint`），`enterEndless()` 调它。
+   验收：`tests/m37-endless.test.ts` 15 例 + `docs/_m37_probe.mjs` 24/24（本地 + 线上）。
+2. **M38 QoL 第一批已完成**：背包筛选 / 「丢1」·「全丢×N」/ 储物箱"能塞多少塞多少" + 批量存入 /
+   探索页补给快捷键 1-4 / 战斗「重复上次（R）」。纯规则在 `src/v4/qol-core.ts`；
+   验收：`tests/m38-qol.test.ts` 18 例 + `docs/_m38_probe.mjs` 18/18（本地 + 线上）。
+3. **下一批 = 用户从 15 项 QoL 清单里勾的剩下 6 项**（原话「我听到了，接着做下一步，你自己看」后勾选）：
+   ① 商人批量购买（买 ×5 / 买满，`src/v4/shop-core.ts` + `openMerchant`）
+   ② 145%/160% 字号下地图悬浮窗的内滚（已知 P3：内部滚动 80/166px，`src/v4/ui-scale.ts` + `#v4mapwin` 的 `calc(.../var(--fs))`）
+   ③ 沙盒/折叠条的字体跟随 `--fs`（`tutorial-lab.ts` + `.v4arc>summary` 那类折叠条）
+   ④ 手机单指地图拖动 + 触控尺寸（`src/v4/world-ui.ts` 的 `.wgrid/.wcell`，现只有 `@media(hover:hover)` 的悬停）
+   ⑤ 口令加密的存档导出/导入（在 M29 保险箱之上加 PBKDF2 口令层，`save-crypto.ts`/`save-vault.ts`）
+   ⑥ 多份备份历史（现在只有一份 `.bak`，要做轮转 + 时间戳列表 + 指定回滚）
+4. **还没做的教程项**：第 2 章"穿甲弹打死装甲目标"的硬验证（要新计数器）、第 5 章"真的开出去跨一次区"的探针
    （慢且飘，价值一般）、沙盒"按章硬解锁"（现在只有建议顺序）。
-3. **同仓多 agent**：这个仓库长期有别的会话在改（M34 地图摆法 / M35 搜刮记账 / M36 作弊码下线…）。
+5. **同仓多 agent**：这个仓库长期有别的会话在改（M34 地图摆法 / M35 搜刮记账 / M36 作弊码下线 / M36.1 完整性…）。
    提交前 `git status` 逐个看，**只 add 自己的文件**；同一个文件两边都改了就用 hunk 级暂存
    （`git diff -- file | Out-File -Encoding utf8 p.patch` → `node E:\Files\myagent\pick-hunks.mjs p.patch 1,2,4 keep.patch`
-   → `git apply --cached keep.patch`；或者把自己那版写出来 `git hash-object -w` + `git update-index --cacheinfo`）。
+   → `git apply --cached keep.patch`；或者把自己那版写出来 `git hash-object -w` + `git update-index --cacheinfo`，
+   M37/M38 的 `docs/V40-ACCEPTANCE.md` 就是这么提交的：HEAD 版 + 我这段 → `hash-object -w` → `update-index`）。
    **别 `git add -A`**：构建产物里会混进别人未提交的源码。
-4. **探针端口会被别人抢**：多个会话同时跑 `tools\serve.mjs --port 8791` 时会顺延端口，别人的"清理 node 进程"
+6. **探针端口会被别人抢**：多个会话同时跑 `tools\serve.mjs --port 8791` 时会顺延端口，别人的"清理 node 进程"
    也可能把你那个杀掉（本轮跑一半 8791 就没了 → 探针报 `SecurityError: localStorage`）。
-   探针起在**自己独占的端口**上，并在开头确保主档存在（M33 探针已这么做）。
-5. **探针的 outDir 要先建好**：有几套老探针不会自己 `mkdir`，传一个不存在的目录会直接崩在写截图上
-   （本轮回归就踩了，白跑四套）。**探针之间会互相影响**：`_m32_probe` 在多套连跑时偶发
-   `cells=0`（单独跑必过），已加失败现场打印（tab/over/day/mapHtml/sigLen）——下次复现就知道是哪种状态残留。
-6. **本机进度键**（`zsv-lab-v1` 之类）会让探针"上一次跑过"变成前置状态：跑 M33 探针前它会自己清掉；
+   探针起在**自己独占的端口**上（本轮用 8797/8798），并在开头确保主档存在（M33 探针已这么做）。
+7. **探针的 outDir 要先建好**：有几套老探针不会自己 `mkdir`，传一个不存在的目录会直接崩在写截图上。
+   **探针之间会互相影响**：`_m32_probe` 在多套连跑时偶发 `cells=0`（单独跑必过），已加失败现场打印。
+8. **线上探针要等引导**（M37 起）：本地 `sleep(4200)` 够，线上要 `bootWait()` 轮询
+   （固定 sleep 会撞 `ReferenceError: closeAllModals is not defined`）；`?v=` 破缓存对 Pages 边缓存无效，
+   用 `curl.exe -s --max-time 40 -o file <url>` 轮询"新串是否存在"来判传播（`Invoke-WebRequest` 本机常超时）。
+9. **本机进度键**（`zsv-lab-v1` 之类）会让探针"上一次跑过"变成前置状态：跑 M33 探针前它会自己清掉；
    自己写新探针时注意同类问题（教程键 `dsh.tutorial.*` 也一样）。
+10. **战斗探针的坑**：玩家死在战斗里会让 `b.over='lose'`，之后 `repeat()/move()` 全部静默 no-op——
+    探针里先把 `S.hp/S.hpMax` 拉满再 `startCombat`，否则断言全是假 PASS/FAIL（本轮踩过）。
 ### 回归基线（2026-09-15 深夜实测，全部本地）
 
 ```
 _m21_layout_probe 31/31 · _m25_probe 33/33 · _m26_res_probe（15 档分辨率表，问题组合为空）
 _m27_tutorial_probe 12/12 · _m29_probe 23/23 · _m30_probe 20/20 · _m31_probe 15/15
-_m32_probe 17/17 · _m32b_probe 19/19 · _m33_probe 56/56     单测 418/418
+_m32_probe 17/17 · _m32b_probe 19/19 · _m33_probe 56/56
+_m37_probe 24/24（无尽修复） · _m38_probe 18/18（QoL 第一批）      单测 482/482（36 文件）
 ```
 
 > 探针是**有状态**的（共用同一个浏览器 profile + 同一份存档）：读档会恢复"上次停在哪一页"，
