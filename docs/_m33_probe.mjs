@@ -49,7 +49,12 @@ await send('Page.navigate', { url: url + '?dev=ready' }); await sleep(4200)
 await ev(`(() => { if (typeof setTab === 'function') setTab('explore'); if (typeof render === 'function') render(); return 1 })()`); await sleep(800)
 
 /* ── 0) 主档留证（隔离验证的基准）：密文长度 + 指纹 + 主页面进度 ──
-   换个端口跑 = 换了个 origin（localStorage 是空的）——先确保主档真的存在，否则"隔离"验的是空气。 */
+   换端口跑 = 换了个 origin（localStorage 是空的）—— 先确保主档真的存在，否则"隔离"验的是空气。
+   线上（慢网络）还要先等 boot 完：`S` 是 legacy 挂上去的，没 boot 完读它就是 ReferenceError。 */
+for (let i = 0; i < 30; i++) {
+  if (String(await ev(`typeof window.S === 'object' && window.S && !!window.S.stats`)) === 'true') break
+  await sleep(500)
+}
 await ev(`(() => { if (!localStorage.getItem('zombie_survival_save_v2')) { try { saveGame(true); } catch (e) {} } return 1 })()`)
 await sleep(1400)
 const saveBefore = JSON.parse(await ev(`(() => {
@@ -83,7 +88,7 @@ await shot('01_lab_ch1')
 
 /* ── 2) 沙盒真的没读主档：day=1、固定种子、预设背包 ── */
 let boot = null
-for (let i = 0; i < 20; i++) {
+for (let i = 0; i < 40; i++) {
   const r = await lab(`if (!W.S || !W.S.seed) return 'WAIT'; return JSON.stringify({ day: W.S.day, seed: W.S.seed, crowbar: W.S.inv.crowbar || 0, can: W.S.inv.can || 0, isLab: typeof W.isLab === 'function' ? W.isLab() : null, hun: W.S.hun, thi: W.S.thi, hp: W.S.hp, ap: W.S.ap, loc: W.S.loc, hasSave: !!D.querySelector('#v4cards') });`)
   if (r && r !== 'WAIT' && r !== 'NO-FRAME' && !String(r).startsWith('EXC')) { boot = JSON.parse(r); break }
   await sleep(500)
@@ -95,7 +100,7 @@ ok('沙盒的探索页真的画出来了', boot && boot.hasSave === true)
 
 /* ── 3) 父页面收到快照（目标清单靠它判绿） ── */
 let st = null
-for (let i = 0; i < 12; i++) {
+for (let i = 0; i < 25; i++) {
   st = JSON.parse(await ev(`JSON.stringify(window.V4Lab.status())`))
   if (st.snap) break
   await sleep(400)
@@ -246,7 +251,7 @@ await shot('03_lab_chapter2')
 const switchChapter = async (id, seed, extraWait = 0) => {
   await ev(`(() => { const c = document.querySelector('#v4lab-chapters .lab-ch[data-ch="${id}"]'); if (c) c.click(); return 1 })()`)
   await sleep(900 + extraWait)
-  for (let i = 0; i < 24; i++) {
+  for (let i = 0; i < 40; i++) {
     const r = await lab(`if (!W.S || W.S.seed !== ${JSON.stringify(seed)}) return 'WAIT'; return JSON.stringify({ day: W.S.day, seed: W.S.seed, ap: W.S.ap, inj: (W.S.body && W.S.body.injuries ? W.S.body.injuries.length : 0), base: W.S.base, steps: W.S.world && W.S.world.steps, visited: W.S.world && W.S.world.visited ? Object.keys(W.S.world.visited).length : 0 });`)
     if (r && r !== 'WAIT' && r !== 'NO-FRAME' && !String(r).startsWith('EXC')) return JSON.parse(r)
     await sleep(500)
