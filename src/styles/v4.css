@@ -52,9 +52,15 @@
      矮卡下面就会空出一大块（实测：水体 232px 旁边的菜园只有 65px → 空 167px）。 */
   #v4cards{columns:340px;column-gap:12px}
 }
-/* 很宽（≥1700px）才把地图钉在左边当锚点：窄一点的屏幕上 24×24 地图要 620px+，
-   跟卡片墙抢宽度不如让地图独占一行、卡片在下面铺成 3~4 列。 */
-@media (min-width:1700px){
+/* M26：双列（地图钉左、卡片墙在右）以前写死 ≥1700px —— 用户说「你没适配别的分辨率」。
+   按真实分辨率 × 浏览器缩放矩阵实测（docs/_m26_res_probe.mjs，15 档）改成：
+   ① 宽 ≥2000px ② 高 ≥950px，两个条件**同时**满足才双列。理由都是量出来的：
+   - 宽度门槛 1700 → 2000：卡片墙是 340px 一列的**多列流**，卡列不到 1020px 时第 3 列放不下、
+     第 1 列会被拉到容器宽，卡片于是溢出容器（1920×1080 实测：容器 823px、卡片 405px ×3 列，
+     最右那张溢出到 1948px 被 overflow-x:hidden 切掉）。2000px 起步能保证卡列 ≥1140px（3 列整）。
+   - 高度门槛 950px：矮屏幕上两列要一起塞进可视高度（1707×960 那档实测地图被迫滚 124px）。
+   两个条件不满足就**叠成一列**：地图独占一行铺满宽度，卡片在下面单列铺满、正常往下排。 */
+@media (min-width:2000px) and (min-height:950px){
   /* M25：地图列和卡片墙各自可能是视口两倍高，但**整页不许滚**（用户报「为什么整个页面还能滚动」）。
      所以这里把网格行定成 auto + 1fr：工具条吃自然高，下面那一行正好填满剩余高度，
      地图与卡片各自在自己列里滚（overscroll-behavior:contain 防止滚到底把滚动传给外层）。 */
@@ -64,14 +70,22 @@
   #v4tools{grid-area:tools}
   #v4world{grid-area:map;position:sticky;top:8px;height:100%;max-height:100%;overflow:hidden;
     display:flex;flex-direction:column;min-height:0}
-  #v4cards{grid-area:cards;height:100%;max-height:100%;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain}
+  #v4cards{grid-area:cards;height:100%;max-height:100%;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;
+    columns:340px;column-gap:12px}
   /* M25.1：多列流容器的 scrollWidth 会把整列高度也算进去（实测 843px 宽报 1270px），
      而 `overflow-y:auto` 会把 overflow-x 从 visible 自动变成 auto → 卡片墙白白多一条横向滚动条。
      显式关掉横向滚动即可（列内容不会横向溢出：卡片本身已经 anywhere 断行 + max-width:100%）。 */
 }
-/* 卡片墙本身：多列流 + 卡片不许被拆到两列去 */
-#v4cards{columns:340px;column-gap:12px;min-width:0}
-#v4cards>.v4card{break-inside:avoid;-webkit-column-break-inside:avoid;page-break-inside:avoid;margin:0 0 12px;display:block}
+/* 卡片墙：**单列铺满**是默认形态（窄屏 / 矮屏 / 卡列不够宽都走这条）——卡片宽度=可用宽度。
+   宽屏双列时才在下面切回多列流（见上面那段媒体查询里的 #v4cards）。 */
+#v4cards{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;min-width:0}
+#v4cards>.v4card{margin:0;break-inside:avoid;-webkit-column-break-inside:avoid;page-break-inside:avoid;display:block}
+/* 多列流形态（只有 ≥2000px 且 ≥950px 高才启用）：列对齐的"行高对齐网格"会让矮卡下面空一大块，
+   所以必须用 multicol；卡片不许被拆到两列去。 */
+@media (min-width:2000px) and (min-height:950px){
+  #v4cards{display:block;gap:0}
+  #v4cards>.v4card{margin:0 0 12px}
+}
 .v4card{border:1px solid var(--line);border-radius:8px;background:#0d1015;padding:10px 12px;min-width:0}
 /* M24.1：卡片里的内容一律不许横向溢出（用户报"菜园溢出了"）——
    长串文字允许在任意位置断行；按钮本身就是 nowrap，所以在卡片里放开换行 + 限宽，
@@ -105,21 +119,30 @@
   .v4world .wpreview{min-height:26px;padding:4px 8px}
 }
 .v4world .wgrid{display:grid;gap:2px;min-width:0;grid-template-columns:repeat(24,minmax(18px,28px));justify-content:center;align-items:start}
-@media (max-width:1399px){.v4world .wgrid{min-width:620px}}
+/* M26：这里原来在 ≤1399px 时给网格加 `min-width:620px`（24 格 × 24px + 缝），本意是「格子别太小」。
+   但在手机上（390px 视口）它就是**横向越界 312 个元素、整页能左右拖**的元凶 —— 用户：「你没适配别的分辨率」。
+   格子尺寸现在由 fitMap 一处决定（minmax(18px,28px) 有下限），窄屏要的是「地图缩到看得见全貌」，所以删掉。 */
 /* M25.4：这里原来有一条 `grid-template-columns:repeat(24,minmax(20px,28px))!important`（窄屏放大格子），
    它会把 fitMap 写进去的 inline `repeat(24, Npx)` **整个覆盖掉** —— 实测：inline 写的是 18px、
    计算值是 27.65px，于是永远缩不下去（地图框滚 210px、方块被压成扁的）。
    现在格子尺寸只由 fitMap 一个地方决定（它已经考虑了宽度上限），CSS 不再插手列宽。 */
-/* M10 触屏：地图是"点区块"这个核心操作，24px 一格手指点不准。
-   窄屏把格子放大到 30~36px（靠左右滑动看地图），并给滚动容器加惯性滚动。 */
+/* M26：触屏下"格子放大到 30~36px 靠左右滑动看地图"这个思路**作废**了。
+   实测（390×844 手机视口）：那条 `minmax(30px,36px)!important` 同样把 fitMap 的 inline 值覆盖掉，
+   24 格 × 30px = 766px 塞进 326px 的框 → 横向越界 312 个元素、整页能左右拖。
+   现在窄屏也只做一件事：**让整张地图缩放后完整可见**（格子尺寸由 fitMap 算，下限 18px，
+   手机上大概 12~18px），要看细节就双指放大（浏览器原生缩放）。 */
 @media (max-width:860px){
   .v4world .wmapwrap{-webkit-overflow-scrolling:touch;overscroll-behavior:contain;scrollbar-width:thin}
-  .v4world .wgrid{grid-template-columns:repeat(24,minmax(30px,36px))!important;gap:3px}
-  .v4world .wcell{min-height:30px}
+  .v4world .wgrid{gap:2px}
+  /* M26：这里原来有 `.wcell{min-height:30px}` —— 手机上格子被 30px 撑高，
+     fitMap 按"宽度/高度算出来的边长"当场失效（列 12px、行 30px：又是扁的，而且溢出）。
+     窄屏也统一走"列宽定尺寸"：min-height 只在 CSS 里留 8px 兜底，实际值由 fitMap 给。 */
+  .v4world .wcell{min-height:8px}
   .v4world .wlegend,.v4world .wlegend-box{font-size:11.5px}
 }
 @media (max-width:480px){
-  .v4world .wgrid{min-width:0}          /* 375px 屏上别硬撑 620px，交给容器横向滚动 */
+  /* M26：375px 屏上"格子完整可见"优先（原来这里写的是"交给容器横向滚动"，那正是整页能左右拖的来源） */
+  .v4world .wgrid{min-width:0}
 }
 .v4world .wcell.frag{box-shadow:inset 0 0 0 1px rgba(216,192,122,.8);animation:wfrag 2.4s ease-in-out infinite}
 @keyframes wfrag{0%,100%{box-shadow:inset 0 0 0 1px rgba(216,192,122,.8)}50%{box-shadow:inset 0 0 0 2px rgba(216,192,122,.95)}}
@@ -147,7 +170,8 @@
 .v4world .wcell{box-sizing:border-box;aspect-ratio:1/1;min-width:0;min-height:18px;border-radius:2px;display:flex;align-items:center;justify-content:center;
   font-size:11px;line-height:1;border:1px solid transparent;user-select:none}
 .v4world .wcell.seen{cursor:pointer}
-.v4world .wcell.seen:hover{border-color:var(--accent);transform:scale(1.12);z-index:2}
+/* M26：悬停放大在触屏上会留下「半缩放」残影、放大后也可能压到邻格 —— 只给真能悬停的设备 */
+@media (hover:hover){.v4world .wcell.seen:hover{border-color:var(--accent);transform:scale(1.12);z-index:2}}
 .v4world .wcell.fog{background:#15171c !important;color:#2a2e36}
 .v4world .wcell.fog::after{content:'?';font-size:8px;color:#333941}
 .v4world .wcell.cur{outline:2px solid var(--bone);outline-offset:1px;z-index:3}

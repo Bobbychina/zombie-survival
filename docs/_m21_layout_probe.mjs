@@ -101,7 +101,9 @@ const layout = JSON.parse(await ev(`(() => {
   const rest = btns.filter(t => /就地休整/.test(t)).length;
   const sleep = btns.filter(t => /^🌙 睡觉/.test(t)).length;
   const names = cards.map(c => c.dataset.card + ':' + (c.querySelector('.card-tt')?.textContent || '').trim());
-  return JSON.stringify({ n: cards.length, cols, rest, sleep, names,
+  const cardsW = Math.round(document.getElementById('v4cards').getBoundingClientRect().width);
+  const cardW = cards[0] ? Math.round(cards[0].getBoundingClientRect().width) : 0;
+  return JSON.stringify({ n: cards.length, cols, rest, sleep, names, cardsW, cardW,
     board: document.getElementById('view').classList.contains('v4-board'),
     tools: !!document.getElementById('v4tools'),
     toolsBtns: [...document.querySelectorAll('#v4tools button')].map(b => (b.textContent||'').trim()),
@@ -112,7 +114,11 @@ const layout = JSON.parse(await ev(`(() => {
 })()`))
 ok('探索页用卡片墙（#view.v4-board）', layout.board === true)
 ok('卡片数 ≥ 9（用户要的"多搞一些卡片"）', layout.n >= 9, 'n=' + layout.n)
-ok('卡片墙 ≥2 列（1440 宽）', layout.cols >= 2, 'cols=' + layout.cols)
+/* M26：1440 宽下"≥2 列"这条断言作废了 —— 分辨率矩阵实测（docs/_m26_res_probe.mjs）证明
+   卡列 <1020px 时 multicol 会退化（列被拉伸、卡片溢出被切），所以 <2000px 统一改成**单列铺满**。
+   真正要守的不变量是：卡片墙铺满可用宽度、不横向溢出、卡片宽度接近容器宽度。 */
+ok('卡片墙铺满可用宽度（1440 宽：单列铺满）', layout.cols >= 1 && layout.cardW > 0 && Math.abs(layout.cardW - layout.cardsW) <= 4,
+  'cols=' + layout.cols + ' 卡宽=' + layout.cardW + ' 容器=' + layout.cardsW)
 ok('「就地休整」全页只有 1 个', layout.rest === 1, 'count=' + layout.rest)
 ok('legacy「睡觉」按钮已摘掉（睡觉只在今夜卡）', layout.sleep === 0, 'count=' + layout.sleep)
 ok('云存档不在玩法卡里', layout.acctInCards === false && layout.accountInView === false)
