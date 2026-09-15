@@ -120,43 +120,51 @@ tests/*.test.ts          vitest 单测（385 条）
    `travel/search/nightTick` 全部 early-return → 动不了）。修法：新 `src/v4/endless-core.ts`（`resumeFromOver()` 清 over +
    补行动力 + 血为 0 救回三成、`endDayLabel/endGoalChip/overHint`），`enterEndless()` 调它。
    验收：`tests/m37-endless.test.ts` 15 例 + `docs/_m37_probe.mjs` 24/24（本地 + 线上）。
-2. **M38 QoL 第一批已完成**：背包筛选 / 「丢1」·「全丢×N」/ 储物箱"能塞多少塞多少" + 批量存入 /
-   探索页补给快捷键 1-4 / 战斗「重复上次（R）」。纯规则在 `src/v4/qol-core.ts`；
-   验收：`tests/m38-qol.test.ts` 18 例 + `docs/_m38_probe.mjs` 18/18（本地 + 线上）。
-3. **下一批 = 用户从 15 项 QoL 清单里勾的剩下 6 项**（原话「我听到了，接着做下一步，你自己看」后勾选）：
-   ① 商人批量购买（买 ×5 / 买满，`src/v4/shop-core.ts` + `openMerchant`）
-   ② 145%/160% 字号下地图悬浮窗的内滚（已知 P3：内部滚动 80/166px，`src/v4/ui-scale.ts` + `#v4mapwin` 的 `calc(.../var(--fs))`）
-   ③ 沙盒/折叠条的字体跟随 `--fs`（`tutorial-lab.ts` + `.v4arc>summary` 那类折叠条）
-   ④ 手机单指地图拖动 + 触控尺寸（`src/v4/world-ui.ts` 的 `.wgrid/.wcell`，现只有 `@media(hover:hover)` 的悬停）
-   ⑤ 口令加密的存档导出/导入（在 M29 保险箱之上加 PBKDF2 口令层，`save-crypto.ts`/`save-vault.ts`）
-   ⑥ 多份备份历史（现在只有一份 `.bak`，要做轮转 + 时间戳列表 + 指定回滚）
-4. **还没做的教程项**：第 2 章"穿甲弹打死装甲目标"的硬验证（要新计数器）、第 5 章"真的开出去跨一次区"的探针
+2. **M38 / M39 / M40 三批 QoL 全部完成并上线**（用户从 15 项清单里勾的 10 项）：
+   - M38：背包筛选 / 「丢1」·「全丢×N」/ 储物箱"能塞多少塞多少" + 批量存入 / 探索补给快捷键 1-4 / 战斗「重复上次（R）」
+     （`src/v4/qol-core.ts`，`tests/m38-qol.test.ts` 18 例，`docs/_m38_probe.mjs` 18/18）
+   - M39：商人批量购买（`buyPlan`）/ 口令加密导出导入（`src/v4/save-port-core.ts`，PBKDF2 15 万 + AES-GCM）/
+     多份备份历史（`src/v4/backup-core.ts` + save-vault，6 份轮转 + 指定回滚）
+     （`tests/m39-qol.test.ts` 29 例，`docs/_m39_probe.mjs` 24/24）
+   - M40：地图悬浮窗内滚（删 158px 写死常量、窗里只留一个滚动容器）/ 字号 zoom 提到 `#view`（全页签 + 折叠条 + 沙盒）/
+     手机单指拖动 + 触控命中区 30px（`cellTargets`）
+     （`tests/m40-layout.test.ts` 13 例，`docs/_m40_probe.mjs` 13/13）
+   - 顺手修掉两个 P0：**刷新一次弹药翻倍**（`sanitizeSave` 把装填镜像当旧版弹药池折算 → `ammo-core.legacyAmmoFold` 加判据）、
+     无尽模式那个（见上）。
+3. **还没做的教程项**：第 2 章"穿甲弹打死装甲目标"的硬验证（要新计数器）、第 5 章"真的开出去跨一次区"的探针
    （慢且飘，价值一般）、沙盒"按章硬解锁"（现在只有建议顺序）。
-5. **同仓多 agent**：这个仓库长期有别的会话在改（M34 地图摆法 / M35 搜刮记账 / M36 作弊码下线 / M36.1 完整性…）。
+4. **同仓多 agent**：这个仓库长期有别的会话在改（M34 地图摆法 / M35 搜刮记账 / M36 完整性 / M36.1…）。
    提交前 `git status` 逐个看，**只 add 自己的文件**；同一个文件两边都改了就用 hunk 级暂存
    （`git diff -- file | Out-File -Encoding utf8 p.patch` → `node E:\Files\myagent\pick-hunks.mjs p.patch 1,2,4 keep.patch`
-   → `git apply --cached keep.patch`；或者把自己那版写出来 `git hash-object -w` + `git update-index --cacheinfo`，
-   M37/M38 的 `docs/V40-ACCEPTANCE.md` 就是这么提交的：HEAD 版 + 我这段 → `hash-object -w` → `update-index`）。
+   → `git apply --cached keep.patch`）。文档这类"两人同时往末尾追加"的文件，用
+   `git show HEAD:docs/V40-ACCEPTANCE.md > head.md` → 只把自己那段接上去 → `git hash-object -w` →
+   `git update-index --cacheinfo`（M37~M40 四节都是这么提交的，脚本 `E:\Files\myagent\_append_sec.mjs`）。
    **别 `git add -A`**：构建产物里会混进别人未提交的源码。
-6. **探针端口会被别人抢**：多个会话同时跑 `tools\serve.mjs --port 8791` 时会顺延端口，别人的"清理 node 进程"
+5. **探针端口会被别人抢**：多个会话同时跑 `tools\serve.mjs --port 8791` 时会顺延端口，别人的"清理 node 进程"
    也可能把你那个杀掉（本轮跑一半 8791 就没了 → 探针报 `SecurityError: localStorage`）。
    探针起在**自己独占的端口**上（本轮用 8797/8798），并在开头确保主档存在（M33 探针已这么做）。
-7. **探针的 outDir 要先建好**：有几套老探针不会自己 `mkdir`，传一个不存在的目录会直接崩在写截图上。
-   **探针之间会互相影响**：`_m32_probe` 在多套连跑时偶发 `cells=0`（单独跑必过），已加失败现场打印。
-8. **线上探针要等引导**（M37 起）：本地 `sleep(4200)` 够，线上要 `bootWait()` 轮询
+6. **探针状态会互相污染**（本轮踩了三次，已加固）：地图**摆法**（`V4Scale.setMapStyle`）与**模式**
+   （`V4World.mapMode`）都是本机偏好，上一支探针留下的值会让下一支量错东西 ——
+   检查页内布局的探针开场要 `setMapStyle('inline')`，量 `.wcell` 的要 `mapMode('local')`（M21/M26/M32 已加）。
+7. **线上探针要等引导**（M37 起）：本地 `sleep(4200)` 够，线上要 `bootWait()` 轮询
    （固定 sleep 会撞 `ReferenceError: closeAllModals is not defined`）；`?v=` 破缓存对 Pages 边缓存无效，
    用 `curl.exe -s --max-time 40 -o file <url>` 轮询"新串是否存在"来判传播（`Invoke-WebRequest` 本机常超时）。
-9. **本机进度键**（`zsv-lab-v1` 之类）会让探针"上一次跑过"变成前置状态：跑 M33 探针前它会自己清掉；
+8. **本机进度键**（`zsv-lab-v1` 之类）会让探针"上一次跑过"变成前置状态：跑 M33 探针前它会自己清掉；
    自己写新探针时注意同类问题（教程键 `dsh.tutorial.*` 也一样）。
-10. **战斗探针的坑**：玩家死在战斗里会让 `b.over='lose'`，之后 `repeat()/move()` 全部静默 no-op——
-    探针里先把 `S.hp/S.hpMax` 拉满再 `startCombat`，否则断言全是假 PASS/FAIL（本轮踩过）。
+9. **战斗探针的坑**：玩家死在战斗里会让 `b.over='lose'`，之后 `repeat()/move()` 全部静默 no-op——
+   探针里先把 `S.hp/S.hpMax` 拉满再 `startCombat`，否则断言全是假 PASS/FAIL（本轮踩过）。
+10. **合成触摸手势**：`Input.synthesizeScrollGesture` 在带 `touch-action` 的嵌套容器上实测**不动**
+    （scrollLeft 一直 0）；要测"单指拖动"就用 `Input.dispatchTouchEvent` 手搓 touchStart → N×touchMove → touchEnd
+    （并且 xDistance 方向要对：从右上往左下推 = scrollLeft 增大）。
 ### 回归基线（2026-09-15 深夜实测，全部本地）
 
 ```
 _m21_layout_probe 31/31 · _m25_probe 33/33 · _m26_res_probe（15 档分辨率表，问题组合为空）
 _m27_tutorial_probe 12/12 · _m29_probe 23/23 · _m30_probe 20/20 · _m31_probe 15/15
 _m32_probe 17/17 · _m32b_probe 19/19 · _m33_probe 56/56
-_m37_probe 24/24（无尽修复） · _m38_probe 18/18（QoL 第一批）      单测 482/482（36 文件）
+_m37_probe 24/24（无尽修复） · _m38_probe 18/18（QoL 第一批）
+_m39_probe 24/24（商人批量/口令导出/备份历史） · _m40_probe 13/13（地图窗/字号/手机触控）
+单测 527/527（38 文件）
 ```
 
 > 探针是**有状态**的（共用同一个浏览器 profile + 同一份存档）：读档会恢复"上次停在哪一页"，
