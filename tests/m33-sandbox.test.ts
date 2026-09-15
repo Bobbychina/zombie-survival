@@ -2,22 +2,24 @@
  * 这里只测纯逻辑（sandbox-core），DOM 与 iframe 生命周期由 docs/_m33_probe.mjs 在真浏览器里验。 */
 import { describe, expect, it } from 'vitest';
 import {
-  LAB_CHAPTERS, LAB_KEY, SURVIVAL_PRESET, chapterById, evalChapter, isDone, labFromSearch, labStateOf,
-  markDone, mergeSticky, parseProgress, progressLine, sandboxUrl, serializeProgress, snapOf, type LabSnap,
+  COMBAT_PRESET, LAB_CHAPTERS, LAB_KEY, SURVIVAL_PRESET, chapterById, evalChapter, isDone, labFromSearch,
+  labStateOf, markDone, mergeSticky, parseProgress, progressLine, sandboxUrl, serializeProgress, snapOf, type LabSnap,
 } from '../src/v4/sandbox-core';
 
 const snap = (over: Partial<LabSnap> = {}): LabSnap => ({
-  day: 1, hp: 100, hun: 62, thi: 58, ap: 14, scav: 0, deep: 0, crafted: 0, kills: 0, meleeKills: 0,
-  loc: 'base', over: false, inv: {}, ...over,
+  day: 1, hp: 100, hun: 62, thi: 58, ap: 14, scav: 0, deep: 0, crafted: 0, kills: 0, meleeKills: 0, ammoUsed: 0,
+  loc: 'base', over: false, inv: {}, load: {}, ...over,
 });
 
 const CH1 = chapterById('survival')!;
+const CH2 = chapterById('combat')!;
 
 describe('章节表', () => {
-  it('第一批只放第 1 章可玩，且它有目标（其余 5 章明确标"下一批"）', () => {
+  it('第 1、2 章可玩，其余 4 章明确标"下一批"', () => {
     expect(LAB_CHAPTERS.length).toBe(6);
-    expect(LAB_CHAPTERS.filter(c => c.ready).map(c => c.id)).toEqual(['survival']);
+    expect(LAB_CHAPTERS.filter(c => c.ready).map(c => c.id)).toEqual(['survival', 'combat']);
     expect(CH1.objectives.length).toBeGreaterThanOrEqual(3);
+    expect(CH2.objectives.length).toBeGreaterThanOrEqual(3);
     for (const c of LAB_CHAPTERS) {
       expect(c.icon.length).toBeGreaterThan(0);
       expect(c.name.length).toBeGreaterThan(0);
@@ -25,6 +27,28 @@ describe('章节表', () => {
       if (!c.ready) expect(c.objectives).toEqual([]);          // 没做的章节不许留"半截目标"
     }
     expect(new Set(LAB_CHAPTERS.map(c => c.id)).size).toBe(6);
+  });
+
+  it('第 2 章的预设：给枪给两种 9mm 给撬棍（三条目标都做得到），种子固定', () => {
+    expect(COMBAT_PRESET.seed).toBe('lab-combat-01');
+    expect(COMBAT_PRESET.inv.pistol).toBe(1);
+    expect(COMBAT_PRESET.inv.a9_fmj).toBeGreaterThan(0);
+    expect(COMBAT_PRESET.inv.a9_ap).toBeGreaterThan(0);
+    expect(COMBAT_PRESET.inv.crowbar).toBe(1);
+    expect(COMBAT_PRESET.hun).toBeGreaterThanOrEqual(80);      // 这一章不该被饿肚子打断
+    expect(labStateOf('combat').seed).toBe(COMBAT_PRESET.seed);
+  });
+
+  it('第 2 章的三条目标：枪杀（要真的开过枪）/ 近战杀 / 手动换弹', () => {
+    const g = (s: LabSnap) => evalChapter(CH2, s).items.find(i => i.id === 'gunKill')!.done;
+    expect(g(snap({ kills: 1, ammoUsed: 0 }))).toBe(false);     // 近战杀的不能被算成"用枪打死"
+    expect(g(snap({ kills: 1, ammoUsed: 2 }))).toBe(true);
+    const m = evalChapter(CH2, snap({ meleeKills: 1 })).items.find(i => i.id === 'meleeKill')!.done;
+    expect(m).toBe(true);
+    const l = (ld: Record<string, string>) => evalChapter(CH2, snap({ load: ld })).items.find(i => i.id === 'loadSwap')!.done;
+    expect(l({})).toBe(false);
+    expect(l({ c9: 'a9_ap' })).toBe(true);
+    expect(evalChapter(CH2, snap({ kills: 1, ammoUsed: 3, meleeKills: 1, load: { c9: 'a9_fmj' } })).passed).toBe(true);
   });
 
   it('第 1 章的沙盒预设：固定种子 + 开局不是满饱食（否则"吃饱喝足"这条一开始就是绿的）', () => {
@@ -119,9 +143,10 @@ describe('进度（存父页面，不进 iframe、不进存档）', () => {
     expect(LAB_KEY).toBe('zsv-lab-v1');
   });
 
-  it('进度摘要按"可玩章节"算（下一批那 5 章不计入分母）', () => {
-    expect(progressLine(parseProgress(null))).toBe('已通关 0 / 1 章（第 1 批）');
-    expect(progressLine(markDone(parseProgress(null), 'survival', 1))).toBe('已通关 1 / 1 章（第 1 批）');
+  it('进度摘要按"可玩章节"算（下一批那 4 章不计入分母）', () => {
+    expect(progressLine(parseProgress(null))).toBe('已通关 0 / 2 章');
+    expect(progressLine(markDone(parseProgress(null), 'survival', 1))).toBe('已通关 1 / 2 章');
+    expect(progressLine(markDone(parseProgress(null), 'combat', 1))).toBe('已通关 1 / 2 章');
   });
 });
 

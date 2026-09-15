@@ -80,7 +80,13 @@ export function syncBack(p: PlayerProfile) {
   const cal = wid && L.ITEMS[wid]?.cal;
   const aid = cal ? L.loadedAmmo(cal) : null;
   const spent = Math.max(0, (S.ammo || 0) - Math.max(0, p.ammo));
-  if (aid && spent > 0) L.takeItem(aid, Math.min(spent, L.itemCount(aid)));
+  if (aid && spent > 0) {
+    const took = Math.min(spent, L.itemCount(aid));
+    L.takeItem(aid, took);
+    /* M33：v4 引擎这条路以前**没记"打了多少发"**（只有 legacy 战斗那条路记）——
+       统计页的"消耗弹药"因此长期偏低，教学沙盒第 2 章那条"用枪打死一只"的目标也判不出来。 */
+    S.stats.ammoUsed = (S.stats.ammoUsed || 0) + took;
+  }
   S.ammo = Math.max(0, p.ammo);
   ['bandage', 'medkit', 'molotov', 'grenade', 'smoke', 'antitoxin'].forEach(id => {
     const want = p.inventory[id] ?? 0;

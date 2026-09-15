@@ -15,11 +15,13 @@
 export interface LabSnap {
   day: number; hp: number; hun: number; thi: number; ap: number;
   /** stats 里的计数器（都是老字段） */
-  scav: number; deep: number; crafted: number; kills: number; meleeKills: number;
+  scav: number; deep: number; crafted: number; kills: number; meleeKills: number; ammoUsed: number;
   loc: string;
   /** 生命归零（沙盒里不惩罚，只是提示重来） */
   over: boolean;
   inv: Record<string, number>;
+  /** 玩家手动指定过的装填弹种 {口径: 弹种 id}（第 2 章"换弹"那条目标用它判定） */
+  load: Record<string, string>;
 }
 
 export interface LabObjective {
@@ -58,10 +60,14 @@ export function snapOf(S: any): LabSnap {
   const inv: Record<string, number> = {};
   const src = (S && S.inv) || {};
   for (const k in src) { const v = n(src[k]); if (v > 0) inv[k] = v; }
+  const load: Record<string, string> = {};
+  const ld = (S && S.load) || {};
+  for (const cal in ld) { if (typeof ld[cal] === 'string' && ld[cal]) load[cal] = ld[cal]; }
   return {
     day: n(S && S.day, 1), hp: n(S && S.hp), hun: n(S && S.hun), thi: n(S && S.thi), ap: n(S && S.ap),
     scav: n(st.scav), deep: n(st.deep), crafted: n(st.crafted), kills: n(st.kills), meleeKills: n(st.meleeKills),
-    loc: String((S && S.loc) || 'base'), over: !!(S && S.over), inv,
+    ammoUsed: n(st.ammoUsed),
+    loc: String((S && S.loc) || 'base'), over: !!(S && S.over), inv, load,
   };
 }
 
@@ -74,8 +80,17 @@ export const SURVIVAL_PRESET: LabPreset = {
   inv: { crowbar: 1, can: 2, water: 2, bandage: 1, cloth: 2, wood: 1 },
 };
 
-/** 没写 preset 的章节用这个（第一批只有第 1 章可进，所以它只是兜底） */
+/** 没写 preset 的章节用这个（第 3~6 章还没做，所以它只是兜底） */
 const DEFAULT_PRESET: LabPreset = { seed: 'lab-basic-01', day: 1, ap: 14, mat: 12, hp: 100, hun: 80, thi: 80, sta: 100, inv: { crowbar: 1, can: 1, water: 1 } };
+
+/** 第 2 章「战斗与枪械」的沙盒开局：一把手枪 + 两种 9mm（普通弹与穿甲弹打装甲目标的手感不一样）
+    + 撬棍（近战不耗弹但会挨咬）。饱食水分给足 —— 这一章不该被饿肚子打断。 */
+export const COMBAT_PRESET: LabPreset = {
+  seed: 'lab-combat-01',
+  day: 1, ap: 14, mat: 12,
+  hp: 100, hun: 85, thi: 85, sta: 100,
+  inv: { pistol: 1, crowbar: 1, a9_fmj: 24, a9_ap: 8, bandage: 2, medkit: 1, can: 2, water: 2 },
+};
 
 export const LAB_CHAPTERS: LabChapter[] = [
   {
@@ -90,7 +105,17 @@ export const LAB_CHAPTERS: LabChapter[] = [
       { id: 'sleep', text: '😴 睡一觉进入第 2 天（「今夜」卡 → 就地生火过夜/回安全屋睡）', need: s => s.day >= 2 },
     ],
   },
-  { id: 'combat', icon: '🔫', name: '第 2 章 · 战斗与枪械', desc: '招式槽、噪音、装甲丧尸与穿甲弹（下一批做）。', ready: false, preset: DEFAULT_PRESET, objectives: [] },
+  {
+    id: 'combat', icon: '🔫', name: '第 2 章 · 战斗与枪械',
+    desc: '把子弹打出去、也把撬棍用起来：招式槽（1~4 出招 / 5 逃跑 / 6 换武器）、噪音、装甲丧尸与穿甲弹。三条目标全绿才算通关。',
+    ready: true,
+    preset: COMBAT_PRESET,
+    objectives: [
+      { id: 'gunKill', text: '🔫 用枪打死 1 只（战斗里点招式槽；枪声会拉高噪音）', need: s => s.kills >= 1 && s.ammoUsed >= 1 },
+      { id: 'meleeKill', text: '🗡️ 用近战打死 1 只（换上撬棍再打：近战不耗弹、但会挨咬）', need: s => s.meleeKills >= 1 },
+      { id: 'loadSwap', text: '🔩 在背包「弹药」区手动装填一次弹种（9mm 普通弹 ↔ 穿甲弹）', need: s => Object.keys(s.load).length > 0 },
+    ],
+  },
   { id: 'medical', icon: '🩺', name: '第 3 章 · 人体与伤病', desc: '七个部位、急救→手术→康复（下一批做）。', ready: false, preset: DEFAULT_PRESET, objectives: [] },
   { id: 'base', icon: '🏠', name: '第 4 章 · 建造与据点', desc: '净水、菜园、工作站的优先顺序（下一批做）。', ready: false, preset: DEFAULT_PRESET, objectives: [] },
   { id: 'world', icon: '🌐', name: '第 5 章 · 地图与大区', desc: '危险度是从家往外涨的：大区怎么走、辐射区怎么进（下一批做）。', ready: false, preset: DEFAULT_PRESET, objectives: [] },
@@ -157,7 +182,7 @@ export const isDone = (p: LabProgress, chId: string): boolean => !!p.done[chId];
 export function progressLine(p: LabProgress): string {
   const ready = LAB_CHAPTERS.filter(c => c.ready).length;
   const ok = LAB_CHAPTERS.filter(c => c.ready && isDone(p, c.id)).length;
-  return ready ? ('已通关 ' + ok + ' / ' + ready + ' 章（第 1 批）') : '暂无可玩章节';
+  return ready ? ('已通关 ' + ok + ' / ' + ready + ' 章') : '暂无可玩章节';
 }
 
 /**

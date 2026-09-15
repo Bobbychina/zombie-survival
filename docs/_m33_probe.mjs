@@ -48,7 +48,10 @@ await send('Emulation.setDeviceMetricsOverride', { width: 2048, height: 1105, de
 await send('Page.navigate', { url: url + '?dev=ready' }); await sleep(4200)
 await ev(`(() => { if (typeof setTab === 'function') setTab('explore'); if (typeof render === 'function') render(); return 1 })()`); await sleep(800)
 
-/* ── 0) 主档留证（隔离验证的基准）：密文长度 + 指纹 + 主页面进度 ── */
+/* ── 0) 主档留证（隔离验证的基准）：密文长度 + 指纹 + 主页面进度 ──
+   换个端口跑 = 换了个 origin（localStorage 是空的）——先确保主档真的存在，否则"隔离"验的是空气。 */
+await ev(`(() => { if (!localStorage.getItem('zombie_survival_save_v2')) { try { saveGame(true); } catch (e) {} } return 1 })()`)
+await sleep(1400)
 const saveBefore = JSON.parse(await ev(`(() => {
   const raw = localStorage.getItem('zombie_survival_save_v2') || '';
   let h = 5381; for (let i = 0; i < raw.length; i++) h = ((h * 33) ^ raw.charCodeAt(i)) >>> 0;
@@ -74,7 +77,7 @@ const shell = JSON.parse(await ev(`(() => {
   return JSON.stringify({ src: f ? f.getAttribute('src') : null, chs, objs, title: (document.getElementById('v4lab-frametitle') || {}).textContent });
 })()`))
 ok('iframe 带 ?sandbox=1&ch=survival（且只带 dev，不带别的查询串）', /[?&]sandbox=1/.test(shell.src || '') && /[?&]ch=survival/.test(shell.src || ''), String(shell.src))
-ok('章节壳列出 6 章，只有第 1 章可玩、其余标"下一批"', shell.chs.length === 6 && shell.chs.filter(c => c.soon).length === 5 && shell.chs[0].on === true, JSON.stringify(shell.chs.map(c => c.id + (c.soon ? '(soon)' : ''))))
+ok('章节壳列出 6 章：前两章可玩、其余 4 章标"下一批"', shell.chs.length === 6 && shell.chs.slice(0, 2).every(c => !c.soon) && shell.chs.slice(2).every(c => c.soon) && shell.chs[0].on === true, JSON.stringify(shell.chs.map(c => c.id + (c.soon ? '(soon)' : ''))))
 ok('目标清单有 4 条（开局全空）', shell.objs.length === 4 && shell.objs.every(o => !o.done), JSON.stringify(shell.objs.map(o => o.id)))
 await shot('01_lab_ch1')
 
@@ -183,15 +186,73 @@ const saveAfter2 = JSON.parse(await ev(`(() => { const raw = localStorage.getIte
 ok('沙盒里的「保存/自动存档」被写盘守卫拦住（连手动保存都写不进去）', saveAfter2.hash === saveBefore.hash, JSON.stringify({ guard, same: saveAfter2.hash === saveBefore.hash }))
 ok('沙盒菜单里没有会写盘的入口（存档/读取/回滚/重开/世界账号）', (await lab(`W.openMenu(); const txt = D.querySelector('#overlay-root') ? D.querySelector('#overlay-root').textContent : ''; const footer = D.querySelector('.modal-ft') ? D.querySelector('.modal-ft').textContent : ''; W.closeAllModals(); return JSON.stringify({ hasSave: /保存/.test(footer), hasLoad: /读取/.test(footer), hasWorld: /世界与账号/.test(txt), hasLab: /教程沙盒/.test(txt) });`)).includes('"hasWorld":false'))
 
-/* ── 6) 重来 / 关闭 ── */
-await ev(`document.querySelector('#v4lab button[onclick*="V4Lab.reset"]').click(); 1`); await sleep(3000)
-let fresh = null
+/* ── 6) 第 2 章：战斗与枪械（枪杀 / 近战杀 / 手动换弹 —— 全部走界面真按钮） ── */
+await ev(`(() => { const c = document.querySelector('#v4lab-chapters .lab-ch[data-ch="combat"]'); if (c) c.click(); return 1 })()`)
+await sleep(900)
+const shell2 = JSON.parse(await ev(`(() => {
+  const f = document.getElementById('v4lab-frame');
+  const objs = [...document.querySelectorAll('#v4lab-objectives .lab-obj')].map(o => o.dataset.obj);
+  const title = (document.getElementById('v4lab-frametitle') || {}).textContent || '';
+  return JSON.stringify({ src: f ? f.getAttribute('src') : null, objs, title });
+})()`))
+ok('点章节卡能切到第 2 章（iframe 换成 ch=combat，标题跟着换）', /[?&]ch=combat/.test(shell2.src || '') && /战斗/.test(shell2.title), JSON.stringify({ src: shell2.src, title: shell2.title }))
+ok('第 2 章的目标清单是 3 条（枪杀 / 近战杀 / 换弹）', shell2.objs.length === 3 && shell2.objs.includes('gunKill') && shell2.objs.includes('meleeKill') && shell2.objs.includes('loadSwap'), JSON.stringify(shell2.objs))
+let boot2 = null
 for (let i = 0; i < 20; i++) {
-  const r = await lab(`if (!W.S || !W.S.stats) return 'WAIT'; return JSON.stringify({ day: W.S.day, scav: W.S.stats.scav, seed: W.S.seed });`)
-  if (r && r !== 'WAIT' && r !== 'NO-FRAME' && !String(r).startsWith('EXC')) { fresh = JSON.parse(r); break }
+  const r = await lab(`if (!W.S || W.S.seed !== 'lab-combat-01') return 'WAIT'; return JSON.stringify({ day: W.S.day, seed: W.S.seed, pistol: W.S.inv.pistol || 0, ap: W.S.inv.a9_ap || 0, wpn: W.S.eq.wpn, kills: W.S.stats.kills });`)
+  if (r && r !== 'WAIT' && r !== 'NO-FRAME' && !String(r).startsWith('EXC')) { boot2 = JSON.parse(r); break }
   await sleep(500)
 }
-ok('「↻ 重来这一章」把沙盒重置回第 1 天（同一固定种子）', fresh && fresh.day === 1 && fresh.scav === 0 && fresh.seed === 'lab-survival-01', JSON.stringify(fresh))
+ok('第 2 章沙盒按自己的预设开局（固定种子 lab-combat-01 + 手枪 + 两种 9mm + 计数清零）', boot2 && boot2.day === 1 && boot2.pistol === 1 && boot2.ap === 8 && boot2.wpn === 'pistol' && boot2.kills === 0, JSON.stringify(boot2))
+
+/** 打一场：点招式槽（真按钮）直到战斗结束；结束面板上的「继续」也要点（战斗界面不会自己关） */
+const fight = async (rounds = 30) => {
+  for (let i = 0; i < rounds; i++) {
+    const st = await lab(`if (!W.V4UI || !W.V4UI.isOpen()) return 'OVER';
+      const done = [...D.querySelectorAll('#v4b-overlay button')].find(b => /继续/.test(b.textContent || ''));
+      if (done) { done.click(); return 'OVER'; }
+      const b = [...D.querySelectorAll('#v4b-overlay .mv-slot')].filter(x => !x.disabled);
+      if (!b.length) return 'WAIT';
+      b[0].click(); return 'HIT';`)
+    if (st === 'OVER') return true
+    await sleep(650)
+  }
+  return false
+}
+await lab(`W.DEV.battle(['walker']); return 1;`); await sleep(1300)
+const fight1 = await fight()
+await sleep(900)
+const st2 = JSON.parse(await ev(`JSON.stringify(window.V4Lab.status())`))
+ok('第 2 章：点招式槽真的打赢一场，枪杀记账（kills + ammoUsed 都动了 → 目标①绿）', fight1 && st2.snap.kills >= 1 && st2.snap.ammoUsed >= 1 && st2.eval.items.find(i => i.id === 'gunKill').done === true, JSON.stringify({ kills: st2.snap.kills, ammoUsed: st2.snap.ammoUsed }))
+
+await lab(`W.equipWeapon('crowbar'); W.DEV.battle(['walker']); return 1;`); await sleep(1300)
+const fight2 = await fight()
+await sleep(900)
+const st3 = JSON.parse(await ev(`JSON.stringify(window.V4Lab.status())`))
+ok('第 2 章：换上撬棍再打一场 → 近战击杀记账（目标②绿）', fight2 && st3.snap.meleeKills >= 1 && st3.eval.items.find(i => i.id === 'meleeKill').done === true, JSON.stringify({ meleeKills: st3.snap.meleeKills, kills: st3.snap.kills }))
+
+await lab(`W.setTab('inv'); W.render(); return 1;`); await sleep(900)
+const swap2 = await clickBtn('button[onclick*="setLoaded"]', 5)
+await sleep(900)
+const done2 = JSON.parse(await ev(`JSON.stringify(window.V4Lab.status())`))
+ok('第 2 章：背包「弹药」区手动装填一次（目标③绿）', swap2 && Object.keys(done2.snap.load || {}).length > 0 && done2.eval.items.find(i => i.id === 'loadSwap').done === true, JSON.stringify({ load: done2.snap.load, click: swap2 }))
+ok('第 2 章三条全绿 → 判定通关（3/3）', done2.eval.passed === true && done2.eval.green === 3, JSON.stringify({ green: done2.eval.green, total: done2.eval.total }))
+const prog2 = JSON.parse(await ev(`JSON.stringify({ raw: localStorage.getItem('zsv-lab-v1') || '', badges: [...document.querySelectorAll('#v4lab-chapters .lab-ch')].map(c => c.textContent.replace(/\\s+/g, ' ').slice(0, 46)) })`))
+ok('两章的通关都记在本机进度里', /"combat":\d+/.test(prog2.raw) && /"survival":\d+/.test(prog2.raw), prog2.raw)
+ok('章节列表里两章都挂上「已通关」徽章', (prog2.badges.join('|').match(/已通关/g) || []).length >= 2, JSON.stringify(prog2.badges))
+await shot('03_lab_chapter2')
+
+/* ── 7) 重来 / 关闭 ── */
+await ev(`document.querySelector('#v4lab button[onclick*="V4Lab.reset"]').click(); 1`); await sleep(3000)
+let fresh = null
+let freshErr = ''
+for (let i = 0; i < 34; i++) {
+  const r = await lab(`if (!W.S || !W.S.stats) return 'WAIT'; return JSON.stringify({ day: W.S.day, scav: W.S.stats.scav, seed: W.S.seed, kills: W.S.stats.kills, ammoUsed: W.S.stats.ammoUsed });`)
+  if (r && r !== 'WAIT' && r !== 'NO-FRAME' && !String(r).startsWith('EXC')) { fresh = JSON.parse(r); break }
+  freshErr = String(r)
+  await sleep(500)
+}
+ok('「↻ 重来这一章」按当前章重置（第 2 章 → 同种子、计数清零）', fresh && fresh.day === 1 && fresh.seed === 'lab-combat-01' && fresh.kills === 0 && fresh.ammoUsed === 0, JSON.stringify(fresh) + (fresh ? '' : ' | last=' + freshErr))
 await ev(`document.querySelector('#v4lab button[onclick*="V4Lab.close"]').click(); 1`); await sleep(600)
 const closed = JSON.parse(await ev(`JSON.stringify({ lab: !!document.getElementById('v4lab'), frame: !!document.getElementById('v4lab-frame'), day: S.day, cards: document.querySelectorAll('#v4cards .v4card').length })`))
 ok('「✕ 关闭沙盒」把 iframe 与覆盖层都摘掉，主页面照常', closed.lab === false && closed.frame === false && closed.cards > 0 && closed.day === saveBefore.day, JSON.stringify(closed))
