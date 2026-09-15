@@ -77,7 +77,7 @@ const shell = JSON.parse(await ev(`(() => {
   return JSON.stringify({ src: f ? f.getAttribute('src') : null, chs, objs, title: (document.getElementById('v4lab-frametitle') || {}).textContent });
 })()`))
 ok('iframe 带 ?sandbox=1&ch=survival（且只带 dev，不带别的查询串）', /[?&]sandbox=1/.test(shell.src || '') && /[?&]ch=survival/.test(shell.src || ''), String(shell.src))
-ok('章节壳列出 6 章：前两章可玩、其余 4 章标"下一批"', shell.chs.length === 6 && shell.chs.slice(0, 2).every(c => !c.soon) && shell.chs.slice(2).every(c => c.soon) && shell.chs[0].on === true, JSON.stringify(shell.chs.map(c => c.id + (c.soon ? '(soon)' : ''))))
+ok('章节壳列出 6 章、全部可玩（没有"下一批"占位）', shell.chs.length === 6 && shell.chs.every(c => !c.soon) && shell.chs[0].on === true, JSON.stringify(shell.chs.map(c => c.id + (c.soon ? '(soon)' : ''))))
 ok('目标清单有 4 条（开局全空）', shell.objs.length === 4 && shell.objs.every(o => !o.done), JSON.stringify(shell.objs.map(o => o.id)))
 await shot('01_lab_ch1')
 
@@ -242,6 +242,129 @@ ok('两章的通关都记在本机进度里', /"combat":\d+/.test(prog2.raw) && 
 ok('章节列表里两章都挂上「已通关」徽章', (prog2.badges.join('|').match(/已通关/g) || []).length >= 2, JSON.stringify(prog2.badges))
 await shot('03_lab_chapter2')
 
+/* ── 6b) 第 3~6 章：每章切进去 → 按预设开局 → 用真实操作把目标打绿 ── */
+const switchChapter = async (id, seed, extraWait = 0) => {
+  await ev(`(() => { const c = document.querySelector('#v4lab-chapters .lab-ch[data-ch="${id}"]'); if (c) c.click(); return 1 })()`)
+  await sleep(900 + extraWait)
+  for (let i = 0; i < 24; i++) {
+    const r = await lab(`if (!W.S || W.S.seed !== ${JSON.stringify(seed)}) return 'WAIT'; return JSON.stringify({ day: W.S.day, seed: W.S.seed, ap: W.S.ap, inj: (W.S.body && W.S.body.injuries ? W.S.body.injuries.length : 0), base: W.S.base, steps: W.S.world && W.S.world.steps, visited: W.S.world && W.S.world.visited ? Object.keys(W.S.world.visited).length : 0 });`)
+    if (r && r !== 'WAIT' && r !== 'NO-FRAME' && !String(r).startsWith('EXC')) return JSON.parse(r)
+    await sleep(500)
+  }
+  return null
+}
+const statusNow = async () => JSON.parse(await ev(`JSON.stringify(window.V4Lab.status())`))
+/** 在沙盒里回安全屋 + 睡觉（第 3/4 章的"睡一觉"目标） */
+const labSleep = async () => {
+  await lab(`const w = W.S.world, h = (W.DEV.localWorld() || {}).home; if (h) w.cur = { x: h.x, y: h.y }; W.setTab('explore'); W.render(); return 1;`)
+  await sleep(900)
+  const ok2 = await clickBtn('#v4cards button[onclick*="V4Night.rest"]', 6)
+  await sleep(1600)
+  return ok2
+}
+
+/* 第 3 章 · 人体与伤病：预设伤情 → 人体页急救 → 睡一觉 */
+const boot3 = await switchChapter('medical', 'lab-medical-01')
+ok('第 3 章按预设开局：带一处出血 + 一处骨折（用户拍板的"预设伤情"）', boot3 && boot3.inj === 2, JSON.stringify({ injuries: boot3 && boot3.inj, seed: boot3 && boot3.seed }))
+await lab(`W.setTab('body'); W.render(); return 1;`); await sleep(1000)
+const tx = []
+for (const [part, item] of [['armR', 'bandage'], ['legL', 'splint']]) {
+  await lab(`const g = D.querySelector('.mpart[data-part="${part}"]'); if (g) g.dispatchEvent(new MouseEvent('click', { bubbles: true })); return 1;`)
+  await sleep(700)
+  tx.push(await lab(`const b = D.querySelector('button[onclick*="V4Medical.treat(\\'${part}\\',\\'${item}\\')"]'); if (!b) return 'NO-BTN'; b.click(); return 'CLICKED';`))
+  await sleep(800)
+}
+const st3b = await statusNow()
+ok('第 3 章：人体页点急救（绷带止血 + 夹板固定）→ 目标①②绿', tx.every(x => x === 'CLICKED') && st3b.eval.items.find(i => i.id === 'bleedFix').done === true && st3b.eval.items.find(i => i.id === 'splintFix').done === true, JSON.stringify({ tx, inj: st3b.snap.injuries }))
+const sleepOk3 = await labSleep()
+const done3 = await statusNow()
+ok('第 3 章：回安全屋睡一觉 → 3/3 通关', sleepOk3 && done3.snap.day >= 2 && done3.eval.passed === true, JSON.stringify({ day: done3.snap.day, green: done3.eval.green }))
+await shot('04_lab_chapter3')
+
+/* 第 4 章 · 建造与据点：据点页建净水装置 + 工作台 → 睡一觉 */
+const boot4 = await switchChapter('base', 'lab-base-01')
+ok('第 4 章按预设开局：材料够、设施全空（要自己建）', boot4 && boot4.base && Object.values(boot4.base).every(v => !v), JSON.stringify({ base: boot4 && boot4.base }))
+await lab(`W.setTab('base'); W.render(); return 1;`); await sleep(1000)
+const bd = []
+for (const k of ['filter', 'bench']) {
+  bd.push(await clickBtn(`button[onclick*="build('${k}')"]`, 5))
+  await sleep(800)
+}
+const st4b = await statusNow()
+ok('第 4 章：据点页点建设（净水装置 + 工作台）→ 目标①②绿', bd.every(Boolean) && st4b.eval.items.find(i => i.id === 'filter1').done === true && st4b.eval.items.find(i => i.id === 'bench1').done === true, JSON.stringify({ bd, base: st4b.snap.base }))
+const sleepOk4 = await labSleep()
+const done4 = await statusNow()
+ok('第 4 章：睡一觉 → 3/3 通关', sleepOk4 && done4.eval.passed === true, JSON.stringify({ day: done4.snap.day, green: done4.eval.green }))
+await shot('05_lab_chapter4')
+
+/* 第 5 章 · 地图与大区：走 8 格 → 深搜 1 次 → 跨区 */
+const boot5 = await switchChapter('world', 'lab-world-01')
+ok('第 5 章按预设开局：体能 9 级 → 行动力上限 17（走路 8 + 深搜 2 + 跨区都够）', boot5 && boot5.ap >= 16, JSON.stringify({ ap: boot5 && boot5.ap }))
+for (let i = 0; i < 14; i++) {
+  const st = await lab(`const s = W.S.world, w = W.DEV.localWorld();
+    if (W.V4UI && W.V4UI.isOpen()) return 'BATTLE';
+    const cur = s.cur;
+    const cands = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[-1,-1],[1,-1],[-1,1]]
+      .map(([dx, dy]) => w.blocks[(cur.x + dx) + ',' + (cur.y + dy)]).filter(b => b && b.revealed);
+    if (!cands.length) return 'NOWHERE';
+    W.V4World.click(cands[0].x, cands[0].y); W.V4World.confirmTrip();
+    return JSON.stringify({ to: cands[0].x + ',' + cands[0].y, ap: W.S.ap, visited: Object.keys(s.visited).length });`)
+  if (st === 'BATTLE') { await fight(); await sleep(600); continue }
+  if (st === 'NOWHERE') break
+  const info = JSON.parse(String(st))
+  if (info.visited >= 8) break
+  await sleep(700)
+}
+const walkSt = JSON.parse(String(await lab(`return JSON.stringify({ visited: Object.keys(W.S.world.visited).length, ap: W.S.ap, steps: W.S.world.steps });`)))
+ok('第 5 章：点地图走格子（真实旅行）→ 点亮 ≥8 格（目标①绿）', walkSt.visited >= 8, JSON.stringify(walkSt))
+await lab(`const w = W.DEV.localWorld(), s = W.S.world; let best = null, bd2 = 99;
+  for (const k in w.blocks) { const b = w.blocks[k]; if (!b.poi || b.poi === 'lab' || b.poi === 'sunken' || b.biome === 'water') continue;
+    const d = Math.max(Math.abs(b.x - s.cur.x), Math.abs(b.y - s.cur.y)); if (d < bd2) { bd2 = d; best = b; } }
+  if (best) s.cur = { x: best.x, y: best.y }; W.render(); return 1;`)
+await sleep(900)
+const deep5 = await clickBtn('#v4cards button[onclick*="V4World.search(1)"]', 5)
+await sleep(900)
+const st5b = await statusNow()
+ok('第 5 章：深度搜索一次（目标②绿）', deep5 && st5b.eval.items.find(i => i.id === 'deep5').done === true, JSON.stringify({ deep: st5b.snap.deep }))
+/* 修车：找到一处带 🔧 的修车点（POIS 里 feat==='vehicle'），站过去点「修车」
+   （大区图上的跨区旅行要求有载具 —— 这是设计，不是 bug：所以第 5 章的目标就是"弄到一辆车"）
+   注意：**不能在同一个 evaluate 里"移动 + 查 DOM"** —— render 之后卡片墙是 MutationObserver
+   在微任务里重建的，当场查只会看到旧 DOM（这个坑踩过两次）。移动与点击分成两步，中间 await。 */
+const carAt = String(await lab(`const w = W.DEV.localWorld(), s = W.S.world, POIS = W.V4.POIS || {};
+  const cands = Object.keys(w.blocks).map(k => w.blocks[k])
+    .filter(b => b && b.poi && POIS[b.poi] && POIS[b.poi].feat === 'vehicle')
+    .sort((a, b) => Math.max(Math.abs(a.x - s.cur.x), Math.abs(a.y - s.cur.y)) - Math.max(Math.abs(b.x - s.cur.x), Math.abs(b.y - s.cur.y)));
+  if (!cands.length) return 'NO-VEH-POI';
+  s.cur = { x: cands[0].x, y: cands[0].y }; W.render();
+  return cands[0].x + ',' + cands[0].y + ':' + cands[0].poi;`))
+await sleep(1100)
+const carOk = await clickBtn('button[onclick*="V4World.fixCar"]', 6)
+await sleep(900)
+const st5c = await statusNow()
+ok('第 5 章：修车点修好一辆车（跨大区的前提）→ 目标③绿、3/3 通关', carOk && st5c.snap.veh === true && st5c.eval.passed === true, JSON.stringify({ carAt, carOk, veh: st5c.snap.veh, green: st5c.eval.green, ap: st5c.snap.ap }))
+await shot('06_lab_chapter5')
+
+/* 第 6 章 · 背包与制作：制作 1 件 → 手动装填 → 背包 6 种 */
+const boot6 = await switchChapter('bag', 'lab-bag-01')
+ok('第 6 章按预设开局：布料够做绷带、枪 + 两种弹在手', boot6 && boot6.day === 1, JSON.stringify({ seed: boot6 && boot6.seed }))
+await lab(`W.setTab('craft'); W.render(); return 1;`); await sleep(1100)
+const crafted = await lab(`const btn = [...D.querySelectorAll('#view button')].find(b => /craft\\(/.test(b.getAttribute('onclick') || '') &&
+    /绷带/.test((b.closest('.lrow') || b.parentElement || {}).textContent || ''));
+  if (!btn) return 'NO-BTN'; if (btn.disabled) return 'DISABLED'; btn.click(); return 'CLICKED';`)
+await sleep(1000)
+await lab(`W.setTab('inv'); W.render(); return 1;`); await sleep(900)
+const load6 = await clickBtn('button[onclick*="setLoaded"]', 5)
+await sleep(900)
+const done6 = await statusNow()
+ok('第 6 章：制作页点「绷带」→ 手工计数（目标①绿）', crafted === 'CLICKED' && done6.eval.items.find(i => i.id === 'craft6').done === true, JSON.stringify({ crafted, craftedCnt: done6.snap.crafted, bandage: done6.snap.inv.bandage }))
+ok('第 6 章：背包装填 + 背包 6 种 → 3/3 通关', load6 && done6.snap.invKinds >= 6 && done6.eval.passed === true, JSON.stringify({ load: done6.snap.load, invKinds: done6.snap.invKinds, green: done6.eval.green }))
+await shot('07_lab_chapter6')
+
+/* 六章全通：章节卡都挂徽章、进度里六条都在 */
+const allProg = JSON.parse(await ev(`JSON.stringify({ raw: localStorage.getItem('zsv-lab-v1') || '', badges: [...document.querySelectorAll('#v4lab-chapters .lab-ch')].map(c => c.textContent.replace(/\\s+/g, ' ').slice(0, 40)) })`))
+const doneIds = ['survival', 'combat', 'medical', 'base', 'world', 'bag'].filter(id => allProg.raw.includes('"' + id + '"'))
+ok('六章全部通关并记进本机进度', doneIds.length === 6, JSON.stringify({ doneIds, badges: allProg.badges.filter(b => /已通关/.test(b)).length }))
+
 /* ── 7) 重来 / 关闭 ── */
 await ev(`document.querySelector('#v4lab button[onclick*="V4Lab.reset"]').click(); 1`); await sleep(3000)
 let fresh = null
@@ -252,7 +375,7 @@ for (let i = 0; i < 34; i++) {
   freshErr = String(r)
   await sleep(500)
 }
-ok('「↻ 重来这一章」按当前章重置（第 2 章 → 同种子、计数清零）', fresh && fresh.day === 1 && fresh.seed === 'lab-combat-01' && fresh.kills === 0 && fresh.ammoUsed === 0, JSON.stringify(fresh) + (fresh ? '' : ' | last=' + freshErr))
+ok('「↻ 重来这一章」按当前章重置（第 6 章 → 同种子、计数清零）', fresh && fresh.day === 1 && fresh.seed === 'lab-bag-01' && fresh.kills === 0 && fresh.ammoUsed === 0, JSON.stringify(fresh) + (fresh ? '' : ' | last=' + freshErr))
 await ev(`document.querySelector('#v4lab button[onclick*="V4Lab.close"]').click(); 1`); await sleep(600)
 const closed = JSON.parse(await ev(`JSON.stringify({ lab: !!document.getElementById('v4lab'), frame: !!document.getElementById('v4lab-frame'), day: S.day, cards: document.querySelectorAll('#v4cards .v4card').length })`))
 ok('「✕ 关闭沙盒」把 iframe 与覆盖层都摘掉，主页面照常', closed.lab === false && closed.frame === false && closed.cards > 0 && closed.day === saveBefore.day, JSON.stringify(closed))

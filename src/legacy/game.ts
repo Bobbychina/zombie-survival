@@ -3596,7 +3596,8 @@ function bootLab(){
   S.seed = p.seed || 'lab-01';                  // 固定种子：同一章每次进来地图一模一样
   S.world = null;                               // 让 ensureSaveWorld 按这个种子重建
   S.day = Math.max(1, Math.floor(p.day || 1));
-  S.ap = S.apMax = 14;
+  /* M33 第三批：行动力按预设给（第 5 章要走路+深搜+跨区，24 点才够；老预设没写就是 14） */
+  S.ap = S.apMax = Math.max(1, Math.min(30, Math.floor(p.ap || 14)));
   S.mat = Math.max(0, Math.floor(p.mat == null ? 12 : p.mat));
   S.hp = S.hpMax = 100;
   S.hun = clamp(p.hun == null ? 80 : p.hun, 0, 100);
@@ -3606,6 +3607,23 @@ function bootLab(){
   const inv = p.inv || {};
   for(const id in inv){ if(ITEMS[id] && inv[id] > 0) S.inv[id] = Math.floor(inv[id]); }
   if(!S.eq.wpn){ const firstWpn = Object.keys(S.inv).find(id => ITEMS[id] && ITEMS[id].t === 'wpn'); if(firstWpn) S.eq.wpn = firstWpn; }
+  /* M33 第三批：预设据点设施（第 4 章要"从零建"，就不给） */
+  if(p.base && typeof p.base === 'object'){
+    for(const k in p.base){ if(BASE_UP[k]) S.base[k] = Math.max(0, Math.floor(p.base[k] || 0)); }
+  }
+  /* M33 第三批：预设技能（第 5 章给体能 → 行动力上限跟着涨，由 syncApMax 在挂载时重算） */
+  if(p.skills && typeof p.skills === 'object'){
+    for(const k in p.skills){ if(S.skills[k] !== undefined) S.skills[k] = Math.max(0, Math.min(10, Math.floor(p.skills[k] || 0))); }
+  }
+  /* M33 第三批：预设伤情（第 3 章）——直接写进 S.body，医疗运行时读的就是它 */
+  if((p.injuries && p.injuries.length) || (p.parts && typeof p.parts === 'object')){
+    const parts = {};
+    const PARTS = ['head','torso','belly','armL','armR','legL','legR'];
+    for(const k of PARTS) parts[k] = (p.parts && typeof p.parts[k] === 'number') ? clamp(p.parts[k], 0, 100) : 100;
+    const inj = (p.injuries || []).filter(i => i && i.id && i.part)
+      .map(i => ({ id: i.id, part: i.part, day: Math.max(1, Math.floor(i.day || S.day)), field: !!i.field, done: !!i.done }));
+    S.body = { parts, injuries: inj, bleedSince: S.day };
+  }
   S.tab = 'explore';
   syncAmmo();
   initGame(true);

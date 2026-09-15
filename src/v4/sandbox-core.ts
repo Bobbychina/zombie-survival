@@ -22,6 +22,16 @@ export interface LabSnap {
   inv: Record<string, number>;
   /** 玩家手动指定过的装填弹种 {口径: 弹种 id}（第 2 章"换弹"那条目标用它判定） */
   load: Record<string, string>;
+  /** 伤病（第 3 章）：每条只留"是什么 / 在哪 / 急没急救过 / 手术没" */
+  injuries: { id: string; part: string; field: boolean; done: boolean }[];
+  /** 据点设施等级（第 4 章） */
+  base: Record<string, number>;
+  /** 走过多少区块 / 点亮多少格 / 见过几个大区（第 5 章） */
+  steps: number; visited: number; regions: number;
+  /** 有没有车（第 5 章：跨大区的前置条件） */
+  veh: boolean;
+  /** 背包里有几种东西（第 6 章） */
+  invKinds: number;
 }
 
 export interface LabObjective {
@@ -50,6 +60,14 @@ export interface LabPreset {
   mat: number;
   hp: number; hun: number; thi: number; sta: number;
   inv: Record<string, number>;
+  /** 据点设施等级（第 4 章：想让玩家"从零建"，就别给） */
+  base?: Record<string, number>;
+  /** 预设伤情（第 3 章：用户拍板的"预设伤情"就落在这里） */
+  injuries?: { id: string; part: string; day?: number; field?: boolean }[];
+  /** 预设身体部位血量（默认全满） */
+  parts?: Record<string, number>;
+  /** 预设技能等级（第 5 章给体能 9 级 → 行动力上限 +3；教学章不该被行动力卡住） */
+  skills?: Record<string, number>;
 }
 
 /** 沙盒快照 → 通用读取（缺字段一律给安全默认，坏快照不许把父页面判绿/判崩） */
@@ -63,11 +81,29 @@ export function snapOf(S: any): LabSnap {
   const load: Record<string, string> = {};
   const ld = (S && S.load) || {};
   for (const cal in ld) { if (typeof ld[cal] === 'string' && ld[cal]) load[cal] = ld[cal]; }
+  /* 伤病：只带出判定需要的四个字段（iframe 里出来的东西一律当不可信输入） */
+  const injuries: LabSnap['injuries'] = [];
+  const inj = (S && S.body && Array.isArray(S.body.injuries)) ? S.body.injuries : [];
+  for (const i of inj) {
+    if (!i || typeof i.id !== 'string') continue;
+    injuries.push({ id: i.id, part: String(i.part || ''), field: !!i.field, done: !!i.done });
+  }
+  const base: Record<string, number> = {};
+  const bs = (S && S.base) || {};
+  for (const k in bs) { const v = n(bs[k]); if (v > 0) base[k] = v; }
+  const sw = (S && S.world) || {};
+  const visited = sw.visited && typeof sw.visited === 'object' ? Object.keys(sw.visited).length : 0;
+  const regions = sw.seenRegions && typeof sw.seenRegions === 'object' ? Object.keys(sw.seenRegions).length : 0;
+  /* 背包里"几种东西"：按 ITEMS 里认得的 id 数（坏档里塞的假 id 不算） */
+  const ITEMS = (globalThis as any).ITEMS;
+  const kinds = Object.keys(inv).filter(id => !ITEMS || !!ITEMS[id]).length;
   return {
     day: n(S && S.day, 1), hp: n(S && S.hp), hun: n(S && S.hun), thi: n(S && S.thi), ap: n(S && S.ap),
     scav: n(st.scav), deep: n(st.deep), crafted: n(st.crafted), kills: n(st.kills), meleeKills: n(st.meleeKills),
     ammoUsed: n(st.ammoUsed),
     loc: String((S && S.loc) || 'base'), over: !!(S && S.over), inv, load,
+    injuries, base, steps: n(sw.steps), visited, regions, invKinds: kinds,
+    veh: !!sw.veh,
   };
 }
 
@@ -80,7 +116,7 @@ export const SURVIVAL_PRESET: LabPreset = {
   inv: { crowbar: 1, can: 2, water: 2, bandage: 1, cloth: 2, wood: 1 },
 };
 
-/** 没写 preset 的章节用这个（第 3~6 章还没做，所以它只是兜底） */
+/** 兜底预设：章节没写 preset 时用它（6 章现在都有各自的预设，这个只防手滑） */
 const DEFAULT_PRESET: LabPreset = { seed: 'lab-basic-01', day: 1, ap: 14, mat: 12, hp: 100, hun: 80, thi: 80, sta: 100, inv: { crowbar: 1, can: 1, water: 1 } };
 
 /** 第 2 章「战斗与枪械」的沙盒开局：一把手枪 + 两种 9mm（普通弹与穿甲弹打装甲目标的手感不一样）
@@ -90,6 +126,44 @@ export const COMBAT_PRESET: LabPreset = {
   day: 1, ap: 14, mat: 12,
   hp: 100, hun: 85, thi: 85, sta: 100,
   inv: { pistol: 1, crowbar: 1, a9_fmj: 24, a9_ap: 8, bandage: 2, medkit: 1, can: 2, water: 2 },
+};
+
+/** 第 3 章「人体与伤病」：用户拍板的"预设伤情"落在这里 —— 开局就带一处小出血 + 一处骨折，
+    背包里给绷带/夹板/急救包，教学重点是"急救 → 手术 → 康复"里的第一步（先止住）。 */
+export const MEDICAL_PRESET: LabPreset = {
+  seed: 'lab-medical-01',
+  day: 1, ap: 14, mat: 12,
+  hp: 100, hun: 80, thi: 80, sta: 100,
+  inv: { crowbar: 1, bandage: 3, splint: 2, medkit: 1, suture: 1, can: 2, water: 2 },
+  injuries: [{ id: 'bleedS', part: 'armR' }, { id: 'fracture', part: 'legL' }],
+};
+
+/** 第 4 章「建造与据点」：材料给够建两样（净水装置 + 工作台，两样都要胶带 —— 第一次探针就是
+    因为没给 tape 而"按钮点了没反应"，其实是材料不足被禁用了），其余靠玩家自己安排顺序。 */
+export const BASE_PRESET: LabPreset = {
+  seed: 'lab-base-01',
+  day: 1, ap: 14, mat: 20,
+  hp: 100, hun: 85, thi: 85, sta: 100,
+  inv: { crowbar: 1, wood: 10, metal: 10, cloth: 6, chip: 4, tape: 4, can: 2, water: 2, bandage: 1 },
+};
+
+/** 第 5 章「地图与大区」：走路 8 格 + 深搜 2 点 + 修车 1 点 —— 一天 14 点不够，
+    所以给体能 9 级（每 3 级 +1 行动力上限 → 17 点）。修车要 12 材料 + 2 汽油，预设都给上。
+    教学点：**跨大区得开车**（靠两条腿走不到），所以第三章目标是"弄到一辆车"。 */
+export const WORLD_PRESET: LabPreset = {
+  seed: 'lab-world-01',
+  day: 1, ap: 17, mat: 20,
+  hp: 100, hun: 85, thi: 85, sta: 100,
+  inv: { crowbar: 1, can: 2, water: 2, bandage: 2, fuel: 2, a9_fmj: 12, pistol: 1 },
+  skills: { fitness: 9 },
+};
+
+/** 第 6 章「背包与制作」：布料够做绷带（工作台 Lv.0 就能做，不用先造站台），另给枪与两种弹练装填。 */
+export const BAG_PRESET: LabPreset = {
+  seed: 'lab-bag-01',
+  day: 1, ap: 14, mat: 20,
+  hp: 100, hun: 85, thi: 85, sta: 100,
+  inv: { crowbar: 1, pistol: 1, a9_fmj: 12, a9_ap: 6, cloth: 6, wood: 4, chem: 2, can: 2, water: 2 },
 };
 
 export const LAB_CHAPTERS: LabChapter[] = [
@@ -116,10 +190,50 @@ export const LAB_CHAPTERS: LabChapter[] = [
       { id: 'loadSwap', text: '🔩 在背包「弹药」区手动装填一次弹种（9mm 普通弹 ↔ 穿甲弹）', need: s => Object.keys(s.load).length > 0 },
     ],
   },
-  { id: 'medical', icon: '🩺', name: '第 3 章 · 人体与伤病', desc: '七个部位、急救→手术→康复（下一批做）。', ready: false, preset: DEFAULT_PRESET, objectives: [] },
-  { id: 'base', icon: '🏠', name: '第 4 章 · 建造与据点', desc: '净水、菜园、工作站的优先顺序（下一批做）。', ready: false, preset: DEFAULT_PRESET, objectives: [] },
-  { id: 'world', icon: '🌐', name: '第 5 章 · 地图与大区', desc: '危险度是从家往外涨的：大区怎么走、辐射区怎么进（下一批做）。', ready: false, preset: DEFAULT_PRESET, objectives: [] },
-  { id: 'bag', icon: '🎒', name: '第 6 章 · 背包与制作', desc: '重量、腐坏、弹药按口径装填（下一批做）。', ready: false, preset: DEFAULT_PRESET, objectives: [] },
+  {
+    id: 'medical', icon: '🩺', name: '第 3 章 · 人体与伤病',
+    desc: '开局自带两处伤（出血 + 骨折）：先急救止血、再给骨折上夹板，然后睡一觉让身体开始康复。三条目标全绿就算通关。',
+    ready: true,
+    preset: MEDICAL_PRESET,
+    objectives: [
+      { id: 'bleedFix', text: '🩸 把出血处理掉（人体页 → 选受伤部位 → 用绷带/急救包）', need: s => s.injuries.filter(i => i.id === 'bleedS' || i.id === 'bleedL').every(i => i.field || i.done) },
+      { id: 'splintFix', text: '🦴 给骨折上夹板（夹板只是临时固定；要复位得回据点动手术）', need: s => s.injuries.filter(i => i.id === 'fracture').every(i => i.field || i.done) },
+      { id: 'sleep3', text: '😴 睡一觉（吃着睡：康复要靠营养 + 睡觉，夜里翻倍）', need: s => s.day >= 2 },
+    ],
+  },
+  {
+    id: 'base', icon: '🏠', name: '第 4 章 · 建造与据点',
+    desc: '长期变强全靠据点：先把净水装置和工作台立起来，再睡一觉看看"在家睡"和"野外睡"的差别。三条目标全绿就算通关。',
+    ready: true,
+    preset: BASE_PRESET,
+    objectives: [
+      { id: 'filter1', text: '🚰 建「净水装置」（据点 → 建设：之后每天产水）', need: s => (s.base.filter || 0) >= 1 },
+      { id: 'bench1', text: '🛠️ 建「工作台」（解锁制作；材料来自搜刮与拆解）', need: s => (s.base.bench || 0) >= 1 },
+      { id: 'sleep4', text: '😴 睡一觉进入第 2 天（安全屋睡满格、零夜袭）', need: s => s.day >= 2 },
+    ],
+  },
+  {
+    id: 'world', icon: '🌐', name: '第 5 章 · 地图与大区',
+    desc: '危险度是从家往外涨的：走远一点、深搜一次，再在修车点弄一辆车（跨大区的前提）。三条目标全绿就算通关。',
+    ready: true,
+    preset: WORLD_PRESET,
+    objectives: [
+      { id: 'walk8', text: '🥾 走过 8 个区块（走路 1 行动力/格，越往外危险度越高）', need: s => s.visited >= 8 },
+      { id: 'deep5', text: '🔦 深度搜索 1 次（2 行动力：更容易出稀有物，但更危险）', need: s => s.deep >= 1 },
+      { id: 'cross5', text: '🚗 弄到一辆车（地图上带 🔧 的修车点 → 12 材料 + 2 汽油）：跨大区得开车，两条腿走不到', need: s => s.veh },
+    ],
+  },
+  {
+    id: 'bag', icon: '🎒', name: '第 6 章 · 背包与制作',
+    desc: '背包是第一生产力：做点东西、按口径装填子弹、把家当攒起来。三条目标全绿就算通关。',
+    ready: true,
+    preset: BAG_PRESET,
+    objectives: [
+      { id: 'craft6', text: '🔨 制作 1 件东西（制作页 → 工作台 → 绷带：布料×2，不用先造站台）', need: s => s.crafted >= 1 },
+      { id: 'load6', text: '🔩 在背包「弹药」区手动装填一次弹种（9mm 普通弹 ↔ 穿甲弹）', need: s => Object.keys(s.load).length > 0 },
+      { id: 'bag6', text: '🎒 背包里攒到 6 种不同的东西（重量有上限，别什么都往身上塞）', need: s => s.invKinds >= 6 },
+    ],
+  },
 ];
 
 export const chapterById = (id: string): LabChapter | null => LAB_CHAPTERS.find(c => c.id === id) || null;

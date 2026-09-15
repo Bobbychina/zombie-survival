@@ -2,31 +2,40 @@
  * 这里只测纯逻辑（sandbox-core），DOM 与 iframe 生命周期由 docs/_m33_probe.mjs 在真浏览器里验。 */
 import { describe, expect, it } from 'vitest';
 import {
-  COMBAT_PRESET, LAB_CHAPTERS, LAB_KEY, SURVIVAL_PRESET, chapterById, evalChapter, isDone, labFromSearch,
-  labStateOf, markDone, mergeSticky, parseProgress, progressLine, sandboxUrl, serializeProgress, snapOf, type LabSnap,
+  BAG_PRESET, BASE_PRESET, COMBAT_PRESET, LAB_CHAPTERS, LAB_KEY, MEDICAL_PRESET, SURVIVAL_PRESET, WORLD_PRESET,
+  chapterById, evalChapter, isDone, labFromSearch, labStateOf, markDone, mergeSticky, parseProgress, progressLine,
+  sandboxUrl, serializeProgress, snapOf, type LabSnap,
 } from '../src/v4/sandbox-core';
 
 const snap = (over: Partial<LabSnap> = {}): LabSnap => ({
   day: 1, hp: 100, hun: 62, thi: 58, ap: 14, scav: 0, deep: 0, crafted: 0, kills: 0, meleeKills: 0, ammoUsed: 0,
-  loc: 'base', over: false, inv: {}, load: {}, ...over,
+  loc: 'base', over: false, inv: {}, load: {}, injuries: [], base: {}, steps: 0, visited: 1, regions: 1, invKinds: 1,
+  veh: false,
+  ...over,
 });
 
 const CH1 = chapterById('survival')!;
 const CH2 = chapterById('combat')!;
+const CH3 = chapterById('medical')!;
+const CH4 = chapterById('base')!;
+const CH5 = chapterById('world')!;
+const CH6 = chapterById('bag')!;
 
 describe('章节表', () => {
-  it('第 1、2 章可玩，其余 4 章明确标"下一批"', () => {
+  it('六章全部可玩，各自都有目标（没有半截章节）', () => {
     expect(LAB_CHAPTERS.length).toBe(6);
-    expect(LAB_CHAPTERS.filter(c => c.ready).map(c => c.id)).toEqual(['survival', 'combat']);
-    expect(CH1.objectives.length).toBeGreaterThanOrEqual(3);
-    expect(CH2.objectives.length).toBeGreaterThanOrEqual(3);
+    expect(LAB_CHAPTERS.filter(c => c.ready).map(c => c.id)).toEqual(['survival', 'combat', 'medical', 'base', 'world', 'bag']);
     for (const c of LAB_CHAPTERS) {
       expect(c.icon.length).toBeGreaterThan(0);
       expect(c.name.length).toBeGreaterThan(0);
       expect(c.desc.length).toBeGreaterThan(0);
-      if (!c.ready) expect(c.objectives).toEqual([]);          // 没做的章节不许留"半截目标"
+      expect(c.objectives.length).toBeGreaterThanOrEqual(3);
+      expect(new Set(c.objectives.map(o => o.id)).size).toBe(c.objectives.length);   // 目标 id 不许重名
+      expect(c.preset.seed).toMatch(/^lab-/);
+      expect(c.preset.ap).toBeGreaterThanOrEqual(14);
     }
     expect(new Set(LAB_CHAPTERS.map(c => c.id)).size).toBe(6);
+    expect(new Set(LAB_CHAPTERS.map(c => c.preset.seed)).size).toBe(6);              // 六章种子互不相同
   });
 
   it('第 2 章的预设：给枪给两种 9mm 给撬棍（三条目标都做得到），种子固定', () => {
@@ -49,6 +58,63 @@ describe('章节表', () => {
     expect(l({})).toBe(false);
     expect(l({ c9: 'a9_ap' })).toBe(true);
     expect(evalChapter(CH2, snap({ kills: 1, ammoUsed: 3, meleeKills: 1, load: { c9: 'a9_fmj' } })).passed).toBe(true);
+  });
+
+  it('第 3 章「人体与伤病」：预设带两处伤，目标是"处理掉"而不是"受过伤"', () => {
+    expect((MEDICAL_PRESET.injuries || []).map(i => i.id).sort()).toEqual(['bleedS', 'fracture']);
+    expect(MEDICAL_PRESET.inv.bandage).toBeGreaterThan(0);     // 治出血要绷带
+    expect(MEDICAL_PRESET.inv.splint).toBeGreaterThan(0);      // 上夹板要夹板
+    const inj = (list: LabSnap['injuries']) => evalChapter(CH3, snap({ injuries: list }));
+    const idOf = (ev: ReturnType<typeof evalChapter>, id: string) => ev.items.find(i => i.id === id)!.done;
+    // 开局两条都还没处理 → 0/3
+    expect(inj([{ id: 'bleedS', part: 'armR', field: false, done: false }, { id: 'fracture', part: 'legL', field: false, done: false }]).green).toBe(0);
+    // 只处理了出血 → 只有那一条绿
+    expect(idOf(inj([{ id: 'bleedS', part: 'armR', field: true, done: false }, { id: 'fracture', part: 'legL', field: false, done: false }]), 'bleedFix')).toBe(true);
+    expect(idOf(inj([{ id: 'bleedS', part: 'armR', field: true, done: false }, { id: 'fracture', part: 'legL', field: false, done: false }]), 'splintFix')).toBe(false);
+    // 康复掉了（数组里没有）也算处理过 —— 单调口径
+    expect(idOf(inj([]), 'bleedFix')).toBe(true);
+    expect(idOf(inj([]), 'splintFix')).toBe(true);
+    // 手术过的也算（大出血要缝合包）
+    expect(idOf(inj([{ id: 'bleedL', part: 'torso', field: false, done: true }]), 'bleedFix')).toBe(true);
+    expect(evalChapter(CH3, snap({ injuries: [], day: 2 })).passed).toBe(true);
+  });
+
+  it('第 4 章「建造与据点」：净水装置 + 工作台 + 睡一觉', () => {
+    expect(BASE_PRESET.inv.wood).toBeGreaterThanOrEqual(6);    // 材料够建两样
+    expect(BASE_PRESET.inv.metal).toBeGreaterThanOrEqual(6);
+    expect(BASE_PRESET.inv.tape).toBeGreaterThanOrEqual(2);    // 净水装置与工作台都要胶带（少了按钮会禁用）
+    expect(BASE_PRESET.base).toBeUndefined();                  // "从零建"：不给现成设施
+    const d = (base: Record<string, number>, day = 1) => evalChapter(CH4, snap({ base, day }));
+    expect(d({}).green).toBe(0);
+    expect(d({ filter: 1 }).items.find(i => i.id === 'filter1')!.done).toBe(true);
+    expect(d({ filter: 1 }).items.find(i => i.id === 'bench1')!.done).toBe(false);
+    expect(d({ filter: 1, bench: 1 }).green).toBe(2);
+    expect(d({ filter: 1, bench: 1 }, 2).passed).toBe(true);
+  });
+
+  it('第 5 章「地图与大区」：走 8 格 / 深搜 1 次 / 弄到一辆车（跨区得开车）', () => {
+    expect(WORLD_PRESET.skills?.fitness).toBeGreaterThanOrEqual(9);   // 9 级 → 行动力上限 +3（17 点）
+    expect(WORLD_PRESET.ap).toBeGreaterThanOrEqual(16);
+    expect(WORLD_PRESET.mat).toBeGreaterThanOrEqual(12);              // 修车要 12 材料
+    expect(WORLD_PRESET.inv.fuel).toBeGreaterThanOrEqual(2);          // 修车要 2 汽油
+    const w = (visited: number, deep = 0, veh = false) => evalChapter(CH5, snap({ visited, deep, veh }));
+    expect(w(1).green).toBe(0);
+    expect(w(8).items.find(i => i.id === 'walk8')!.done).toBe(true);
+    expect(w(8, 0, true).items.find(i => i.id === 'cross5')!.done).toBe(true);
+    expect(w(8, 1, true).passed).toBe(true);
+  });
+
+  it('第 6 章「背包与制作」：做一件 / 手动装填 / 背包 6 种', () => {
+    expect(BAG_PRESET.inv.cloth).toBeGreaterThanOrEqual(2);    // 绷带＝布料×2，工作台 Lv.0 就能做
+    expect(BAG_PRESET.inv.a9_fmj).toBeGreaterThan(0);
+    expect(BAG_PRESET.inv.a9_ap).toBeGreaterThan(0);
+    const b = (o: Partial<LabSnap>) => evalChapter(CH6, snap(o));
+    expect(b({}).green).toBe(0);
+    expect(b({ crafted: 1 }).items.find(i => i.id === 'craft6')!.done).toBe(true);
+    expect(b({ load: { c9: 'a9_fmj' } }).items.find(i => i.id === 'load6')!.done).toBe(true);
+    expect(b({ invKinds: 5 }).items.find(i => i.id === 'bag6')!.done).toBe(false);
+    expect(b({ invKinds: 6 }).items.find(i => i.id === 'bag6')!.done).toBe(true);
+    expect(b({ crafted: 1, load: { c9: 'a9_fmj' }, invKinds: 6 }).passed).toBe(true);
   });
 
   it('第 1 章的沙盒预设：固定种子 + 开局不是满饱食（否则"吃饱喝足"这条一开始就是绿的）', () => {
@@ -143,10 +209,10 @@ describe('进度（存父页面，不进 iframe、不进存档）', () => {
     expect(LAB_KEY).toBe('zsv-lab-v1');
   });
 
-  it('进度摘要按"可玩章节"算（下一批那 4 章不计入分母）', () => {
-    expect(progressLine(parseProgress(null))).toBe('已通关 0 / 2 章');
-    expect(progressLine(markDone(parseProgress(null), 'survival', 1))).toBe('已通关 1 / 2 章');
-    expect(progressLine(markDone(parseProgress(null), 'combat', 1))).toBe('已通关 1 / 2 章');
+  it('进度摘要按"可玩章节"算（六章全可玩）', () => {
+    expect(progressLine(parseProgress(null))).toBe('已通关 0 / 6 章');
+    expect(progressLine(markDone(parseProgress(null), 'survival', 1))).toBe('已通关 1 / 6 章');
+    expect(progressLine(markDone(parseProgress(null), 'world', 1))).toBe('已通关 1 / 6 章');
   });
 });
 
