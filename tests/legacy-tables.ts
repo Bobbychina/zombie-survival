@@ -40,7 +40,18 @@ export function itemIds(): string[] {
     const body = t[1] ?? '';
     for (const m of body.matchAll(/(?:^|\n)\s*([a-z_][a-z0-9_]*)\s*:\s*\{/g)) ids.add(m[1]);
   }
-  /* 弹药不是 ITEMS 里的一条，而是 legacy 的独立计数器（grant('ammo') 会加到 S.ammo） */
+  /* M32b：'ammo' 仍是掉落/委托表里在用的"杂牌弹药"来源 id（商人货架上不许再出现它），
+     grant() 会先把它折成真弹（见 ammo-core.resolveAmmoId）再进背包。 */
   ids.add('ammo');
   return [...ids];
+}
+
+/** legacy ITEMS 里的弹药条目：{ id: {cal, pen} }（M32b：货架/掉落的口径核对要用） */
+export function ammoItems(): Record<string, { cal: string; pen: number; dmgMul: number }> {
+  const text = src();
+  const out: Record<string, { cal: string; pen: number; dmgMul: number }> = {};
+  const re = /(?:^|\n)\s*([a-z_][a-z0-9_]*)\s*:\s*\{n:'[^']*',\s*t:'ammo',[^}]*?cal:'(\w+)',\s*pen:(\d+),\s*dmgMul:([\d.]+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) out[m[1]] = { cal: m[2], pen: Number(m[3]), dmgMul: Number(m[4]) };
+  return out;
 }

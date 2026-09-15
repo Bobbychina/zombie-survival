@@ -2,7 +2,8 @@
 // 不要在这个文件里加新功能：新东西写进 src/v4/，通过 window 上的名字与这里互操作。
 // M25 例外：辐射的分档/累积公式在 src/v4/rad-core.ts（纯逻辑、可单测），这里只 import 公式，不重复实现。
 import { radTier, radGain, radLevelAt, radProtect, RAD_SOURCES, geigerText } from '../v4/rad-core';
-import { CALIBERS, penMul, ammoTable, pickLoadedAmmo, ammoShortName } from '../v4/ammo-core';
+import { CALIBERS, penMul, ammoTable, pickLoadedAmmo, ammoShortName, resolveAmmoId } from '../v4/ammo-core';
+import { MERCHANT_GOODS, badShopRows, shopPrice, ammoShopRows } from '../v4/shop-core';   // M32b：货架（弹药按口径卖）+ 坏货架兜底
 import { apCapOf, fitnessApBonus, phaseOf, PHASE_LABEL } from '../v4/night-core';   // M25.2：行动力上限（睡眠债 + 体能）；M25.3：白昼曲线
 
 
@@ -185,12 +186,27 @@ function loadedAmmo(cal){
   return pickLoadedAmmo(AMMO_OF[cal] || [], S.inv || {}, S.load, cal);
 }
 const ammoCount = () => { let n = 0; for(const id in ITEMS){ const it = ITEMS[id]; if(it.t === 'ammo') n += S.inv[id] || 0; } return n; };
+/** 当前武器口径（没枪/枪不吃子弹就是 null） */
+const curCal = () => { const wid = S.eq.wpn, w = wid && ITEMS[wid]; return (w && w.cal) ? w.cal : null; };
+/** M32b：S.ammo 是"当前装填弹种发数"的镜像（v4 引擎的 syncBack 靠它算这一轮打掉几发），
+    所以**任何**背包弹药变动之后都要重算一次，否则它就是个死数（旧版商人卖弹就是这个坑）。 */
+function syncAmmo(){
+  const cal = curCal();
+  S.ammo = cal ? itemCount(loadedAmmo(cal) || '') : ammoCount();
+}
+/** M32b：把旧的"笼统弹药池"落成真弹（只在开新档 / v1 迁移时用；存档里的旧池子由 sanitizeSave 折算） */
+function materializeAmmoPool(){
+  const pool = Math.floor(S.ammo || 0);
+  if(pool > 0) addItem(resolveAmmoId('ammo', ITEMS, curCal()), pool, true);
+  syncAmmo();
+}
 /** M25：切换某个口径装填的弹种（背包里点）——穿透更高的弹打装甲目标，便宜的弹打普通丧尸 */
 function setLoaded(cal, id){
   if(!S.load) S.load = {};
   S.load[cal] = id;
   const it = ITEMS[id];
   log('🔩 ' + CALIBERS[cal].n + ' 换装：' + (it ? it.n : id) + '（穿透 ' + (it ? it.pen : 0) + '）', 'info');
+  syncAmmo();                                   // M32b：换弹种 = 换 mirror（否则 HUD 还显示上一种的数量）
   render(); autosave();
 }
 /** M25：HUD 点弹药 chip = 在当前口径的弹种之间循环（不用翻背包） */
@@ -324,13 +340,9 @@ const COMPANIONS = {
   hunter:  {n:'猎手 · 阿蛮',  dmg:7,  hp:60, desc:'提高搜刮收益，发现更多秘闻。'},
 };
 
-// 商人货架（材料计价）
-const MERCHANT = [
-  {id:'medkit', cost:34, stock:2}, {id:'ammo', n:15, cost:30, stock:3}, {id:'can', n:3, cost:22, stock:2},
-  {id:'water', n:3, cost:22, stock:2}, {id:'anti', n:2, cost:30, stock:1}, {id:'gasmask', cost:70, stock:1},
-  {id:'hazmat', cost:120, stock:1}, {id:'kevlar', cost:110, stock:1}, {id:'grenade', n:2, cost:60, stock:1},
-  {id:'machete', cost:60, stock:1}, {id:'shotgun', cost:130, stock:1}, {id:'marksman', cost:210, stock:1},
-];
+// 商人货架（材料计价）。M32b：表搬到 v4/shop-core.ts（纯数据 + 兜底校验，可单测）——
+// 弹药从此**按口径/弹种卖**（穿甲弹更贵、量更少），不再是一个笼统的 "ammo"。
+const MERCHANT = MERCHANT_GOODS;
 
 // 秘闻（图鉴·可发现）
 const LORE = [
@@ -463,7 +475,7 @@ function newState(){
     v:VER, day:1, ap:14, apMax:14,   // M25.2：每天 14 点行动力（原 9 点 —— 用户「一天也太短了」）；成本表没动，所以一天能做的事多了
     __integrity:null,               // M8：存档指纹（内容校验和），随存档一起进 localStorage / 云盘
     hp:100, hpMax:100, sta:100, staMax:100, hun:100, thi:100, infect:0,
-    ammo:24, mat:12,
+    ammo:24, mat:12,   // M32b：这 24 发是"开局弹药池"，initGame 里会被 materializeAmmoPool() 落成真弹（9mm FMJ）
     inv:{ can:2, water:2, bandage:1, crowbar:1 },
     store:{},
     eq:{ wpn:'crowbar', head:null, body:null, mask:null, feet:null, bag:null, trinket:null },
@@ -740,6 +752,7 @@ function loadGame(silent){
     if(!S){ toast('读档失败','存档内容无法解析。','bad'); return false; }
     battle = null; window.__renderErr = null;
     closeAllModals(); clearLog();
+    syncAmmo();                                  // M32b：读档后把 S.ammo 镜像对齐到背包里的实弹（旧版这里是 0 → 有弹也开不了枪）
     log('📂 读取存档：第 '+S.day+' 天（来源：'+source+'）。','info');
     if(source !== '主存档') log('🛟 主存档损坏，已自动回退到上一次的备份。','danger');
     render();
@@ -756,8 +769,9 @@ function migrateV1(){
     if(typeof o.health === 'number') n.hp = Math.min(o.health, o.maxHealth || 100);
     n.hpMax = Math.max(100, o.maxHealth || 100);
     n.mat = o.resources || 12;
-    n.ammo = o.ammo || 24;
-    n.day = o.days || 1;
+    n.ammo = o.ammo || 24;    n.day = o.days || 1;
+    let startAmmo = n.ammo;                       // M32b：v1 只有"弹药总数"，迁移时落成真弹
+    n.ammo = 0;                                   // 池子清空，下面 grant 之后由 syncAmmo() 重算
     n.quest.stage = Math.min(5, o.questStage || 0);
     n.lore = Array.isArray(o.discoveredLore) ? o.discoveredLore.filter(x => LORE.some(l => l.id === x)) : [];
     // 注意：此时全局 S 还是旧档，物品必须写进新对象 n，否则迁移时物品会丢
@@ -766,7 +780,7 @@ function migrateV1(){
     (o.inventory || []).forEach(name => {
       const id = map[name];
       if(id) gains[id] = (gains[id] || 0) + 1;
-      if(name === '弹药箱') n.ammo += 20;
+      if(name === '弹药箱') startAmmo += 20;
     });
     if(o.equipped && o.equipped.gasMask) gains.gasmask = (gains.gasmask || 0) + 1;
     if(o.equipped && o.equipped.hazmatSuit) gains.hazmat = (gains.hazmat || 0) + 1;
@@ -777,6 +791,7 @@ function migrateV1(){
     const cnt = Math.max(2, Math.round((o.food || 50) / 20));
     S.inv.can = (S.inv.can || 0) + cnt;
     S.inv.water = (S.inv.water || 0) + cnt;
+    grant('ammo', startAmmo, true);              // M32b：v1 的笼统弹药数落成真弹（不再是 S.ammo 里的死数）
     clearLog(); render();
     log('📦 已把 v1.0 存档迁移到 v2.1（旧档保留在原键位）。','info');
     toast('存档已迁移','v1.0 的进度被带进了 v2.0。','ok');
@@ -1177,6 +1192,7 @@ function addItem(id, n, silent){
   n = n || 1;
   if(!ITEMS[id]) return;
   S.inv[id] = (S.inv[id] || 0) + n;
+  if(ITEMS[id].t === 'ammo') syncAmmo();       // M32b：捡到/做到弹药立刻刷新 S.ammo 镜像
   if(!silent){
     const over = encumbrance() > 1;
     log('📦 获得 ' + ITEMS[id].n + ' ×' + n + (over ? '（超重！移动变慢）' : ''), 'loot');
@@ -1187,6 +1203,7 @@ function takeItem(id, n){
   n = n || 1;
   if(!S.inv[id] || S.inv[id] < n) return false;
   S.inv[id] -= n; if(S.inv[id] <= 0) delete S.inv[id];
+  if(ITEMS[id] && ITEMS[id].t === 'ammo') syncAmmo();
   return true;
 }
 function itemCount(id){ return S.inv[id] || 0; }
@@ -1837,7 +1854,7 @@ function combatResolve(kind, arg, staged){
     }
     if(!isGun && S.sta < (w.sta || 0)){ cbLog('体力不够挥不动了，先防御回气。', 'hurt'); drawCombat(); return; }
     if(isGun){
-      takeItem(aid, ammoCost); S.ammo = ammoCount(); S.stats.ammoUsed += ammoCost;   // M25：按口径消耗实弹
+      takeItem(aid, ammoCost); syncAmmo(); S.stats.ammoUsed += ammoCost;   // M25：按口径消耗实弹（M32b：镜像改由 syncAmmo 收口）
       S.noise += Math.max(0, (w.noise >= 3 ? 2 : 1) + modSum(wid, 'noise'));         // C22 消音器
       noiseCheck();                                                               // v3.0：噪音会招来迁徙尸群
       if(!staged) sfx('shoot');
@@ -2235,10 +2252,15 @@ function drawZone(id){
     '</div>' +
     '<div class="hint" style="margin-top:10px">当前行动力 ' + S.ap + '/' + S.apMax + ' · 负重 ' + carryWeight() + '/' + capWeight() + ' · 噪音 ' + S.noise + '</div>';
 }
+/* M32b：`ammo` 是 M25 之前的伪 id（背包里根本没有这条物品）。旧版 `grant('ammo')` 只加到 S.ammo
+   这个镜像上 → 商人卖它、委托奖它、掉落给它的结果全是"东西没了"。现在统一折成真弹再进背包：
+   手上枪是哪个口径就给哪个口径的弹（捡到的补给是你用得上的），没枪就 9mm FMJ。 */
 function grant(id, n, silent){
   n = n || 1;
-  if(id === 'ammo'){ S.ammo += n; if(!silent) log('📦 获得 弹药 ×' + n, 'loot'); return; }
+  id = resolveAmmoId(id, ITEMS, curCal());
+  if(!ITEMS[id]) return;                       // 兜底：未知 id 一律不进背包（旧版这里会静默吞掉）
   addItem(id, n, silent);
+  syncAmmo();
 }
 function searchZone(id, deep){
   if(S.over) return;
@@ -2457,6 +2479,7 @@ function equipItem(id){
 function equipWeapon(id){
   if(!isWpn(id) || !has(id)) return;
   S.eq.wpn = id;
+  syncAmmo();                                   // M32b：换了枪就换了口径，HUD 的弹药数要跟着换
   log('🗡️ 换上 ' + ITEMS[id].n + '（伤害 ' + ITEMS[id].dmg + (ITEMS[id].ammo ? ' · 弹药 ' + ITEMS[id].ammo + '/次' : ' · 体力 ' + (ITEMS[id].sta || 0) + '/次') + '）', 'info');
   render(); autosave();
 }
@@ -3372,30 +3395,41 @@ function merchantRate(){
 function openMerchant(){
   if(S.over) return;
   const rate = merchantRate();
-  const rows = MERCHANT.map((m, i) => {
-    const it = ITEMS[m.id] || { n:'弹药', desc:'复装的 9mm 弹药。' };
+  const row = (m, i) => {
+    const it = ITEMS[m.id] || { n: m.id, desc: '' };
     const n = m.n || 1;
-    const cost = Math.round(m.cost * rate);
+    const cost = shopPrice(m, rate);
     const left = shopLeft(m);
     const can = S.mat >= cost && left > 0;
     return '<div class="lrow"><div><div class="nm">' + it.n + ' ×' + n + ' <span class="tag ' + (left > 0 ? '' : 'wpn') + '">剩余 ' + left + '/' + (m.stock || 99) + '</span></div><div class="ds">' + (it.desc || '') + '</div></div>' +
       '<div class="rt"><span class="tag ' + (can ? 'key' : '') + '">🔩 ' + cost + '</span>' +
       '<button class="btn xs ' + (can ? 'ok' : '') + '" ' + (can ? '' : 'disabled') + ' onclick="buyMerchant(' + i + ')">' + (left <= 0 ? '今日售罄' : (can ? '购买' : '材料不足')) + '</button></div></div>';
-  }).join('');
-  modal({ title:'🏪 神秘商人', body:'<p class="muted" style="margin-bottom:10px">"末日里最贵的不是子弹，是还能说话的人。看看货？"</p>' + rows +
-    '<div class="hint" style="margin-top:10px">今日汇率 <b class="mono">×' + rate.toFixed(2) + '</b>（每天 +2%：外面越乱，他越敢开价）· 每样货每天有量，卖完等明天 · 当前材料：<b class="mono">' + S.mat + '</b></div>',
+  };
+  /* M32b：弹药单独一段（用户："没有各种不同的子弹卖"）——索引仍按 MERCHANT 原位置传，buyMerchant 不受影响 */
+  const ammoRows = MERCHANT.map((m, i) => ({ m, i })).filter(x => x.m.sec === 'ammo');
+  const gearRows = MERCHANT.map((m, i) => ({ m, i })).filter(x => x.m.sec !== 'ammo');
+  const cut = (t, list) => (list.length ? '<div class="sect-title">' + t + '</div>' + list.map(x => row(x.m, x.i)).join('') : '');
+  modal({ title:'🏪 神秘商人', body:'<p class="muted" style="margin-bottom:10px">"末日里最贵的不是子弹，是还能说话的人。看看货？"</p>' +
+    cut('🔩 弹药（按口径 · 穿透越高越贵）', ammoRows) + cut('🎒 物资与装备', gearRows) +
+    '<div class="hint" style="margin-top:10px">今日汇率 <b class="mono">×' + rate.toFixed(2) + '</b>（每天 +2%：外面越乱，他越敢开价）· 每样货每天有量，卖完等明天 · 当前材料：<b class="mono">' + S.mat + '</b><br>' +
+    '买到的弹药直接进背包的对应弹种：打装甲目标记得先换<b>穿甲弹</b>（背包 → 弹药 里装填）。</div>',
     footer:'<button class="btn" data-close>离开</button>' });
 }
 function buyMerchant(i){
-  const m = MERCHANT[i], n = m.n || 1;
-  const cost = Math.round(m.cost * merchantRate());
+  const m = MERCHANT[i];
+  /* M32b 兜底：坏货架（id 不在物品表里 / 价格数量不是正数）**不许成交**——
+     旧版就是"先扣材料、再 grant 一个不存在的 id"，玩家看到的是材料花了子弹没进包。 */
+  if(!m || badShopRows([m], ITEMS).length){ log('❌ 这件货有点问题（不在物品表里），这次先不成交。','danger'); return; }
+  const n = Math.max(1, m.n || 1);
+  const cost = shopPrice(m, merchantRate());
   if(shopLeft(m) <= 0){ log('❌ 这件货今天卖完了。','dim'); return; }
   if(S.mat < cost){ log('❌ 材料不够。','dim'); return; }
   S.mat -= cost;
   S.shop.bought[m.id] = (S.shop.bought[m.id] || 0) + 1;
   grant(m.id, n, true);
   sfx('loot');
-  log('🛒 购买 ' + (ITEMS[m.id] ? ITEMS[m.id].n : '弹药') + ' ×' + n + '（-' + cost + ' 材料）', 'loot');
+  log('🛒 购买 ' + itemName(m.id) + ' ×' + n + '（-' + cost + ' 材料）', 'loot');
+  addXP('trade', 3);                            // M24 承诺过"和商人买卖涨交易技能"，这里补上
   closeAllModals(); openMerchant(); render(); autosave();
 }
 
@@ -3528,6 +3562,7 @@ function initGame(fresh){
   log('💡 目标：活到第 ' + GOAL_DAY + ' 天（救援）。每 7 天一次血月，第 14 天断水断电。', 'info');
   log('💡 搜刮要先到那个地方（地图上点一下）；天黑前回不回得来，是你每天要算的账。', 'dim');
   discoverLore('l_the_one');
+  materializeAmmoPool();                        // M32b：开局那 24 发落成真弹（旧版它是 S.ammo 里的死数）
   render();
 }
 function boot(){
@@ -3554,6 +3589,7 @@ function boot(){
 Object.assign(window, { VER, SAVE_KEY, V1_KEY, ITEMS, itemName, isWpn, ZOMBIES, ZONES, BASE_UP, RECIPES, SKILLS, COMPANIONS, MERCHANT, LORE, ACHIEVEMENTS, AFFIX, BOUNTY_POOL, QUEST_BOUNTIES, SIDE_QUESTS, MODS, ZONE_SIL, newState, RM, BAK_KEY, writeSave, saveGame, autosave, readSavedRaw, lsGet, lsSet, sanitizeSave, MIGRATIONS, migrateSave, loadGame, confirmRestart, migrateV1, deepMerge, restoreBackup, $, $$, clamp, rnd, ri, chance, pick, wpick, esc, AUDIO_MAX, actx, AMB, ambStart, ambBlip, ambStop, ambMode, ambSync, MUS, MUS_MAX, CHORDS, PENTA, mtof, musicMood, musicTempo, musicVoice, musicNoiseHit, musicBar, musicStart, musicStop, musicSting, tone, arnd, noise, SFX, sfx, floatText, shake, toast, firstTip, award, addXP, log, clearLog, replayLog, hr, skillBonus, capWeight, carryWeight, encumbrance, armorTotal, addItem, takeItem, itemCount, has, ammoInMag, phaseName, spendAP, tickVitals, statMods, sleepNight, nightRaid, combatRepair, rescueEnding, recapHtml, TABS, renderTop, bar, renderHud, nextStep, renderTabs, setTab, render, baseLevel, modal, closeModal, closeAllModals, mkFoe, startCombat, openCombatModal, cbLog, drawCombat, battleTarget, siegePanelHtml, effDmg, combatAct, combatAfter, combatResolve, hitFoe, killFoe, afterPlayerTurn, companionTurn, foeTurn, endCombat, gameOver, restart, zoneOpen, zoneLockText, renderExplore, openZone, drawZone, grant, searchZone, applyFirst, lootItem, encounterRoll, survivorEvent, recruit, restHere, useConsumable, equipItem, equipWeapon, dropItem, deposit, withdraw, TYPE_LABEL, TYPE_TAG, renderInv, renderSideQuests, renderMods, renderCraft, craft, renderBase, scaledCost, build, renderSkills, QUEST_STAGES, questProgress, checkQuest, renderQuest, GOAL_DAY, MAP, WOUND_DEF, daysToHorde, nextEventText, threatLevel, travelCost, travelTo, goHome, defMax, defInit, repairDefense, TRAPS, buildTrap, hasWound, addWound, cureWound, woundTick, spoilTick, powerOff, raiseHorde, mapClick, renderMap, renderCalendar, noiseCheck, runScore, bountyBudget, bountyDef, metricValue, rollBounties, bountyTick, claimBounty, renderBounties, affixRoll, applyAffix, sideActive, sideTick, sideAdvance, sideNightCheck, modsOf, modSum, modMul, addMod, shopLeft, shopDayCheck, startFinalBattle, bossPhase2, finalVictory, enterEndless, renderCodex, discoverLore, renderStats, checkAch, merchantRate, openMerchant, buyMerchant, openMenu, openHelp, cheat, firstGesture, togglePace, toggleAmb, toggleMusic, initGame,
   /* M25：口径/弹种/辐射这几个查询函数被验收探针与将来的 UI 直接用，一并挂出去 */
   CALIBERS, AMMO_OF, ammoCount, loadedAmmo, setLoaded, cycleLoaded, penMul, radTier, apCapOf, fitnessApBonus, phaseOf, PHASE_LABEL,
+  syncAmmo, materializeAmmoPool, ammoShopRows,   // M32b：弹药镜像收口 + 货架弹药段（验收探针直接调）
   radLevelAt, radGain, radProtect, RAD_SOURCES, geigerText, boot });
 Object.defineProperty(window, "S", { get: function(){ return S; }, set: function(v){ S = v; }, configurable: true });
 Object.defineProperty(window, "battle", { get: function(){ return battle; }, set: function(v){ battle = v; }, configurable: true });

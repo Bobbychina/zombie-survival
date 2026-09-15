@@ -133,18 +133,22 @@ ok('切到背包页', /背包/.test(String(await tab('背包'))), '')
 await sleep(900)
 const swap = JSON.parse(await ev(`(() => {
   const before = loadedAmmo('c556')
-  const byName = (re) => [...document.querySelectorAll('#view .lrow')]
-    .filter(r => re.test((r.innerText || '').split('\\n')[0]))
-    .map(r => [...r.querySelectorAll('button')].find(b => /装填/.test(b.textContent || '')))[0]
-  const rows = [...document.querySelectorAll('#view .lrow')].map(r => (r.innerText || '').replace(/\\n+/g, ' / ').slice(0, 50))
-  const fmj = byName(/FMJ/), ap = byName(/AP/)
-  if (!fmj || !ap) return JSON.stringify({ before, err: 'no button', rows })
-  fmj.click()                                       // 自动挑的是穿甲弹 → 先手动换成普通弹
+  /* 注意（踩过的坑）：按"行首是 FMJ/AP"满页找会命中 **9mm** 那一段（M32b 起新档自带 9mm FMJ，
+     弹药区不再只有 5.56 一段），必须先把范围收进 "5.56×45" 那张卡里。 */
+  const sect = [...document.querySelectorAll('#view .card')]
+    .find(c => /5\\.56×45/.test(((c.querySelector('.row .nm') || {}).textContent || '')))
+  if (!sect) return JSON.stringify({ before, err: 'no 5.56 section' })
+  const btnOf = (re) => {
+    const row = [...sect.querySelectorAll('.lrow')].find(r => re.test(((r.querySelector('.nm') || {}).textContent || '')))
+    return row ? row.querySelector('button') : null
+  }
+  const rows = [...sect.querySelectorAll('.lrow')].map(r => (r.innerText || '').replace(/\\n+/g, ' / ').slice(0, 50))
+  const fmj0 = btnOf(/FMJ/)
+  if (!fmj0) return JSON.stringify({ before, err: 'no button', rows })
+  fmj0.click()                                      // 自动挑的是穿甲弹 → 先手动换成普通弹
   const mid = loadedAmmo('c556')
-  const apBtn = [...document.querySelectorAll('#view .lrow')]
-    .filter(r => /AP/.test((r.innerText || '').split('\\n')[0]))
-    .map(r => [...r.querySelectorAll('button')].find(b => /装填|已装填/.test(b.textContent || '')))[0]
-  apBtn.click()                                     // 再换回穿甲弹
+  const apBtn = btnOf(/AP/)                          // 点击会 render() 重建 DOM，必须重新查一次（旧节点已脱挂）
+  if (apBtn) apBtn.click()                           // 再换回穿甲弹
   const after = loadedAmmo('c556')
   return JSON.stringify({ before, mid, after, midPen: ITEMS[mid].pen, afterPen: ITEMS[after].pen })
 })()`))

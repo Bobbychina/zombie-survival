@@ -36,14 +36,15 @@ export function applyScale(): void {
     applyCardsZoom();
   } catch (e) { console.warn('[v4] 字号应用失败', e); }
 }
-/** 只给卡片区与地图窗上 zoom（别的容器不受影响） */
+/** 只给卡片区上 zoom（地图窗在 CSS 里已经 `zoom:var(--fs)` 了）。
+    M32.1：**地图卡不能再自己 zoom** —— `#v4world` 住在 `#v4mapwin` 里，两处都设 zoom 会**相乘**
+    （160% → 2.56×）：实测地图网格比窗口宽 110px（右列被切）、地图卡高 2091px（窗口才 1035），
+    fitMap 那套"按容器像素算格子"的账全部失真。一层 zoom 就够，窗口自己那份已经把标题/图例一起放大。 */
 export function applyCardsZoom(): void {
   const z = zoomNow();
   try {
     const board = document.getElementById('v4cards') as HTMLElement | null;
     if (board) board.style.zoom = z === 1 ? '' : String(z);
-    const world = document.getElementById('v4world') as HTMLElement | null;
-    if (world) world.style.zoom = z === 1 ? '' : String(z);
   } catch { /* 忽略 */ }
 }
 

@@ -18,6 +18,13 @@ import { ghostAt, placeGhosts, raidGhost } from './ghosts';
 import { ghostFoes } from './ghosts-core';
 import { pendingFragKeys, takeFragment } from './fragments';
 import { apCapOf, isBloodMoonDay, rest, restOptions, tierAt, syncApMax } from './night';
+/** M32.1：当前字号倍率（#v4world / #v4cards 上的 zoom）。这里不 import ui-scale（会和 main 形成
+    循环），走 main.ts 挂在 window 上的那份；拿不到就按 1 算。fitMap/fitRegion 用它把"像素下限"
+    换算成**渲染后**的尺寸 —— zoom 之后本地 24px 在 160% 下是 38px，窗口宽度却不会跟着变。 */
+const uiZoom = (): number => {
+  const z = Number((window as any).V4Scale?.zoomNow?.() ?? 1);
+  return (isFinite(z) && z > 0) ? z : 1;
+};
 /** M25.2：当前体能等级 —— 行动力上限的加成来源（每 3 级 +1，最多 +5），面板与地图必须用同一个数 */
 const fitLv = (): number => Number((L.S as any)?.skills?.fitness ?? 0);
 import { ensureEvac, evacAvailable, fireFlare } from './evac';
@@ -928,7 +935,13 @@ function fitMap() {
      假象：真正让地图塞得下的手段是方块尺寸**由列宽推导**（不再写死行高）+ 不在别处覆盖列宽。
      现在 byBox 算得准了，24px 也能塞进 512px 的地图框（24×24 + 2px 缝 = 622px 的内容，
      靠 .wcell 的 box-sizing:border-box 与 2px 缝的边界取整刚好收进容器）。 */
-  let cell = Math.max(24, Math.min(28, byBox, byW));
+  /* M32.1：格子下限/上限要按**渲染后**的像素算 —— #v4world 带 zoom，本地 24px 在 160% 下渲染成
+     38px，而悬浮窗的宽度是定死的，于是 24×24 的网格横向溢出（实测 57px，右列被切）；
+     高度同理会把窗口顶出屏幕。除以 zoom 之后屏幕上仍是 24~28px（R4 的点击命中区不变）。 */
+  const z = uiZoom();
+  const minCell = Math.max(10, Math.round(24 / z));
+  const maxCell = Math.max(minCell, Math.round(28 / z));
+  let cell = Math.max(minCell, Math.min(maxCell, byBox, byW));
   const apply = (c: number) => {
     const tpl = 'repeat(24, ' + c + 'px)';
     if (grid.style.gridTemplateColumns !== tpl) {
@@ -950,11 +963,11 @@ function fitMap() {
      而 `网格高 = 24c + 2×23(缝) + 2(边框取整)` 在 c 较小时余量给多了，导致 23px 明明塞得下却被判"还不 fit"。
      少留 2px 就能让循环收到 23px（格子肉眼无差、但整页/容器都不再滚）。 */
   const fitCell = (cur: number, over: number, rows = 24): number =>
-    Math.max(18, Math.min(cur, Math.floor((rows * cur + 44 - over - 48) / rows)));
+    Math.max(minCell, Math.min(cur, Math.floor((rows * cur + 44 - over - 48) / rows)));
   let guard = 6;
-  while (wrap.scrollWidth > wrap.clientWidth + 1 && cell > 18 && guard-- > 0) apply(--cell);   // 先保宽度不滚
+  while (wrap.scrollWidth > wrap.clientWidth + 1 && cell > minCell && guard-- > 0) apply(--cell);   // 先保宽度不滚
   guard = 6;
-  while (wrap.scrollHeight > wrap.clientHeight + 1 && cell > 18 && guard-- > 0) {
+  while (wrap.scrollHeight > wrap.clientHeight + 1 && cell > minCell && guard-- > 0) {
     const over = wrap.scrollHeight - wrap.clientHeight;
     const next = fitCell(cell, over);
     apply(next >= cell ? cell - 1 : next);
@@ -998,7 +1011,10 @@ function fitRegion(view: HTMLElement, card: HTMLElement, rgrid: HTMLElement) {
   const colCell = col ? Math.floor((col.clientHeight - 33) / 12) : 0;
   const byH = Math.floor(((wrap ? wrapH : availH - chrome - 33)) / 12);
   const byW = Math.floor(((col ? col.clientWidth : box.width) - 33) / 12);
-  let cell = Math.max(18, Math.min(72, Math.max(byH, byBox), byW, colCell || 999));
+  const z = uiZoom();                                   // M32.1：同样的"下限按渲染像素算"（见 fitMap）
+  const minRCell = Math.max(8, Math.round(18 / z));
+  const maxRCell = Math.max(minRCell, Math.round(72 / z));
+  let cell = Math.max(minRCell, Math.min(maxRCell, Math.max(byH, byBox), byW, colCell || 999));
   const apply = (c: number) => {
     const tpl = 'repeat(12, ' + c + 'px)';
     if (rgrid.style.gridTemplateColumns !== tpl) {
@@ -1015,7 +1031,7 @@ function fitRegion(view: HTMLElement, card: HTMLElement, rgrid: HTMLElement) {
      容器照样报不溢出，于是地图自己滚起来）。直接按 12 行 × 格子边长算需要多高。 */
   const needH = (c: number) => c * 12 + 3 * 11;
   let guard = 6;
-  while (wrap && needH(cell) > wrap.clientHeight - 16 && cell > 18 && guard-- > 0) apply(--cell);
+  while (wrap && needH(cell) > wrap.clientHeight - 16 && cell > minRCell && guard-- > 0) apply(--cell);
   /* 兜底：卡片整体（含图例）超出 #view 时继续收 —— 但 ≥1700px 那套布局里卡片高度是定死的，
      这条只在窄屏（地图与卡片上下排）才会真的触发。 */
   const padB = parseFloat(getComputedStyle(view).paddingBottom) || 0;
@@ -1023,8 +1039,8 @@ function fitRegion(view: HTMLElement, card: HTMLElement, rgrid: HTMLElement) {
     const cb = card.getBoundingClientRect();
     const vb = view.getBoundingClientRect();
     const over = Math.max(0, (cb.top - vb.top) + view.scrollTop + card.offsetHeight + padB + 2 - view.clientHeight);
-    if (over <= 0 || cell <= 18) break;
-    cell = Math.max(18, cell - Math.max(1, Math.ceil(over / 12)));
+    if (over <= 0 || cell <= minRCell) break;
+    cell = Math.max(minRCell, cell - Math.max(1, Math.ceil(over / 12 / z)));
     apply(cell);
   }
 }

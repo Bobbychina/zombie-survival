@@ -61,6 +61,27 @@ export function penMul(pen: number, armor: number): number {
   return Math.max(0.15, 1 - (armor - pen) * 0.18);
 }
 
+/** 杂牌弹药（旧版伪 id "ammo"）的兜底弹种：9mm FMJ —— 与 M25 存档迁移同一个折算口径 */
+export const GENERIC_AMMO = 'a9_fmj';
+
+/**
+ * M32b：旧版只有一个笼统的弹药池，掉落/委托/商人给的都是伪 id `ammo`，`grant()` 把它加到 `S.ammo`
+ * ——而 S.ammo 从 M25 起只是"当前装填弹种发数"的**镜像**（开一枪就被 `ammoCount()` 覆写），
+ * 于是"商人卖的子弹买了等于吞材料"。所以任何来源的 `ammo` 必须先折成**真弹**：
+ * 优先手上这把枪的口径（捡到的补给是你能用的），没枪就 9mm FMJ。
+ * @param items legacy 的 ITEMS 表（口径挂在物品上）
+ * @param cal 当前武器口径（可空）
+ */
+export function resolveAmmoId(
+  id: string,
+  items: Record<string, { t?: string; cal?: string; pen?: number; dmgMul?: number }>,
+  cal?: string | null,
+): string {
+  if (id !== 'ammo') return id;
+  const list = cal ? ammoOf(items, cal) : [];
+  return list.length ? list[0].id : GENERIC_AMMO;   // ammoOf 按穿透升序 → 取该口径最便宜的那种
+}
+
 /** 弹种的中文短名（"9mm 穿甲弹" → "穿甲弹"），HUD 一行放得下 */
 export function ammoShortName(name: string): string {
   return name.split(' ').pop() || name;

@@ -55,7 +55,10 @@ export function campRoster(seed: string, block: Block): NpcDef[] {
 
 const GOODS: { id: string; n: number; base: number }[] = [
   { id: 'can', n: 2, base: 20 }, { id: 'water', n: 2, base: 20 }, { id: 'bandage', n: 2, base: 22 },
-  { id: 'anti', n: 2, base: 30 }, { id: 'medkit', n: 1, base: 40 }, { id: 'ammo', n: 10, base: 28 },
+  { id: 'anti', n: 2, base: 30 }, { id: 'medkit', n: 1, base: 40 },
+  /* M32b：弹药按口径/弹种卖（旧版写的是伪 id 'ammo' —— grant 落到 S.ammo 镜像上，等于买了吞材料） */
+  { id: 'a9_fmj', n: 12, base: 30 }, { id: 'a12_buck', n: 8, base: 30 },
+  { id: 'a556_fmj', n: 10, base: 36 }, { id: 'a9_ap', n: 6, base: 48 },
   { id: 'fuel', n: 2, base: 26 }, { id: 'chip', n: 1, base: 34 }, { id: 'kevlar', n: 1, base: 110 },
   { id: 'machete', n: 1, base: 55 }, { id: 'shotgun', n: 1, base: 120 }, { id: 'gasmask', n: 1, base: 70 },
 ];

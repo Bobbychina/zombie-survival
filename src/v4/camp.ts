@@ -6,6 +6,7 @@ import { blockAt } from './worldgen';
 import { worldOf } from './worldstate';
 import { ensureSaveWorld, type SaveWorld } from './worldstate';
 import { campRoster, campStock, sellPrice, INTEL_PRICE, type NpcDef } from './npc';
+import { badShopRows } from './shop-core';    // M32b：成交前拦下"物品表里没有的 id"
 import { fragSpots } from './quest4';
 import type { Block } from '../types';
 
@@ -34,6 +35,11 @@ function buy(i: number) {
   const row = view.stock[i];
   if (!row) return;
   const S = L.S;
+  /* M32b 兜底：货架坏行（id 不在物品表里）不许成交——旧版商人的 "ammo" 伪 id 就是这么
+     "扣了材料、东西没进包"的，同一个坑不许再踩。 */
+  if (badShopRows([{ id: row.id, n: row.n, cost: row.cost }], L.ITEMS).length) {
+    L.toast('这件货有问题', '它不在物品表里，先别买。', 'bad'); return;
+  }
   const k = view.block.poi! + i;
   const left = s.stock?.[k] ?? row.stock;
   if (left <= 0) { L.toast('卖完了', '这一样今天没有了。', 'bad'); return; }
@@ -43,6 +49,7 @@ function buy(i: number) {
   s.stock = s.stock || {};
   s.stock[k] = left - 1;
   L.log('🧰 你花 ' + row.cost + ' 材料换了 ' + L.itemName(row.id) + ' ×' + row.n + '。', 'loot');
+  L.addXP('trade', 3);                       // M24 承诺"和商人买卖涨交易技能"，之前没人调过
   L.sfx('loot'); L.autosave(); refresh();
 }
 

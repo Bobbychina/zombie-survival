@@ -34,7 +34,16 @@ await send('Runtime.enable'); await send('Page.enable')
 await send('Network.enable'); await send('Network.setCacheDisabled', { cacheDisabled: true })
 await send('Emulation.setDeviceMetricsOverride', { width: 2048, height: 1105, deviceScaleFactor: 1, mobile: false })
 await send('Page.navigate', { url: url + '?dev=ready' }); await sleep(4200)
-await ev(`(() => { if (typeof render === 'function') render(); return 1 })()`); await sleep(600)
+/* 读档会恢复"上次停在哪一页"，所以先显式回到探索页 —— 否则量到的是别页的 DOM（cards=0）。 */
+await ev(`(() => { if (typeof setTab === 'function') setTab('explore'); if (typeof render === 'function') render(); return 1 })()`); await sleep(900)
+/* 等地图真的画完再量：悬浮窗里的图是"世界就绪后才挂上去"的，冷门区域首次生成会慢一点
+   （实测偶发第一帧还是空的）。这里最多等 12 秒，并把**实际等待时长**打出来 —— 它本身是个性能信号。 */
+let mapWaitMs = 0
+for (let i = 0; i < 30; i++) {
+  if (Number(await ev(`document.querySelectorAll('#v4world .wcell').length`)) >= 576) break
+  await sleep(400); mapWaitMs += 400
+}
+console.log('（地图首帧等待 ' + mapWaitMs + 'ms）')
 
 /* ── ① 地图搬进悬浮窗，且探索页整宽只剩卡片 ── */
 const layout = JSON.parse(await ev(`(() => {
@@ -70,16 +79,21 @@ ok('折叠后只留一个小条（可点开）', toggle.closed === true && toggl
 ok('在别的页签（制作/背包…）也能打开地图', toggle.opened === true && toggle.tab === 'craft', JSON.stringify(toggle))
 
 /* ── ③ 字号 5 档：card zoom 真的变了 ── */
-const scales = JSON.parse(await ev(`(() => {
+/* 注意（踩过的坑）：卡片墙是 MutationObserver 在**微任务**里重建的，所以 `setTab('explore')` 之后
+   必须在同一个 evaluate 里 await 一拍，否则读到的是"墙还没建"的空状态（zoom=none、cardW=0）——
+   这是探针的时序问题，不是产品问题。每一步都 await，量到的才是真实布局。 */
+const scales = JSON.parse(await ev(`(async () => {
   if (typeof setTab === 'function') setTab('explore')
   const out = []
   for (const fs of [100, 115, 130, 145, 160]) {
     window.V4Scale.set(fs)
+    await new Promise(r => setTimeout(r, 250))
     const cards = document.getElementById('v4cards')
     out.push({ fs, zoom: cards ? cards.style.zoom || '1' : 'none', cssVar: getComputedStyle(document.documentElement).getPropertyValue('--fs').trim(),
       cardW: cards ? Math.round(cards.querySelector('.v4card') ? cards.querySelector('.v4card').getBoundingClientRect().width : 0) : 0 })
   }
   window.V4Scale.set(100)
+  await new Promise(r => setTimeout(r, 250))
   return JSON.stringify({ out })
 })()`))
 const zs = scales.out.map(o => Number(o.zoom))
@@ -109,6 +123,27 @@ ok('160% 字号下没有横向溢出', big.overflowEls === 0, JSON.stringify({ o
 ok('160% 字号下整页不滚（只有容器内部滚）', Math.abs(big.pageScroll) <= 2, 'scroll=' + big.pageScroll)
 ok('160% 字号下地图格子仍是正方形', typeof big.mapAllSame === 'string' && big.mapAllSame !== 'uneven', String(big.mapAllSame))
 await shot('a1_map_float_160')
+
+/* ── ④b 悬浮窗自己在五档字号下都不能超出屏幕（M32.1：zoom 会把窗口的 px 也放大） ── */
+const fitScale = JSON.parse(await ev(`(async () => {
+  const out = []
+  for (const fs of [100, 115, 130, 145, 160]) {
+    window.V4Scale.set(fs)
+    await new Promise(r => setTimeout(r, 600))
+    const win = document.getElementById('v4mapwin')
+    const cells = document.querySelectorAll('#v4world .wcell')
+    const last = cells[cells.length - 1]
+    const wb = win.getBoundingClientRect(), lb = last ? last.getBoundingClientRect() : null
+    out.push({ fs, right: Math.round(wb.right), bottom: Math.round(wb.bottom), w: Math.round(wb.width), h: Math.round(wb.height),
+      inView: wb.left >= -1 && wb.top >= -1 && wb.right <= innerWidth + 1 && wb.bottom <= innerHeight + 1,
+      lastRight: lb ? Math.round(lb.right) : null, cellW: lb ? Math.round(lb.width) : null })
+  }
+  window.V4Scale.set(100); await new Promise(r => setTimeout(r, 500))
+  return JSON.stringify({ vp: innerWidth + 'x' + innerHeight, out })
+})()`))
+ok('五档字号下地图悬浮窗都不超出屏幕（右边/下边）', fitScale.out.every(o => o.inView), JSON.stringify({ vp: fitScale.vp, out: fitScale.out.map(o => o.fs + '%:' + o.w + 'x' + o.h + (o.inView ? '✅' : '❌')) }))
+ok('大字模式下最右一列没被切掉（整宽 24 列都在窗内）', fitScale.out.every(o => o.lastRight !== null && o.lastRight <= o.right + 2), JSON.stringify(fitScale.out.map(o => o.fs + '%:' + o.lastRight + '/' + o.right)))
+ok('大字模式下格子命中区仍 ≥23px（不会小到点不准）', fitScale.out.every(o => o.cellW >= 23), JSON.stringify(fitScale.out.map(o => o.fs + '%:' + o.cellW + 'px')))
 
 /* ── ⑤ 偏好持久化 + 大区图在悬浮窗里也能用 ── */
 const persist = JSON.parse(await ev(`(async () => {

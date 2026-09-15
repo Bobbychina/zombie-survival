@@ -288,6 +288,7 @@ async function main() {
     toggleMap: uiScale.toggleMap, mapOpen: uiScale.mapOpenNow, paintMap: uiScale.paintMapOverlay,
     buttons: uiScale.scaleButtonsHtml, status: uiScale.scaleStatusNow,
     applyCardsZoom: uiScale.applyCardsZoom,        // mountWorldPanel 每次重建卡片墙后都要补一次
+    zoomNow: uiScale.zoomNow,                      // M32.1：fitMap/fitRegion 按它把像素下限折回渲染尺寸
   };
   (V4 as any).uiScale = uiScale;
   uiScale.applyScale();

@@ -56,8 +56,12 @@
    用户要的是「悬浮框可折叠、在哪里都能开」+「十字大字适配」：地图不再占探索页的版面，
    而是右上角一个浮层，☰ 菜单/顶栏按钮/M 键都能开关，折叠后只剩一个小条。
    注意它**不在 #view 里**（挂在 body 下），所以不受卡片墙的排版/字号影响。 */
-#v4mapwin{position:fixed;top:calc(var(--beta-h,0px) + 52px);right:10px;z-index:60;
-  width:min(760px,calc(100vw - 20px));max-height:calc(100vh - var(--beta-h,0px) - 70px);
+/* M32.1：窗口**自己的尺寸也要除以 --fs** —— zoom 会把 CSS 里的 px 一起放大，
+   160% 时窗口渲染成 1.6×(100vh-70) = 1656px：比视口还高，右列与底部都被切（实测 rect 1656 / 视口 1105）。
+   同理 `width:760px` 会渲染成 1216px。除以倍率之后"渲染出来"的才是原本想要的 760px 宽 / 一屏高。 */
+#v4mapwin{position:fixed;top:calc((var(--beta-h,0px) + 52px) / var(--fs,1));right:10px;z-index:60;
+  width:min(calc(760px / var(--fs,1)),calc((100vw - 20px) / var(--fs,1)));
+  max-height:calc((100vh - var(--beta-h,0px) - 70px) / var(--fs,1));
   display:none;flex-direction:column;background:#0d1014;border:1px solid var(--line2,#2a3038);
   border-radius:10px;box-shadow:0 18px 50px rgba(0,0,0,.6);overflow:hidden}
 #v4mapwin.open{display:flex}
@@ -68,7 +72,7 @@
 /* 悬浮窗里的地图卡：去掉卡片自己的外边距与圆角（浮层已经有边框了），高度交给内容 */
 #v4mapwin #v4world{margin:0;border:0;border-radius:0;box-shadow:none;background:transparent;
   display:flex;flex-direction:column;height:auto;max-height:none;overflow:visible}
-#v4mapwin #v4world .wmapwrap{overflow:auto;max-height:calc(100vh - var(--beta-h,0px) - 210px)}
+#v4mapwin #v4world .wmapwrap{overflow:auto;max-height:calc((100vh - var(--beta-h,0px) - 210px) / var(--fs,1))}
 #v4mapwin .rgridwrap{overflow-x:auto}
 /* 折叠态：右上角只留一个可点的小条（不挡任何操作） */
 #v4mapbar{position:fixed;top:calc(var(--beta-h,0px) + 52px);right:10px;z-index:59;display:none;
@@ -88,8 +92,8 @@
 }
 /* 手机/窄屏：悬浮窗铺满（小屏上"悬浮"没有意义） */
 @media (max-width:720px){
-  #v4mapwin{left:8px;right:8px;width:auto;top:calc(var(--beta-h,0px) + 46px);
-    max-height:calc(100vh - var(--beta-h,0px) - 60px)}
+  #v4mapwin{left:8px;right:8px;width:auto;top:calc((var(--beta-h,0px) + 46px) / var(--fs,1));
+    max-height:calc((100vh - var(--beta-h,0px) - 60px) / var(--fs,1))}
 }
 /* M26：双列（地图钉左、卡片墙在右）以前写死 ≥1700px —— 用户说「你没适配别的分辨率」。
    按真实分辨率 × 浏览器缩放矩阵实测（docs/_m26_res_probe.mjs，15 档）改成：
