@@ -2104,6 +2104,10 @@ M27 的 15 步高亮教程解决的是"第一次不知道怎么点"，但**练�
   `tamperSticky.flagOnSave=true`（标记真的落进档了）、外来档 `good=ok / bad=mismatch` 且 `confirm=false` 时不覆盖本机、0 pageerror。
 - 回归电池（16 套）：m21 31/31、m24 全 ✓、m25 33/33、m26 errors: none、m27 12/12、m29 23/23、m30 20/20、m31 15/15、
   m32 17/17（批跑偶发一次，已加固）、m32b 19/19、m33 56/56、m34 24/24、m34b 11/11、m35 10/10、m36 9/9、m8 见上。
+- 上线与线上复核：游戏仓库 `9c53258`、pages `e8c9dfc`（`games/zombie-survival/index.html` 换成本地 HEAD+修复 的构建，
+  `games/account.js` 无内容 diff）。线上 `docs/_m36_audit.mjs` **21/21 ALL PASS**：
+  唯一一条 console error 是账号中继 `dsh-oauth-relay.bobby-minecraft.workers.dev/api/hit` 在本机网络下
+  `net::ERR_CONNECTION_TIMED_OUT`（环境问题，已在探针里单独归类、不打成产品错）。
 - 截图 OCR 复查：`docs/_m36_shots/audit/audit_boot2.png`（第二次启动的日志区应只见「🔒 校验通过」）与
   `docs/_m36_shots/{local-head,online}/a3_help_modal.png` 四块均无「彩蛋 / 作弊码」字样。
 
