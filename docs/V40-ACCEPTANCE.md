@@ -2152,3 +2152,54 @@ M27 的 15 步高亮教程解决的是"第一次不知道怎么点"，但**练�
   - **⑧C** 删掉密钥自检位（等价于换过浏览器 / 清过站点数据 / 密钥丢了）→ `keyOk=false`、判 `missing`、`tampered=false`、0 条告警。
 - 回归：`docs/_m8_integrity_probe.mjs` 依旧全绿（干净重载 `ok` / 改档 `mismatch` / 越界 `implausible` / 标记 `flagOnSave=true` /
   外来档 `good=ok`、`bad=mismatch` 且 `confirm=false` 不覆盖本机）；`docs/_m36_probe.mjs` **9/9**。
+
+---
+
+## 四十八、M37：通关好结局 → 进无尽模式「直接死 + 地图变旧版」（用户报障）
+
+### 现象与复现
+- 玩家原话：「不知道为啥通关好结局之后，到了无尽模式你会直接死，然后呢地图变成了旧版」。
+- 复现（`E:\Files\myagent\_diag_endless.mjs`，走**真实函数**而不是手搓旗标）：第 100 天有无线电 → `rescueEnding()`
+  → 点「进入无尽模式」→ `S.over` **仍然是 true**、`#view.className` 从 `v4-board` 变回空串、`#v4cards` 直接不存在
+  （地图却还有 576 个格子 —— 那就是"旧版地图"）。
+
+### 根因
+- `rescueEnding()`（第 100 天好结局）和 `gameOver()` 都会把 `S.over = true`（表示"本局已结束"），
+  而 `enterEndless()` 只置了 `flags.endless`、**没清 `S.over`**。
+- `S.over` 是整条 v4 世界层的总闸：`world-ui mountWorld` 的 `if (!S || S.over)` 会整块退出渲染（卡片墙不建、
+  地图退化），`travel()`（game.ts:2956）、`search()`、`night.ts` 的夜间结算也全部 early-return。
+  于是玩家看到的就是"进无尽 = 直接死"（动不了、HUD 还写着"你倒下了"）+"地图变旧版"。
+- 另一条同源路径：通关后死亡（`flags.won` + `over`）依旧能从任务页点「进入无尽模式」，进去是 0 血活死人。
+- 附带文案 bug：`over=true` 且已通关但**还活着**时，「下一步」一律说"你倒下了" —— 玩家以为档坏了。
+
+### 修法
+- 新增 `src/v4/endless-core.ts`（纯逻辑，按文件头约定 legacy 只 import、不重复实现）：
+  - `resumeFromOver(s)` —— 进无尽 = 重新开一局：清 `S.over`、行动力为 0 时补满、血为 0（从死亡界面点进来）救回**三成**
+    （`Math.round(hpMax * .3)`，最低 1；`!(hp > 0)` 判死亡，坏档的 NaN 也按死亡救回）。
+  - `endDayLabel(day, endless, goalDay)` —— 顶栏天数：无尽局不再出现"101 / 100"（看着像坏档），改「第 101 天 · 无尽」。
+  - `endGoalChip(endless, goalDay)` —— 日历目标牌：无尽局改「♾️ 无尽模式 · 难度随天数长」。
+  - `overHint({ won, endless, hp })` —— over 状态下的「下一步」：通关还活着 → 指路无尽模式（按钮直接点进）；
+    真死了才说"你倒下了"。
+- `enterEndless()` 调 `resumeFromOver(S)`，复活时补一行人话日志「💗 你在废墟里又睁开眼……」
+  （玩家能看懂"为什么我又能动了"）。
+
+### 实测证据
+- 单测 **`tests/m37-endless.test.ts` 15 例**（清 over / 三成血复活 / 秒血上限兜底 / 补 AP 但不白送 / NaN 档 / 天数与目标牌文案 /
+  over 提示分流 / 接线断言：`enterEndless` 必须走 `resumeFromOver`、`rescueEnding` 仍置 over）。全库 **464/464**（见下批总数）。
+- `docs/_m37_probe.mjs` **24/24 ALL PASS**（本地上线产物 + 线上各跑一遍，两侧一致）：
+  ① 好结局确实把本局置为"已结束"（over=true、世界面板收工 = 玩家看到的"地图变旧版"）；
+  ② 「下一步」不再说"你倒下了"、HUD 有可点的「进入无尽模式」；③ **点真按钮**（非直接调函数）后 over 被清掉、
+  卡片墙 + 576 格地图回来、顶栏「第 101 天 · 无尽」、日历换无尽牌；④ 结局卡能点「继续」关掉且关掉后卡片墙/地图
+  `getBoundingClientRect` 真有尺寸（不是 `display:none`）；⑤ 进无尽后地图能点着走路（行动力真扣、`over` 全程 false）；
+  ⑥ 睡过一夜到第 102 天**没死**（`over=false`、血 > 0、地图还在）；⑦ 刷新后仍是无尽局（标志落盘）；
+  ⑧ 从死亡界面（hp=0）进无尽 → 救回 30 血、地图立即恢复；⑨ 0 未捕获异常。
+- 截图 OCR 复查：`docs/_m37_shots/02_endless_map.png` 读到顶栏「第 101 天 · 无尽 天 清晨 行动力 14/14」+
+  「本局已通关」+ 地图格子详情（旧版症状消失）；`05_endless_after_death.png` 读到「第 44 天 · 无尽」+「生命 30/100」。
+- 回归电池（本轮相关）：m33 56/56、m32b 19/19、m32 17/17（批跑偶发一次，独立跑全绿）、m21/m25/m27/m29/m30/m31/m36 均全绿。
+- 上线：游戏仓库 `8e06b42`（代码 + 单测 + 探针）、`1d34b25`/`6a56500`/`46d7d4e`（干净 HEAD 构建的产物 + 截图 + 探针加固）；
+  pages `f71fc12`。线上复核 `docs/_m37_probe.mjs` **24/24 ALL PASS**（`https://bobbychina.github.io/games/zombie-survival/`）。
+
+### 已知问题
+- 通关但还没进无尽时，v4 世界面板本来就不渲染（"你已经离开这座城市了"），地图/卡片墙要等进无尽才回来；
+  本次只保证「下一步 + HUD 按钮」把玩家明确引到无尽模式，没改这个中间态的表现形式。
+- 顶栏无尽文案刻意压到 10 个字以内（原 "999 / 100" 同宽），避免窄屏把 HUD 撑破。
