@@ -108,7 +108,12 @@ const legacy = JSON.parse(await ev(`(async () => {
 })()`))
 ok('老版明文 base64 存档仍然能导入（向后兼容）', legacy.day === 66, JSON.stringify(legacy))
 
-/* ── ⑥ 大区难度场：三个硬约束 ── */
+/* ── ⑥ 大区难度场：三个硬约束 ──
+   必须先切到"大区地图"再量：本地视图里根本没有 .rcell2（线上探针第一版就在这儿量到 144 个 0）。 */
+await ev(`(() => { const b=[...document.querySelectorAll('#tabs .tab')].find(e=>/探索/.test(e.textContent||'')); if(b) b.click(); return 1 })()`)
+await sleep(700)
+await ev(`V4World.mapMode('region')`)
+await sleep(1400)
 const grid = JSON.parse(await ev(`(() => {
   const cells = document.querySelectorAll('#v4world .rcell2')
   const g = []
