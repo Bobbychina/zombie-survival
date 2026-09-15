@@ -100,11 +100,17 @@
 #v4mapwin .mwhead{display:flex;align-items:center;gap:8px;padding:8px 10px;
   border-bottom:1px solid var(--line,#232830);background:#11151b}
 #v4mapwin .mwhead .mwname{font-weight:600;color:var(--bone,#e9e5db);flex:1 1 auto;min-width:0}
-#v4mapwin .mwbody{overflow:auto;padding:0;min-height:0;-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+#v4mapwin .mwbody{flex:1 1 auto;overflow:auto;padding:0;min-height:0;-webkit-overflow-scrolling:touch;
+  overscroll-behavior:contain;touch-action:pan-x pan-y}
 /* 悬浮窗里的地图卡：去掉卡片自己的外边距与圆角（浮层已经有边框了），高度交给内容 */
 #v4mapwin #v4world{margin:0;border:0;border-radius:0;box-shadow:none;background:transparent;
   display:flex;flex-direction:column;height:auto;max-height:none;overflow:visible}
-#v4mapwin #v4world .wmapwrap{overflow:auto;max-height:calc((100vh - var(--v4-maptop,52px) - 158px) / var(--fs,1))}
+/* M40：地图窗里**只留一个滚动容器**（.mwbody）。这里原来还有一层
+   `max-height:calc((100vh - maptop - 158px)/var(--fs))`：158px 是"窗头 + 图例"的**写死常量**，
+   字号放大后窗头/图例本身也变高（渲染高度 = 158×fs），常量却没跟着走 —— 145%/160% 实测
+   窗口被顶出视口、里面还要再滚一次（80/166px），两层滚动条套在一起手感很糟。
+   现在网格自己不再滚（max-height:none / overflow:visible），要滚就滚整个地图卡。 */
+#v4mapwin #v4world .wmapwrap{overflow:visible;max-height:none}
 #v4mapwin .rgridwrap{overflow-x:auto}
 /* 折叠态：右上角只留一个可点的小条（不挡任何操作） */
 #v4mapbar{position:fixed;top:var(--v4-maptop,52px);right:10px;z-index:59;display:none;
@@ -118,16 +124,23 @@
    float（默认）= 上面那套右上角悬浮窗；inline = 嵌回探索页顶部（M32 之前的形态）。
    两种摆法共用同一张 #v4world，由 world-ui.mountWorldPanel 决定宿主，这里只负责显隐与字号。 */
 html[data-mapstyle="inline"] #v4mapwin{display:none!important}
-/* inline 时地图卡不在 #v4cards 里（它是 #view 的直接子节点），得自己补一次字号倍率 ——
-   M32.1 的教训：两处同时 zoom 会相乘，所以这里只在 inline 生效，绝不与 #v4cards 重叠。 */
-html[data-mapstyle="inline"] #v4world{zoom:var(--fs,1);margin-bottom:0}
+/* inline 时地图卡不在 #v4cards 里（它是 #view 的直接子节点）—— M40 起 #view 整体带 zoom，
+   这里**不能再补一次**（两处 zoom 会相乘，M32.1 踩过：160% → 2.56×）。 */
+html[data-mapstyle="inline"] #v4world{margin-bottom:0}
 /* inline + 地图：关 = 折叠（右上角那条可点的小条照旧出现 —— 两种摆法共用一套开合手感） */
 #view.mapfold>#v4world{display:none}
 /* M32：字号适配 —— `--fs` 是倍率（1.0 / 1.15 / …），只放大**内容**。
    legacy 的样式表里字号全是 px（几百处），一条条换 rem 既容易漏又会和"按像素算尺寸"的代码打架；
-   `zoom` 是整块等比放大（字号 + 间距 + 按钮命中区一起长），且不影响 vw/vh 与 fixed 定位。 */
-#v4cards{zoom:var(--fs,1)}
+   `zoom` 是整块等比放大（字号 + 间距 + 按钮命中区一起长），且不影响 vw/vh 与 fixed 定位。
+
+   M40 修：zoom 原来只加在 `#v4cards` 上 —— 只有**探索页的卡片墙**跟着字号走，
+   背包/任务/制作/据点/技能/图鉴/统计这些 legacy 页签（还有任务页的折叠条 `.v4arc>summary`）
+   完全不动，玩家在 160% 下切到背包就发现"字又变小了"（实测 `.lrow .nm` 恒 14px）。
+   现在把倍率提到 `#view`（所有页签的共同父容器），卡片墙与 inline 地图都不再自带 zoom。 */
+#view{zoom:var(--fs,1)}
 #v4mapwin{zoom:var(--fs,1)}
+/* M40：教程沙盒是独立全屏浮层（挂在 body 下），同样跟字号走 */
+#v4lab{zoom:var(--fs,1)}
 /* 大字模式下卡片更宽一点（每列 340px 在 130% 下只剩两列半，看着挤） */
 @media (min-width:1024px){
   #v4cards{columns:calc(340px * var(--fs,1))}
@@ -136,6 +149,22 @@ html[data-mapstyle="inline"] #v4world{zoom:var(--fs,1);margin-bottom:0}
 @media (max-width:720px){
   #v4mapwin{left:8px;right:8px;width:auto;top:calc(var(--v4-maptop,52px) / var(--fs,1));
     max-height:calc((100vh - var(--v4-maptop,52px) - 10px) / var(--fs,1))}
+}
+/* M40：触屏（手机/平板）的地图手感 ——
+   ① 单指拖动平移：滚动容器显式声明 pan-x pan-y（不加的话某些浏览器把拖动当成"选中/双击缩放"）；
+   ② 格子加大到 30px（手指点得准）：数值下限在 world-ui.fitMap 里按 (hover:none) 走 30 而不是 24；
+   ③ 触摸时给一格高亮反馈，玩家知道"我按的是哪一块"。 */
+@media (hover:none), (pointer:coarse){
+  #v4mapwin .mwbody,.v4world .wmapwrap{touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch}
+  /* 手机上 fitMap 经常"放弃"（卡片在窄屏是一长条，可用高度算不出 300px 以上）——
+     所以命中区下限在这里**用 CSS 兜底**：24 列 × minmax(26px,32px)，一屏放不下就左右单手拖。
+     `!important` 不能省：网格的列宽是**内联**写的（world-ui 的 repeat(24,1fr) / fitMap 的显式列宽），
+     不带 !important 的样式表规则压不过内联样式（实测手机上格子一直停在 18px）。 */
+  .v4world .wgrid{grid-template-columns:repeat(24,minmax(26px,32px))!important;justify-content:start!important;width:max-content}
+  .v4world .wcell{touch-action:manipulation;min-height:26px}
+  .v4world .wcell:active{border-color:var(--accent,#5cc8ff);background-image:linear-gradient(rgba(92,200,255,.18),rgba(92,200,255,.18))}
+  .v4world .wcell.seen:active{transform:none}
+  #v4mapwin .mwhead{padding:10px 12px}
 }
 /* M26：双列（地图钉左、卡片墙在右）以前写死 ≥1700px —— 用户说「你没适配别的分辨率」。
    按真实分辨率 × 浏览器缩放矩阵实测（docs/_m26_res_probe.mjs，15 档）改成：

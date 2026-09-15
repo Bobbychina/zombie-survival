@@ -46,12 +46,17 @@ const waitFor = async (expr, ms = 30000) => {
   return false
 }
 const goto = async () => { await send('Page.navigate', { url: pageUrl }); return waitFor(`typeof DEV !== 'undefined'`) }
+/* M40：地图摆法是**本机偏好**（M34 起默认悬浮窗），而本探针检查的全是"页内布局"（大区卡一屏装下、
+   #view 里的卡片墙…）。不锁定摆法的话，上一次跑过的会话/别的探针把偏好留在 float，
+   这里量到的就是悬浮窗里的那张卡 → 假红（实测栽过一次）。固定成 inline，让判定重新有意义。 */
+const forceInlineMap = `(() => { try { window.V4Scale && V4Scale.setMapStyle && V4Scale.setMapStyle('inline') } catch (e) {} return 1 })()`
 const toExplore = `(() => { const b = [...document.querySelectorAll('.tab, button')].find(e => /探索/.test(e.textContent||'')); if (b) b.click(); return 1; })()`
 
 /* 干净起步 */
 await waitFor(`typeof DEV !== 'undefined'`)
 await ev(`['zombie_survival_save_v2','zsv_worlds_v1','zsv_ghosts_v1','zsv_runs_v1','dsh.mapmode','dsh.regionlayer'].forEach(k => localStorage.removeItem(k)); sessionStorage.clear(); 1`)
 await goto()
+await ev(forceInlineMap); await sleep(900)
 ok('DEV 钩子可用（含 scanRegion）', (await ev(`typeof DEV !== 'undefined' && typeof DEV.scanRegion === 'function' && !!DEV.localWorld`)) === true)
 await ev(toExplore); await sleep(600)
 

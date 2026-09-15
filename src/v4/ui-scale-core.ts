@@ -57,6 +57,23 @@ export const zoomOf = (fs: number): number => clampFs(fs) / 100;
 export const cardsPerScreen = (viewH: number, cardH: number, fs: number): number =>
   Math.max(1, Math.floor(viewH / Math.max(80, cardH * zoomOf(fs))));
 
+/**
+ * M40：地图格子的目标边长（**渲染后**的像素 → 再折回"zoom 之前的本地像素"）。
+ *
+ * 为什么要有这条规则：命中区是给手指/鼠标用的，所以标准是"屏幕上看起来多大"：
+ *   - 鼠标 24~28px（M25.4 定的 R4 命中区）；
+ *   - 触屏 30~34px（2026-09 用户提的"手机单指地图拖动 + 触控尺寸"：24px 的方块点不准）。
+ * 地图卡带 zoom（`--fs`），样式里写的 px 会被放大 —— 所以要 `÷zoom` 才能保证"屏幕上仍是 30px"。
+ * 纯函数：world-ui 用它算 fitMap 的下限，单测直接钉住这几个数。
+ */
+export function cellTargets(coarse: boolean, zoom: number): { min: number; max: number } {
+  const z = (isFinite(zoom) && zoom > 0) ? zoom : 1;
+  const floor = coarse ? 30 : 24;
+  const ceil = coarse ? 34 : 28;
+  const min = Math.max(10, Math.round(floor / z));
+  return { min, max: Math.max(min, Math.round(ceil / z)) };
+}
+
 export interface PrefsStore { getItem(k: string): string | null; setItem(k: string, v: string): void }
 
 export const DEFAULT_PREFS: UiPrefs = { fs: 100, mapOpen: true, mapStyle: 'float' };

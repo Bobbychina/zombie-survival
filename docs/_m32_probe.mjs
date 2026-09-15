@@ -39,8 +39,10 @@ await ev(`(() => { if (typeof setTab === 'function') setTab('explore'); if (type
 /* 等地图真的画完再量：悬浮窗里的图是"世界就绪后才挂上去"的，冷门区域首次生成会慢一点
    （实测偶发第一帧还是空的）。这里最多等 12 秒，并把**实际等待时长**打出来 —— 它本身是个性能信号。
    M36：连跑多套探针时这里偶发 cells=0（回归电池批跑实测栽过一次，单独跑 17/17）——
-   多半是上一支探针把页签/悬浮窗留在了别的状态，所以先把"探索页 + 悬浮窗开着"按下去再等。 */
-await ev(`(() => { try { closeAllModals(); setTab('explore') } catch {} ; try { window.V4Scale && V4Scale.setMapStyle && V4Scale.setMapStyle('float') } catch {} ; try { window.V4Scale && V4Scale.toggleMap && V4Scale.toggleMap(true) } catch {} ; return 1 })()`)
+   多半是上一支探针把页签/悬浮窗留在了别的状态，所以先把"探索页 + 悬浮窗开着"按下去再等。
+   M40：再加一条 —— 地图有**本地/大区**两种模式，模式存在 localStorage（`dsh.mapmode`）里，
+   别的探针/诊断把大区图留在那儿时这里的 `.wcell` 就是 0（本轮实测栽过）。开场强制回本地图。 */
+await ev(`(() => { try { closeAllModals(); setTab('explore') } catch {} ; try { window.V4Scale && V4Scale.setMapStyle && V4Scale.setMapStyle('float') } catch {} ; try { window.V4Scale && V4Scale.toggleMap && V4Scale.toggleMap(true) } catch {} ; try { window.V4World && V4World.mapMode && V4World.mapMode('local') } catch {} ; return 1 })()`)
 await sleep(800)
 let mapWaitMs = 0
 for (let i = 0; i < 30; i++) {

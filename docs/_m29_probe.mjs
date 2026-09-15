@@ -96,15 +96,18 @@ const menu = JSON.parse(await ev(`(() => {
   const ov = [...document.querySelectorAll('.modal')].find(m => /☰ 菜单/.test(m.innerText || ''))
   const txt = ov ? ov.innerText : ''
   const btns = ov ? [...ov.querySelectorAll('button')].map(b => b.textContent.trim()) : []
-  /* 判定看**按钮**不看正文：正文里明确写了"不再提供导出明文存档"，那是说明不是入口 */
+  /* 判定看**按钮**不看正文：正文里写了"口令加密"这类说明，那是解释不是入口。
+     M39 更新：菜单多了「🔐 导出 / 导入（口令）」—— 但 M29 的**意图**（不许出现明文导出入口）不变，
+     所以这里改成"要么没有导出入口，要么导出入口必须是口令加密的"，并把明文两个字也一起守住。 */
   const has导出按钮 = btns.some(b => /导出/.test(b))
   const has导入按钮 = btns.some(b => /导入/.test(b))
+  const 口令加密 = btns.filter(b => /导出/.test(b)).every(b => /口令/.test(b)) && btns.filter(b => /导入/.test(b)).every(b => /口令/.test(b))
   closeAllModals()
-  return JSON.stringify({ has导出按钮, has导入按钮, 提到不再提供: /不再提供/.test(txt), has回滚: btns.some(b => /回滚/.test(b)), btns })
+  return JSON.stringify({ has导出按钮, has导入按钮, 口令加密, 提到不再提供: /不再提供|口令/.test(txt), has回滚: btns.some(b => /回滚/.test(b)), btns })
 })()`))
-ok('菜单里没有「导出存档」按钮了', menu.has导出按钮 === false, JSON.stringify(menu.btns))
-ok('菜单里没有「导入存档」按钮了', menu.has导入按钮 === false)
-ok('菜单正文说明了"不再提供导出明文存档"', menu.提到不再提供 === true)
+ok('菜单里没有「导出存档」这种明文入口（M39 起是「口令加密」导出）', menu.has导出按钮 === false || menu.口令加密, JSON.stringify(menu.btns))
+ok('菜单里没有「导入存档」这种明文入口（M39 起是「口令加密」导入）', menu.has导入按钮 === false || menu.口令加密)
+ok('菜单正文说明了存档加密与搬档方式（不再有明文导出）', menu.提到不再提供 === true && !/导出明文/.test(JSON.stringify(menu.btns)))
 ok('菜单里有「🛟 回滚备份」（本机加密备份）', menu.has回滚 === true)
 await ev(`openMenu()`); await sleep(500); await shot('61_menu_no_export'); await ev(`closeAllModals()`)
 

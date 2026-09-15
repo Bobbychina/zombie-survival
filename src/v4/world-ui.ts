@@ -12,6 +12,7 @@ import {
   META_COLS, META_ROWS, MAX_HOPS, REGIONS, REGION_TYPES as TYPES, TYPE_INFO, dangerColor, dangerLabel, homeRegion,  metaGrid, planRegionTrip, regionById, regionName, typeColor, typeLabel, type RegionDef,
 } from './regions-core';
 import { poiLeft, searchPoi } from './search';
+import { cellTargets } from './ui-scale-core';   // M40：地图格子的目标边长（纯函数，含触屏 30px 命中区）
 import { lastRegionEvent, onEnterRegion } from './region-events';
 import { regionHazardTitles } from './region-events-core';
 import { ghostAt, placeGhosts, raidGhost } from './ghosts';
@@ -28,6 +29,11 @@ const uiZoom = (): number => {
 /** M34：地图摆法（float=右上角悬浮窗 / inline=探索页顶部）。理由同 uiZoom —— 不 import ui-scale，走 window 上那份。 */
 const prefsMapStyle = (): 'float' | 'inline' => {
   try { return (window as any).V4Scale?.mapStyle?.() === 'inline' ? 'inline' : 'float'; } catch { return 'float'; }
+};
+/** M40：是不是触屏（手机/平板）—— 决定地图格子的点击命中区（手指 24px 太难点）。
+ *  用 `(hover:none), (pointer:coarse)` 而不是 UA 判断：平板接鼠标、手机接键盘都能正确分流。 */
+const coarsePointer = (): boolean => {
+  try { return typeof matchMedia === 'function' && matchMedia('(hover:none), (pointer:coarse)').matches; } catch { return false; }
 };
 /** M25.2：当前体能等级 —— 行动力上限的加成来源（每 3 级 +1，最多 +5），面板与地图必须用同一个数 */
 const fitLv = (): number => Number((L.S as any)?.skills?.fitness ?? 0);
@@ -441,6 +447,10 @@ export function renderMapPanel(): string {
   /* M19：本地地图也能切"危险度上色"——"越深越红"这件事，一眼就该看得出来 */
   const localDanger = regionLayer === 'danger';
   h += layerTabs();
+  /* M40：`repeat(24,1fr)` 保持"能缩"（窄容器里 24 列会一起缩到 11.8px，不会横向溢出；
+     桌面宽屏则由 fitMap 用内联列宽接管到 24~28px）。触屏要的"26px 起、可以单指拖"写在
+     样式表的 `@media (hover:none)` 里，并且带 `!important` —— 内联样式压得过普通样式表规则，
+     不带 !important 那条媒体查询永远生效不了（实测手机上格子一直 18px）。 */
   h += '<div class="wmapwrap"><div class="wgrid' + (localDanger ? ' rl-danger' : '') + '" style="grid-template-columns:repeat(' + WORLD_W + ',1fr)">';
   for (let y = 0; y < WORLD_H; y++) for (let x = 0; x < WORLD_W; x++) {
     const bb = blockAt(w, x, y);
@@ -949,7 +959,13 @@ function fitMap() {
   const cardBox = card.getBoundingClientRect();
   const viewBox = view.getBoundingClientRect();
   const chrome = cardBox.height - wrap.getBoundingClientRect().height;   // 标题行/预览条/悬停行/图例/内边距
-  const avail = viewBox.bottom - cardBox.top - chrome - 8;
+  /* M40：可用高度要按**卡片所在的宿主**量，不能永远拿 #view 算。
+     float 摆法下地图卡住在悬浮窗里（body 之外），#view 在手机上还被日志栏压到很矮：
+     实测 390×844 时 `viewBox.bottom - cardBox.top - chrome` ≈ 222 < 300 → fitMap 直接放弃，
+     格子停在 CSS 默认的 18px、网格 478px 溢出 342px 的框（横竖都在滚）。改成量宿主（.mwbody）之后
+     手机上也会走 fit，触屏的 30px 命中区才真正生效。 */
+  const hostBox = (card.parentElement || view).getBoundingClientRect();
+  const avail = Math.min(viewBox.bottom, hostBox.bottom) - cardBox.top - chrome - 8;
   if (avail < 300) return;                                             // 太窄就不折腾，交给容器自己滚
   /* M25.4：预算取 `.wmapwrap` 的**实际高度**（它是 flex:1，卡片高度定死时它才是真可用高度）。
      上面那个 avail 是按"卡片比视口矮多少"倒推的，在"卡片高度=视口高度、内部 flex 分配"
@@ -966,8 +982,10 @@ function fitMap() {
      38px，而悬浮窗的宽度是定死的，于是 24×24 的网格横向溢出（实测 57px，右列被切）；
      高度同理会把窗口顶出屏幕。除以 zoom 之后屏幕上仍是 24~28px（R4 的点击命中区不变）。 */
   const z = uiZoom();
-  const minCell = Math.max(10, Math.round(24 / z));
-  const maxCell = Math.max(minCell, Math.round(28 / z));
+  /* M40：触屏把点击命中区从 24px 提到 30px（手指点 24px 的方块就是在赌运气）。
+     下限仍然按**渲染后**的像素算（除以 zoom），所以 160% 下屏幕上依旧是 30px。
+     规则本体在 ui-scale-core.cellTargets（纯函数、有单测），这里只负责"是不是触屏"。 */
+  const { min: minCell, max: maxCell } = cellTargets(coarsePointer(), z);
   let cell = Math.max(minCell, Math.min(maxCell, byBox, byW));
   const apply = (c: number) => {
     const tpl = 'repeat(24, ' + c + 'px)';

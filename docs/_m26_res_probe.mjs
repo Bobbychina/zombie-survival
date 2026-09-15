@@ -57,6 +57,10 @@ for (const [label, w, h, z] of CASES) {
   await send('Page.navigate', { url: pageUrl })
   await sleep(3200)
   await ev(`(() => { const b=[...document.querySelectorAll('#tabs .tab')].find(e=>/探索/.test(e.textContent||'')); if(b) b.click(); return 1 })()`)
+  await sleep(400)
+  /* M40：本探针检查的是"地图作为页内一列"的布局（M34 起默认改成悬浮窗了），所以固定成 inline 摆法。
+     不锁的话偏好会跟着别的探针/会话变 → 量到浮动窗里的卡，判定没意义（实测 125% 那档假红过一次）。 */
+  await ev(`(() => { try { window.V4Scale && V4Scale.setMapStyle && V4Scale.setMapStyle('inline') } catch (e) {} return 1 })()`)
   await sleep(1100)
   const r = JSON.parse(await ev(`(() => {
     const de = document.scrollingElement
