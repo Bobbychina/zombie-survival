@@ -2,7 +2,7 @@
    会议把 S1 定为 C01+C02 的准入门槛，所以这里不是"顺手补的测试"，而是门槛本身。 */
 import { describe, expect, it } from 'vitest';
 import { generateWorld } from '../src/v4/worldgen';
-import { AP_MAX_BASE, DEBT_CAP, DEBT_HEAL_BASE, DEBT_PER_FIELD, FIELD_RESTORE, apCapOf, apMaxOf, fitnessApBonus, raidChance } from '../src/v4/night-core';
+import { AP_MAX_BASE, DEBT_CAP, DEBT_HEAL_BASE, DEBT_PER_FIELD, FIELD_RESTORE, PHASE_DUSK_AT, PHASE_NIGHT_AT, apCapOf, apMaxOf, fitnessApBonus, phaseOf, raidChance } from '../src/v4/night-core';
 import { evacSite, evacOpenDay, evacAvailable, evacGate, EVAC_DAY } from '../src/v4/evac-gate';
 
 /** 连续野睡 N 夜：返回每天的 AP 上限与行动力 */
@@ -76,6 +76,30 @@ describe('S1 敏感度矩阵：过夜参数必须过三条及格线', () => {
     expect(apCapOf(DEBT_CAP, 0)).toBe(AP_MAX_BASE - DEBT_CAP);
     // 债扣一档 = 少 1 点；体能补 1 点 —— 两者可以抵消，但体能补不满债
     expect(apCapOf(3, 3)).toBeLessThan(apCapOf(0, 3));
+  });
+
+  /* M25.3：用户接着说「我的意思是天黑的太早了」。把"天黑得多早"变成可测的曲线：
+     ① 白天必须占掉大部分行动（不然玩家全天在暗色里做任务）
+     ② 天黑之后还要留得出 1~2 点的收尾空间（否则"天黑"就只是个瞬间）
+     ③ 上限变化（14 → 19）时比例不变 —— 这条正是旧版写死 1/3/5 点会踩的坑。 */
+  it('⑥ M25.3 白天占大头：黄昏 ≥70%、夜晚 ≥85%，且随行动力上限等比缩放', () => {
+    expect(PHASE_DUSK_AT).toBeGreaterThanOrEqual(0.7);
+    expect(PHASE_NIGHT_AT).toBeGreaterThanOrEqual(0.85);
+    for (const cap of [14, 16, 19, 11]) {
+      const duskAt = Math.round(cap * PHASE_DUSK_AT);
+      const nightAt = Math.round(cap * PHASE_NIGHT_AT);
+      expect(phaseOf(0, cap)).toBe('dawn');
+      expect(phaseOf(Math.max(1, Math.round(cap * 0.07)), cap)).toBe('dawn');
+      expect(phaseOf(duskAt, cap)).toBe('day');            // 黄昏的门槛之前都还是白天
+      expect(phaseOf(duskAt + 1, cap)).toBe('dusk');
+      expect(phaseOf(nightAt, cap)).toBe('dusk');
+      expect(phaseOf(nightAt + 1, cap)).toBe('night');
+      expect(phaseOf(cap, cap)).toBe('night');             // 行动力见底 = 夜里
+      // 收尾空间：天黑之后至少还能做 1 件事（4 点以内），也不能长到"天黑没意义"（>5 点）
+      const tail = cap - nightAt;
+      expect(tail).toBeGreaterThanOrEqual(1);
+      expect(tail).toBeLessThanOrEqual(5);
+    }
   });
 
   it('参数落在一处（改常量就能整体调难度）', () => {

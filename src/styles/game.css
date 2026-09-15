@@ -235,12 +235,14 @@
   .hint{font-size:11px;color:var(--dim);line-height:1.7}
   kbd{font-family:var(--mono);font-size:10px;border:1px solid var(--line2);border-bottom-width:2px;padding:0 4px;border-radius:3px;color:var(--ink);background:#171a20}
 
-  /* C12 昼夜色温层：只用 DOM 层 background-color 过渡，永不引入全屏 filter/backdrop-blur */
+  /* C12 昼夜色温层：只用 DOM 层 background-color 过渡，永不引入全屏 filter/backdrop-blur。
+     M25.3：用户说「天黑的太早了」——除了时段阈值往后推，这层暗色也压轻一档：
+     黄昏从 13% 降到 8%、夜晚从 24% 降到 16%。昼夜是**氛围**，不该像关灯。 */
   #daytint{position:fixed;inset:0;pointer-events:none;z-index:68;background-color:rgba(0,0,0,0);transition:background-color 1.4s linear}
-  #daytint.t-dawn{background-color:rgba(118,158,208,.10)}
+  #daytint.t-dawn{background-color:rgba(118,158,208,.08)}
   #daytint.t-day{background-color:rgba(0,0,0,0)}
-  #daytint.t-dusk{background-color:rgba(214,120,60,.13)}
-  #daytint.t-night{background-color:rgba(18,26,66,.24)}
+  #daytint.t-dusk{background-color:rgba(214,120,60,.08)}
+  #daytint.t-night{background-color:rgba(18,26,66,.16)}
   #daytint.no-t{transition:none}
 
   @media (max-width:860px){

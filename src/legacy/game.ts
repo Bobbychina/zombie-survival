@@ -3,7 +3,7 @@
 // M25 例外：辐射的分档/累积公式在 src/v4/rad-core.ts（纯逻辑、可单测），这里只 import 公式，不重复实现。
 import { radTier, radGain, radLevelAt, radProtect, RAD_SOURCES, geigerText } from '../v4/rad-core';
 import { CALIBERS, penMul, ammoTable, pickLoadedAmmo, ammoShortName } from '../v4/ammo-core';
-import { apCapOf, fitnessApBonus } from '../v4/night-core';   // M25.2：行动力上限（睡眠债 + 体能）
+import { apCapOf, fitnessApBonus, phaseOf, PHASE_LABEL } from '../v4/night-core';   // M25.2：行动力上限（睡眠债 + 体能）；M25.3：白昼曲线
 
 
 /* ═══════════ legacy/00-data.js ═══════════ */
@@ -1134,14 +1134,14 @@ function ammoInMag(){ return S.ammo; }
 
 /* ───────────── 时段 / 行动力 / 昼夜 ───────────── */
 /* M25.2：一天从 9 点提到 14 点（用户：「一天也太短了」），所以时段阈值改成**按比例**
-   （清晨 1/16、白天 6/16、黄昏 9/16），以后调 AP_MAX_BASE 不用再回来改这三个数。 */
+   （清晨 7%、黄昏 71%、夜晚 86%），以后调 AP_MAX_BASE 不用再回来改这三个数。
+   M25.3：用户接着说「我的意思是天黑的太早了」—— 14 点里旧阈值（57%/71%）等于**一半以上的
+   行动都在黄昏和黑夜里做**，屏幕一直压着一层暗色（那不是他的本意）。所以把黄昏推到 71%、
+   夜晚留到 86%：一整天里前 10 点（14 点制的 7~10 点）都是白天，天黑只是最后 2 点收尾。 */
 function apCapNow(){ return Math.max(1, S.apMax || 14); }
 function phaseName(){
-  const used = apCapNow() - S.ap, cap = apCapNow();
-  if(used <= Math.max(1, Math.round(cap * 0.07))) return ['清晨','day'];
-  if(used <= Math.round(cap * 0.38)) return ['白天','day'];
-  if(used <= Math.round(cap * 0.56)) return ['黄昏','dusk'];
-  return ['夜晚','night'];
+  const p = phaseOf(apCapNow() - S.ap, apCapNow());     // M25.3：曲线真值在 night-core（可单测）
+  return [PHASE_LABEL[p], p === 'dawn' ? 'day' : p];
 }
 function spendAP(n, label){
   n = n || 1;
@@ -3428,7 +3428,7 @@ function boot(){
 /* ── C23 工程加固：显式导出（内联 onclick 与外部验证脚本依赖这些名字）── */
 Object.assign(window, { VER, SAVE_KEY, V1_KEY, ITEMS, itemName, isWpn, ZOMBIES, ZONES, BASE_UP, RECIPES, SKILLS, COMPANIONS, MERCHANT, LORE, ACHIEVEMENTS, AFFIX, BOUNTY_POOL, QUEST_BOUNTIES, SIDE_QUESTS, MODS, ZONE_SIL, newState, RM, BAK_KEY, writeSave, saveGame, autosave, lsGet, lsSet, sanitizeSave, MIGRATIONS, migrateSave, loadGame, confirmRestart, migrateV1, deepMerge, exportSave, importSave, $, $$, clamp, rnd, ri, chance, pick, wpick, esc, AUDIO_MAX, actx, AMB, ambStart, ambBlip, ambStop, ambMode, ambSync, MUS, MUS_MAX, CHORDS, PENTA, mtof, musicMood, musicTempo, musicVoice, musicNoiseHit, musicBar, musicStart, musicStop, musicSting, tone, arnd, noise, SFX, sfx, floatText, shake, toast, firstTip, award, addXP, log, clearLog, replayLog, hr, skillBonus, capWeight, carryWeight, encumbrance, armorTotal, addItem, takeItem, itemCount, has, ammoInMag, phaseName, spendAP, tickVitals, statMods, sleepNight, nightRaid, combatRepair, rescueEnding, recapHtml, TABS, renderTop, bar, renderHud, nextStep, renderTabs, setTab, render, baseLevel, modal, closeModal, closeAllModals, mkFoe, startCombat, openCombatModal, cbLog, drawCombat, battleTarget, siegePanelHtml, effDmg, combatAct, combatAfter, combatResolve, hitFoe, killFoe, afterPlayerTurn, companionTurn, foeTurn, endCombat, gameOver, restart, zoneOpen, zoneLockText, renderExplore, openZone, drawZone, grant, searchZone, applyFirst, lootItem, encounterRoll, survivorEvent, recruit, restHere, useConsumable, equipItem, equipWeapon, dropItem, deposit, withdraw, TYPE_LABEL, TYPE_TAG, renderInv, renderSideQuests, renderMods, renderCraft, craft, renderBase, scaledCost, build, renderSkills, QUEST_STAGES, questProgress, checkQuest, renderQuest, GOAL_DAY, MAP, WOUND_DEF, daysToHorde, nextEventText, threatLevel, travelCost, travelTo, goHome, defMax, defInit, repairDefense, TRAPS, buildTrap, hasWound, addWound, cureWound, woundTick, spoilTick, powerOff, raiseHorde, mapClick, renderMap, renderCalendar, noiseCheck, runScore, bountyBudget, bountyDef, metricValue, rollBounties, bountyTick, claimBounty, renderBounties, affixRoll, applyAffix, sideActive, sideTick, sideAdvance, sideNightCheck, modsOf, modSum, modMul, addMod, shopLeft, shopDayCheck, startFinalBattle, bossPhase2, finalVictory, enterEndless, renderCodex, discoverLore, renderStats, checkAch, merchantRate, openMerchant, buyMerchant, openMenu, openHelp, cheat, firstGesture, togglePace, toggleAmb, toggleMusic, initGame,
   /* M25：口径/弹种/辐射这几个查询函数被验收探针与将来的 UI 直接用，一并挂出去 */
-  CALIBERS, AMMO_OF, ammoCount, loadedAmmo, setLoaded, cycleLoaded, penMul, radTier, apCapOf, fitnessApBonus,
+  CALIBERS, AMMO_OF, ammoCount, loadedAmmo, setLoaded, cycleLoaded, penMul, radTier, apCapOf, fitnessApBonus, phaseOf, PHASE_LABEL,
   radLevelAt, radGain, radProtect, RAD_SOURCES, geigerText, boot });
 Object.defineProperty(window, "S", { get: function(){ return S; }, set: function(v){ S = v; }, configurable: true });
 Object.defineProperty(window, "battle", { get: function(){ return battle; }, set: function(v){ battle = v; }, configurable: true });

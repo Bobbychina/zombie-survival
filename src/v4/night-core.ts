@@ -28,6 +28,26 @@ export const fitnessApBonus = (fitnessLevel: number) =>
   Math.max(0, Math.min(5, Math.floor(Math.max(0, Number(fitnessLevel) || 0) / 3)));
 /** 含体能加成的行动力上限 */
 export const apCapOf = (debt: number, fitnessLevel = 0) => apMaxOf(debt) + fitnessApBonus(fitnessLevel);
+
+/* ── M25.3：白昼曲线（用户：「我的意思是天黑的太早了」）──
+   时段是按"这一天用掉了多少行动力"推的，所以阈值必须是**比例**：以前写死 1/3/5 点，
+   一天从 9 点改成 14 点之后，黄昏/黑夜直接吃掉一半以上的行动（屏幕长期压一层暗色）。
+   现在黄昏落在 71%、夜晚落在 86%：一整天里前面大段都是白天，天黑只是最后 2 点收尾。 */
+export type DayPhase = 'dawn' | 'day' | 'dusk' | 'night';
+export const PHASE_DUSK_AT = 0.71;
+export const PHASE_NIGHT_AT = 0.86;
+/** 该时段的中文名（legacy 的 renderTop / 探索页标题都用它） */
+export const PHASE_LABEL: Record<DayPhase, string> = { dawn: '清晨', day: '白天', dusk: '黄昏', night: '夜晚' };
+
+/** 按"已用行动力 / 上限"给出时段。放这里是为了让"天黑得多早"这件事**可以被测试钉住**。 */
+export function phaseOf(used: number, cap: number): DayPhase {
+  const c = Math.max(1, cap || 1);
+  const u = Math.max(0, used);
+  if (u <= Math.max(1, Math.round(c * 0.07))) return 'dawn';
+  if (u <= Math.round(c * PHASE_DUSK_AT)) return 'day';
+  if (u <= Math.round(c * PHASE_NIGHT_AT)) return 'dusk';
+  return 'night';
+}
 export const isBloodMoonDay = (day: number) => day % 7 === 0;
 
 /** 过夜后的债：安全屋还 2 档，野外涨半档 */
