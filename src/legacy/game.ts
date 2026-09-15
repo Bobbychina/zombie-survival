@@ -532,8 +532,12 @@ const RM = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduc
    备份（.bak）也是密文，供"主档写坏"时在 ☰ 菜单里回滚。 */
 const BAK_KEY = SAVE_KEY + '.bak';
 window.__renderErr = null;
+/** M33：教程沙盒（iframe ?sandbox=1）—— 平行世界，**一个字节都不许落盘**。
+    所有落盘都过 writeSave 这一个口子，所以在它头上拦一刀就够了（自动存档、手动保存、重开新档全覆盖）。 */
+const isLab = () => !!(window.__ZSV_LAB);
 const vault = () => (typeof window.V4Vault === 'object' && window.V4Vault) ? window.V4Vault : null;
 function writeSave(s){
+  if(isLab()) return true;                                     // 沙盒：假装存了，实际什么都不写
   try{
     const payload = JSON.stringify(s);
     const v = vault();
@@ -814,6 +818,7 @@ function deepMerge(base, over){
     老玩家手里可能还有 M28 的 ZSE1 导出文本 —— 那一版没进过正式发布，所以这里不保留导入入口；
     如果哪天需要"换设备搬档"，正确做法是加一条**基于口令**的导出（口令不入代码），而不是回到明文。 */
 function restoreBackup(){
+  if(isLab()){ toast('沙盒里没有存档','这里是平行世界，不读也不写你的主档。','info'); return; }   // M33：沙盒不许碰主档备份
   const v = (typeof window.V4Vault === 'object' && window.V4Vault) ? window.V4Vault : null;
   if(!v || !v.loadBackup){ toast('没有备份','这个构建读不到本机备份。','bad'); return; }
   const confirmModal = () => modal({ title:'🛟 回滚到上次备份', sticky:true,
@@ -3437,19 +3442,29 @@ function buyMerchant(i){
 function openMenu(){
   /* M26：存档 / 世界 / 账号这些元操作从探索页的工具条搬到这里（用户：「这是什么，为什么在地图上面，
      放到设置的 subpage 里面」）。按钮 HTML 由 v4 的 world-ui 提供，拿不到就只少这一段，不影响菜单其它部分。 */
-  const v4tools = (typeof window.__v4ToolsButtons === 'function') ? String(window.__v4ToolsButtons() || '') : '';
-  /* M27：新手教程入口 —— 想再看一遍（或朋友第一次玩）就点这里 */
-  const v4tut = (typeof window.V4Tutorial === 'object' && window.V4Tutorial)
+  const lab = isLab();
+  const v4tools = (!lab && typeof window.__v4ToolsButtons === 'function') ? String(window.__v4ToolsButtons() || '') : '';
+  /* M27：新手教程入口 —— 想再看一遍（或朋友第一次玩）就点这里。M33：沙盒里不显示（它自己就是教学） */
+  const v4tut = (!lab && typeof window.V4Tutorial === 'object' && window.V4Tutorial)
     ? '<button class="btn sm" onclick="closeAllModals();V4Tutorial.start(true)">🎓 新手指南（从头看一遍）</button>' : '';
+  /* M33：教程沙盒（分章练习，独立 iframe）—— 只在主页面里出现 */
+  const v4labBtn = (!lab && typeof window.V4Lab === 'object' && window.V4Lab)
+    ? '<button class="btn sm" onclick="closeAllModals();V4Lab.open()">🧪 教程沙盒（分章练习）</button>' : '';
   /* M32：字号 + 地图开关也进菜单（用户："字体太小了，做可自定义字号适配"） */
   const v4scale = (typeof window.V4Scale === 'object' && window.V4Scale && window.V4Scale.buttons) ? String(window.V4Scale.buttons() || '') : '';
   modal({ title:'☰ 菜单', body:'<div class="hint" style="line-height:2">' +
-    '存档是<b>自动</b>的（每日结束、搜刮、制作、建造、战斗结束时）。手动存档随时可用。<br>' +
-    'M29 起存档<b>全部加密</b>（AES-GCM-256，密钥只在本机 worker 里、不可导出）：本机读写的都是密文，' +
-    '不再提供「导出明文存档」；想多端同步请用下面的<b>云存档</b>（上传的也是密文）。</div>' +
+    (lab
+      /* M33：沙盒里把"会写盘"的入口全摘掉（存档/读取/回滚/重开/世界/账号）——用户拍板的"完全隔离" */
+      ? '<b>🧪 这是教程沙盒</b>：所有进度都是临时的，<b>不会</b>写进你的主档、也不会不上传。<br>想接着玩自己的存档，点上面的「✕ 关闭沙盒」回到主页面。'
+      : '存档是<b>自动</b>的（每日结束、搜刮、制作、建造、战斗结束时）。手动存档随时可用。<br>' +
+        'M29 起存档<b>全部加密</b>（AES-GCM-256，密钥只在本机 worker 里、不可导出）：本机读写的都是密文，' +
+        '不再提供「导出明文存档」；想多端同步请用下面的<b>云存档</b>（上传的也是密文）。') + '</div>' +
     (v4tools ? '<div class="sect-title" style="margin-top:14px">世界与账号</div>' + v4tools : '') +
     (v4tut ? '<div class="sect-title" style="margin-top:14px">上手帮助</div>' + v4tut +
       '<div class="hint" style="margin-top:6px">第一次玩建议先看一遍：15 步，会直接把界面上的东西圈出来给你看（随时能退出，下次从这里继续）。</div>' : '') +
+    (v4labBtn ? '<div class="row" style="margin-top:6px">' + v4labBtn + '</div>' +
+      '<div class="hint" style="margin-top:6px">沙盒是<b>独立 iframe 里的平行世界</b>：分章练习、固定种子、目标清单全绿才算过，' +
+      '怎么玩都<b>不会写进主档</b>（不存档、不上传），死了也不惩罚。</div>' : '') +
     '<div class="sect-title" style="margin-top:14px">设置</div><div class="row">' +
       '<button class="btn sm ' + (S.ui.pace === 'beat' ? 'warn' : '') + '" onclick="togglePace()">🎬 战斗节奏：' + (S.ui.pace === 'beat' ? '节拍模式' : '即时模式') + '</button>' +
       '<button class="btn sm ' + (S.ui.amb ? 'ok' : '') + '" onclick="toggleAmb()">🌫️ 环境底噪：' + (S.ui.amb ? '开' : '关') + '</button>' +
@@ -3458,11 +3473,13 @@ function openMenu(){
     '</div>' +
     (v4scale ? '<div class="sect-title" style="margin-top:10px">显示（字号 / 地图）</div>' + v4scale : '') +
     '<div class="hint" style="margin-top:6px">节拍模式会让每次攻击分三段演出（约 +0.3 秒/回合），方便看清谁挨了打；即时模式保持原来的手感。<br>配乐是程序现场合成的四小节循环（Am–F–C–E），没有音频文件：白天/夜晚/战斗/残血各有一套速度与配器。</div>',
-    footer:'<button class="btn ok" onclick="saveGame();closeAllModals()">💾 保存</button>' +
-      '<button class="btn" onclick="closeAllModals();loadGame()">📂 读取</button>' +
-      '<button class="btn" onclick="restoreBackup()">🛟 回滚备份</button>' +
-      '<button class="btn danger" onclick="closeAllModals();confirmRestart()">🔄 重开新档</button>' +
-      '<button class="btn" data-close>关闭</button>' });
+    footer:(lab
+      ? '<button class="btn" data-close>关闭</button>'
+      : '<button class="btn ok" onclick="saveGame();closeAllModals()">💾 保存</button>' +
+        '<button class="btn" onclick="closeAllModals();loadGame()">📂 读取</button>' +
+        '<button class="btn" onclick="restoreBackup()">🛟 回滚备份</button>' +
+        '<button class="btn danger" onclick="closeAllModals();confirmRestart()">🔄 重开新档</button>' +
+        '<button class="btn" data-close>关闭</button>') });
 }
 function openHelp(){
   modal({ title:'? 生存手册', body:
@@ -3566,6 +3583,8 @@ function initGame(fresh){
   render();
 }
 function boot(){
+  /* M33：沙盒 iframe —— 不读主档，按章节预设开一局固定种子的平行世界 */
+  if(isLab()){ bootLab(); return; }
   initGame();
   // localStorage 在部分浏览器（file:// 或隐私模式）会直接抛错，探测必须包住
   const hasV2 = !!readSavedRaw(), hasV1 = !!lsGet(V1_KEY);
@@ -3580,6 +3599,33 @@ function boot(){
         '<button class="btn ghost" onclick="closeAllModals()">从头开始</button>' });
   }
 }
+/** M33：教程沙盒的开局（预设来自 v4/sandbox-core 的章节表，这里只负责套用 + 打日志） */
+function bootLab(){
+  const lab = window.__ZSV_LAB || {};
+  const p = lab.preset || {};
+  S = newState();
+  S.ammo = 0;                                   // 开局弹药池清零：沙盒的物资完全按预设给（见下）
+  S.seed = p.seed || 'lab-01';                  // 固定种子：同一章每次进来地图一模一样
+  S.world = null;                               // 让 ensureSaveWorld 按这个种子重建
+  S.day = Math.max(1, Math.floor(p.day || 1));
+  S.ap = S.apMax = 14;
+  S.mat = Math.max(0, Math.floor(p.mat == null ? 12 : p.mat));
+  S.hp = S.hpMax = 100;
+  S.hun = clamp(p.hun == null ? 80 : p.hun, 0, 100);
+  S.thi = clamp(p.thi == null ? 80 : p.thi, 0, 100);
+  S.sta = S.staMax = 100;
+  S.inv = {}; S.store = {}; S.eq.wpn = null;
+  const inv = p.inv || {};
+  for(const id in inv){ if(ITEMS[id] && inv[id] > 0) S.inv[id] = Math.floor(inv[id]); }
+  if(!S.eq.wpn){ const firstWpn = Object.keys(S.inv).find(id => ITEMS[id] && ITEMS[id].t === 'wpn'); if(firstWpn) S.eq.wpn = firstWpn; }
+  S.tab = 'explore';
+  syncAmmo();
+  initGame(true);
+  hr();
+  log('🧪 教程沙盒 · ' + (lab.ch || 'survival') + '（固定种子 ' + S.seed + '）','system');
+  log('这里怎么玩都**不会**写进你的主档：不存档、不上传、死了不惩罚。照着右侧目标清单练就行。','info');
+  render();
+}
 /* boot() 由 src/main.ts 在 v4 模块就绪后调用 */
 
 /* ═══════════ legacy/45-globals.js ═══════════ */
@@ -3590,6 +3636,7 @@ Object.assign(window, { VER, SAVE_KEY, V1_KEY, ITEMS, itemName, isWpn, ZOMBIES, 
   /* M25：口径/弹种/辐射这几个查询函数被验收探针与将来的 UI 直接用，一并挂出去 */
   CALIBERS, AMMO_OF, ammoCount, loadedAmmo, setLoaded, cycleLoaded, penMul, radTier, apCapOf, fitnessApBonus, phaseOf, PHASE_LABEL,
   syncAmmo, materializeAmmoPool, ammoShopRows,   // M32b：弹药镜像收口 + 货架弹药段（验收探针直接调）
+  isLab,                                        // M33：教程沙盒（写盘守卫 + 菜单分岔都用它）
   radLevelAt, radGain, radProtect, RAD_SOURCES, geigerText, boot });
 Object.defineProperty(window, "S", { get: function(){ return S; }, set: function(v){ S = v; }, configurable: true });
 Object.defineProperty(window, "battle", { get: function(){ return battle; }, set: function(v){ battle = v; }, configurable: true });

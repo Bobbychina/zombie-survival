@@ -27,7 +27,7 @@ export const V4: Record<string, unknown> = {};
 (window as any).V4 = V4;
 
 async function main() {
-  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi, integrity, betaNotice, regionEventsCore, regionEvents, regionsCore, worldsUi, tutorial, saveVault, accountVault, survival, envCore, medical, uiScale] = await Promise.all([
+  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi, integrity, betaNotice, regionEventsCore, regionEvents, regionsCore, worldsUi, tutorial, saveVault, accountVault, survival, envCore, medical, uiScale, sandboxCore, tutorialLab] = await Promise.all([
     import('./v4/worldgen'),
     import('./v4/pois'),
     import('./v4/combat'),
@@ -56,7 +56,21 @@ async function main() {
     import('./v4/env-core'),
     import('./v4/medical'),
     import('./v4/ui-scale'),
+    import('./v4/sandbox-core'),
+    import('./v4/tutorial-lab'),
   ]);
+  /* M33：教程沙盒 —— iframe 里跑的就是这一份代码，靠 `?sandbox=1` 分岔：
+     不读主档（boot 走沙盒分支）、不落盘（writeSave 直接 return）、不弹教程、菜单里没有世界/账号。
+     必须在 boot 之前就把预设交给 legacy（那边只负责套用，判定逻辑在 sandbox-core）。 */
+  const LAB = sandboxCore.labFromSearch(location.search);
+  if (LAB) {
+    const st = sandboxCore.labStateOf(LAB.ch);
+    (window as any).__ZSV_LAB = { ch: LAB.ch, seed: st.seed, preset: st.preset };
+  }
+  (window as any).V4Lab = tutorialLab.V4Lab;
+  Object.assign(V4, { sandbox: { LAB_CHAPTERS: sandboxCore.LAB_CHAPTERS, labFromSearch: sandboxCore.labFromSearch, snapOf: sandboxCore.snapOf } });
+  /* M8：存档完整性——boot 之前看的原始存档（沙盒里不看：那是别人的档） */
+  let preVerdict: unknown = null;
   // BETA 声明条：整站/整游戏最上面那一条（本站所有子页面都要有）
   betaNotice.installBetaNotice();
   const { REGION_EVENTS } = regionEventsCore;
@@ -296,14 +310,16 @@ async function main() {
   (window as any).V4Debug = Object.assign((window as any).V4Debug || {}, {
     salvageYields: envCore.salvageYields, regionById: regionsCore.regionById,
   });
-  /* M8：存档完整性——必须在 L.boot() 读档之前看原始 JSON（loadGame 会 sanitize，夹取之后就查不出越界了） */
-  const preVerdict = integrity.inspectBeforeBoot();
-  integrity.installWriteHook();
+  /* M8：存档完整性——必须在 L.boot() 读档之前看原始 JSON（loadGame 会 sanitize，夹取之后就查不出越界了）。
+     M33：沙盒 iframe 里不做这套（那里压根不读主档，指纹校验会读出一个"别人的档"来）。 */
+  if (!LAB) { preVerdict = integrity.inspectBeforeBoot(); integrity.installWriteHook(); }
   L.boot();
-  integrity.reportAfterBoot();
-  if (vaultState.mode === 'main-thread') L.log('🔐 存档加密：worker 不可用，已降级成主线程 AES-GCM（存档同样不是明文）。', 'dim');
-  else if (vaultState.mode === 'worker') L.log('🔐 存档已加密（AES-GCM-256，密钥只在本机 worker 里，不可导出）。', 'dim');
-  if (vaultState.lastError) L.log('⚠️ 保险箱初始化有问题：' + vaultState.lastError, 'danger');
+  if (!LAB) integrity.reportAfterBoot();
+  if (!LAB) {
+    if (vaultState.mode === 'main-thread') L.log('🔐 存档加密：worker 不可用，已降级成主线程 AES-GCM（存档同样不是明文）。', 'dim');
+    else if (vaultState.mode === 'worker') L.log('🔐 存档已加密（AES-GCM-256，密钥只在本机 worker 里，不可导出）。', 'dim');
+    if (vaultState.lastError) L.log('⚠️ 保险箱初始化有问题：' + vaultState.lastError, 'danger');
+  }
   /* M15.1：地图重画（世界生成器版本变了）。BETA 阶段地形会随生成器更新而变，
      存档里保留人物进度、清掉按坐标记的地形进度——这事必须告诉玩家，否则会以为丢档了。 */
   if (worldState.takeWorldMigration()) {
@@ -328,9 +344,24 @@ async function main() {
     }
   });
   /* M27 新手教程：第一次进游戏自动弹一次（看完/跳过之后不再自动弹；☰ 菜单里随时能重看）。
-     ?dev=ready 这类开发钩子不弹，免得探针每次都被挡住。 */
+     ?dev=ready 这类开发钩子不弹，免得探针每次都被挡住。M33：沙盒 iframe 里也不弹
+     （沙盒本身就是教学，再套一层高亮会打架），改成每 0.5 秒给父页面报一份快照。 */
   const devFlags = String(new URLSearchParams(location.search).get('dev') || '');
-  if (!devFlags.includes('ready') && !devFlags.includes('fresh')) {
+  if (LAB) {
+    const post = () => {
+      try {
+        if (window.parent === window) return;
+        window.parent.postMessage({ __zsvLab: 1, type: 'snap', snap: sandboxCore.snapOf(L.S) }, '*');
+      } catch { /* 跨窗口失败不该影响游戏 */ }
+    };
+    window.addEventListener('message', (e: MessageEvent) => {
+      const d: any = e.data;
+      if (d && d.__zsvLab === 1 && d.type === 'ping') post();
+    });
+    setInterval(post, 500);
+    setTimeout(post, 400);
+    L.log('🧪 教程沙盒：这是 iframe 里的平行世界 —— 不读主档、不落盘、死了不惩罚。', 'system');
+  } else if (!devFlags.includes('ready') && !devFlags.includes('fresh')) {
     setTimeout(() => {
       try {
         tutorial.maybeAutoStartTutorial();
