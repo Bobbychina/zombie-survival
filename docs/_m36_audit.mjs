@@ -79,6 +79,13 @@ await ev(`(() => { try { localStorage.clear(); sessionStorage.clear() } catch {}
 const boot = async (q) => {
   await send('Page.navigate', { url: url + '?' + q })
   await sleep(6500)
+  /* 线上版启动会去 ping 账号中继，网络不通时要等它超时（实测 ⑧A 因此撞上 "V4Integrity is not defined"）。
+     所以这里等到"引擎真的就绪"再往下跑，而不是死等固定秒数。 */
+  for (let i = 0; i < 60; i++) {
+    const ready = await ev(`(typeof window.V4Integrity === 'object') && (typeof window.V4Vault === 'object') && (typeof window.S === 'object')`)
+    if (ready === true) break
+    await sleep(500)
+  }
   await ev(`(() => { try { window.V4Tutorial && V4Tutorial.skip && V4Tutorial.skip() } catch {} ; try { closeAllModals() } catch {} ; return 1 })()`)
   await sleep(700)
 }
