@@ -185,6 +185,14 @@
    注意**不能用 display:contents** —— 那样 Chromium 的 innerText 会跳过整棵子树，
    屏幕上看得见、探针与无障碍读不到（实测就是"视觉有、innerText 空"）。 */
 .hud-chips .v4-env{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+/* M31：伤病 chip 里带 emoji + 文字，允许换行但别把顶栏撑破 */
+.hud-chips .chip.medchip{max-width:420px;white-space:normal;line-height:1.25;text-align:left}
+/* M31：人体页的方块人形。受伤的部位靠颜色说话（绿→黄→红），有伤的部位角上挂一个小圆点。 */
+.mfig{display:block;margin:0 auto;filter:drop-shadow(0 2px 6px rgba(0,0,0,.5))}
+.mfig .mpart rect{transition:filter .12s ease}
+.mfig .mpart:hover rect{filter:brightness(1.25)}
+.mfig .mpart text{pointer-events:none;user-select:none}
+.mfig .mpart circle{pointer-events:none}
 .v4world .wlegend .sw.ic{display:inline-flex;align-items:center;justify-content:center;font-size:9px;background:#12151a}
 .v4world .wlegend .sw.cur-sw{background:transparent;outline:2px solid var(--bone)}
 .v4world .wlegend .sw.path-sw{background:transparent;outline:1px dashed rgba(207,210,214,.6)}

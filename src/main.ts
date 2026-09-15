@@ -27,7 +27,7 @@ export const V4: Record<string, unknown> = {};
 (window as any).V4 = V4;
 
 async function main() {
-  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi, integrity, betaNotice, regionEventsCore, regionEvents, regionsCore, worldsUi, tutorial, saveVault, accountVault, survival, envCore] = await Promise.all([
+  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi, integrity, betaNotice, regionEventsCore, regionEvents, regionsCore, worldsUi, tutorial, saveVault, accountVault, survival, envCore, medical] = await Promise.all([
     import('./v4/worldgen'),
     import('./v4/pois'),
     import('./v4/combat'),
@@ -54,6 +54,7 @@ async function main() {
     import('./v4/account-vault'),
     import('./v4/survival'),
     import('./v4/env-core'),
+    import('./v4/medical'),
   ]);
   // BETA 声明条：整站/整游戏最上面那一条（本站所有子页面都要有）
   betaNotice.installBetaNotice();
@@ -272,6 +273,14 @@ async function main() {
     drinkGain: survival.drinkGain, fireOk: survival.fireOk, rotMul: survival.rotMul, refreshHum: survival.refreshHum,
   };
   (V4 as any).survival = survival;
+  /* M31：人体与伤病（分页 + 战斗钩子 + 走路成本 + 治疗）—— legacy 通过 window.V4Medical 调 */
+  (window as any).V4Medical = {
+    renderTab: medical.renderTab, pick: medical.pick, treat: medical.treatPart,
+    stepBody: medical.stepBody, nightBody: medical.nightBody, onPlayerHurt: medical.onPlayerHurt,
+    status: medical.bodyStatus, penaltyNow: medical.bodyPenaltyNow, bodyPenaltyNow: medical.bodyPenaltyNow,
+    travelExtra: medical.bodyTravelExtra, hudLine: medical.bodyHudLine, bodyNow: medical.bodyNow,
+  };
+  (V4 as any).medical = medical;
   /* 探针/调试用的纯函数出口（只在本地探针里读，游戏逻辑不依赖它） */
   (window as any).V4Debug = Object.assign((window as any).V4Debug || {}, {
     salvageYields: envCore.salvageYields, regionById: regionsCore.regionById,

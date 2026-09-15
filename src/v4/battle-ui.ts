@@ -153,12 +153,19 @@ export const V4UI = {
       if (f.hp <= 0 && !(f as any).__rewarded) { (f as any).__rewarded = true; onFoeFaint(cur!.srcs[i], f); }
     });
     // 只对这次行动新产生的伤害做飘字/抖动
+    let hurt = 0;
     for (const e of b.events.slice(evFrom)) {
       if (e.kind === 'damage' && e.target && (e.target as any).side === 'foe') flashFoe((e.target as any).index, e);
       else if (e.kind === 'damage' && e.target && (e.target as any).side === 'player') {
         const hpEl = document.querySelector('#hud .bar i.hp');
         L.floatText('-' + (e.amount ?? ''), 'self', hpEl);
+        hurt += Number(e.amount) || 0;
       }
+    }
+    /* M31：这一回合挨了多少 → 交给人体系统判定伤病（四个掉血入口只在这一个地方接，免得漏） */
+    if (hurt > 0) {
+      const md = (window as any).V4Medical as { onPlayerHurt?: (n: number) => void } | undefined;
+      try { md?.onPlayerHurt?.(hurt); } catch (e) { console.warn('[v4] 伤病判定失败', e); }
     }
     b.events.length = 0;
     syncBack(p);

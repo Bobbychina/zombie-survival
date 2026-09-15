@@ -35,6 +35,13 @@ const ITEMS = {
   anti:     {n:'抗生素',    t:'med',   w:0.1, infect:-25, cureWound:'sick', desc:'压制体内病毒的增殖。'},
   serum:    {n:'抗病毒血清',t:'med',   w:0.3, infect:-60, desc:'实验室级别的抑制剂，极稀有。'},
   antitoxin:{n:'解毒剂',    t:'med',   w:0.2, cure:'poison', desc:'中和毒素，别等到咳血。'},
+  /* M31：人体伤病治疗链的新东西（急救 → 手术 → 康复）。
+     注意「夹板」在老物品表里已经有（cureWound:'fracture'），**不要重复定义** ——
+     重复 id 会被"物品 id 不重复"的单测当场抓住。 */
+  burncream:{n:'烧伤药膏',  t:'med',   w:0.2, heal:8, desc:'涂在烧伤上：止疼、防感染（烧伤的急救手段）。'},
+  suture:   {n:'缝合包',    t:'med',   w:0.3, heal:10, desc:'针、线、酒精：处理大出血与贯穿伤的手术器械。'},
+  surgerykit:{n:'手术包',   t:'med',   w:0.8, heal:15, desc:'成套器械：骨折复位、贯穿清创。医疗技能越高成功率越高。'},
+  antiseptic:{n:'消毒剂',   t:'med',   w:0.3, desc:'清创用：把感染伤口洗干净再缝合（感染伤口的手术手段）。'},
   // 材料
   cloth:    {n:'布料',      t:'mat',   w:0.3, desc:'从窗帘和尸体上剪下来的。'},
   metal:    {n:'铁片',      t:'mat',   w:0.8, desc:'拆自车门与通风管。'},
@@ -252,6 +259,12 @@ const RECIPES = [
   {out:'anti',     n:1, need:{chem:2, chip:1},           st:'medlab', lv:2, desc:'抗生素。'},
   {out:'radaway',  n:1, need:{chem:3, anti:1, water:1},  st:'medlab', lv:2, desc:'抗辐射药：把已经吃进去的放射核素排出去。'},
   {out:'serum',    n:1, need:{chem:3, anti:1, chip:1},   st:'medlab', lv:3, desc:'低配版病毒抑制剂。'},
+  /* M31：人体伤病的手术器械（三件都在医疗台做） */
+  {out:'splint',    n:2, need:{wood:1, cloth:1},          st:'bench',  lv:0, desc:'夹板 ×2：骨折急救，先固定住再想办法动手术。'},
+  {out:'burncream', n:2, need:{chem:1, water:1},          st:'medlab', lv:0, desc:'烧伤药膏 ×2。'},
+  {out:'suture',    n:2, need:{cloth:1, metal:1, tape:1}, st:'medlab', lv:1, desc:'缝合包 ×2：处理大出血与贯穿伤的手术器械。'},
+  {out:'antiseptic',n:2, need:{chem:2, water:1},          st:'medlab', lv:1, desc:'消毒剂 ×2：感染伤口清创用。'},
+  {out:'surgerykit',n:1, need:{suture:1, metal:2, tape:2, chem:1}, st:'medlab', lv:2, desc:'手术包：骨折复位 + 贯穿清创，医疗技能越高越不容易失手。'},
   /* ── 灶台：把生食做熟（熟食回得更多，而且不会吃坏肚子） ── */
   {out:'water',    n:3, need:{dirty:3, wood:1},          st:'kitchen', lv:0, desc:'一锅煮三份净水。'},
   {out:'cooked',   n:1, need:{meat:1, wood:1},           st:'kitchen', lv:0, desc:'把生肉做熟：饱食与治疗都更高。'},
@@ -1212,6 +1225,8 @@ function tickVitals(mult){
   S.sta = clamp(S.sta - (6 + enc * 6) * mult, 0, radCap);
   /* M30：病症链推进（每若干步结算一次病程，掉血在 step 里扣） */
   if(sv) sv.step(1);
+  /* M31：人体伤病的出血与康复也按步推进（medical.ts 内部有节流） */
+  { const md = (typeof window.V4Medical === 'object' && window.V4Medical) ? window.V4Medical : null; if(md) md.stepBody(); }
   if(S.hun <= 0){ S.hp -= 4; log('🍖 饥饿到了极限，身体在消耗自己。','danger'); }
   else if(S.hun < 18) log('🍖 你饿得手在抖（伤害与命中下降）。','dim');
   if(S.thi <= 0){ S.hp -= 5; log('💧 严重脱水，视线开始发黑。','danger'); }   // C08：归零掉血 6/8 → 4/5，别让饥饿单独构成死亡螺旋
@@ -1247,6 +1262,17 @@ function statMods(){
     if(rt.tier >= 3) m.dodge -= .10;
     if(rt.tier >= 1) m.note.push('辐射 ' + rt.label);
   }
+  /* M31：人体伤病的惩罚（双轨制：部位伤只影响能力，不参与生死判定） */
+  {
+    const md = (typeof window.V4Medical === 'object' && window.V4Medical) ? window.V4Medical : null;
+    if(md){
+      const bp = md.bodyPenaltyNow();
+      m.dodge += bp.dodge;
+      m.dmgMul *= bp.dmgMul;
+      m.hit = (m.hit || 0) + bp.hit;
+      if(bp.note.length) m.note.push(bp.note.slice(0, 2).join('/') + (bp.note.length > 2 ? '…' : ''));
+    }
+  }
   return m;
 }
 function sleepNight(){
@@ -1263,6 +1289,8 @@ function sleepNight(){
   S.thi = clamp(S.thi - 14 * cut, 0, 100);
   /* M30：病程在夜里推进得更快（"病了就早睡"要真的有用） */
   { const svN = (typeof window.V4Survival === 'object' && window.V4Survival) ? window.V4Survival : null; if(svN) svN.nightStep(); }
+  /* M31：过夜也是康复的关键窗口（睡一觉，手术过的伤恢复得更快） */
+  { const mdN = (typeof window.V4Medical === 'object' && window.V4Medical) ? window.V4Medical : null; if(mdN) mdN.nightBody(); }
   S.sta = S.staMax;
   const bedHeal = Math.round((12 + S.base.bed * 9) * (atBase ? 1 : .45));
   S.hp = Math.min(S.hpMax, S.hp + bedHeal);
@@ -1454,6 +1482,7 @@ function recapHtml(sc){
 /* ───────────── 顶部 / HUD / 标签 ───────────── */
 const TABS = [
   {id:'explore', n:'探索', icon:'🧭'},
+  {id:'body',    n:'人体', icon:'🩺'},        // M31：人体状态分页（v4 渲染，见 medical.ts）
   {id:'base',    n:'据点', icon:'🏠'},
   {id:'inv',     n:'背包', icon:'🎒'},
   {id:'craft',   n:'制作', icon:'🛠️'},
@@ -1525,6 +1554,9 @@ function renderHud(){
   h += '<span class="chip ' + (threatLevel() >= 3 ? 'heavy warnpulse' : '') + '">📅 <b>' + nextEventText() + '</b></span>';
   if(S.def.doorHp < defMax().door || S.def.wallHp < defMax().wall) h += '<span class="chip heavy">🚪 防线 <b>门 ' + Math.round(S.def.doorHp) + ' / 墙 ' + Math.round(S.def.wallHp) + '</b></span>';
   (S.wounds || []).forEach(w => { h += '<span class="chip heavy warnpulse">' + WOUND_DEF[w.t].icon + ' <b>' + WOUND_DEF[w.t].n + '</b></span>'; });
+  /* M31：人体伤病的 HUD 提示（点一下直接进人体页处理） */
+  { const mdH = (typeof window.V4Medical === 'object' && window.V4Medical) ? window.V4Medical : null;
+    if(mdH){ const line = mdH.hudLine(); if(line) h += '<span class="chip heavy warnpulse" style="cursor:pointer" onclick="setTab(\'body\')" title="点一下打开人体页">🩺 ' + esc(line) + '</span>'; } }
   if(mods.note.length) h += '<span class="chip heavy warnpulse">⚠️ ' + mods.note.join(' · ') + '</span>';
   if(S.flags.won && !S.flags.endless) h += '<button class="btn xs warn" onclick="enterEndless()">进入无尽模式</button>';
   h += '</div>';
@@ -1558,8 +1590,12 @@ function render(){
   try{
     renderTop(); renderHud(); renderTabs();
     const v = $('#view');
+    /* M31：人体状态页是 v4 那边渲染的（分页 + SVG 方块人形）。挂载失败不能让整屏挂掉，
+       所以单独 try/catch，失败就退回探索页。 */
+    let v4tab = null;
+    try{ v4tab = (window.V4Medical && window.V4Medical.renderTab) ? window.V4Medical.renderTab(S.tab) : null; }catch(e){ console.warn('[v4] 人体页渲染失败', e); v4tab = null; }
     const f = { explore:renderExplore, base:renderBase, inv:renderInv, craft:renderCraft, skills:renderSkills, quest:renderQuest, codex:renderCodex, stats:renderStats }[S.tab] || renderExplore;
-    v.innerHTML = f();
+    v.innerHTML = (v4tab !== null && v4tab !== undefined) ? v4tab : f();
     v.scrollTop = 0;
     window.__renderErr = null;
   }catch(e){
@@ -2808,7 +2844,7 @@ Object.assign(ITEMS, {
   veg:   {n:'新鲜蔬菜', t:'food',  w:0.4, hun:18, fresh:4, desc:'菜园刚摘的。四天内不吃就会烂。'},
   stew:  {n:'炖菜',     t:'food',  w:0.8, hun:46, heal:6, desc:'蔬菜加水炖一锅——末日里最像"家"的东西。'},
   rot:   {n:'腐坏食物', t:'food',  w:0.4, hun:8, sick:.35, desc:'饿极了也能吃，只是大概会吐一整晚。'},
-  splint:{n:'夹板',     t:'med',   w:0.6, cureWound:'fracture', desc:'两块木板加布条：把断骨固定住。'},
+  splint:{n:'夹板',     t:'med',   w:0.6, heal:5, cureWound:'fracture', desc:'两块木板加布条：骨折急救用——能走但走不快，要复位还得动手术（M31 人体页）。'},
   // M6：农业 / 采集 / 加工的新物品
   seed_veg:  {n:'蔬菜种子', t:'mat',  w:0.05, desc:'播在菜园地块上：快熟低产（5 天 / 每块 2 份）。'},
   seed_grain:{n:'麦种',     t:'mat',  w:0.05, desc:'慢熟高产：9 天 / 每块 5 份，冬天存粮靠它。'},
@@ -2883,6 +2919,9 @@ function travelCost(id){
   // 对称路程：两头等级取平均 —— 出门和回家一样贵（PZ 式的取舍：今天还回不回得去）
   let c = Math.max(1, Math.round(((A.d || 0) + (B.d || 0)) / 2));
   if(hasWound('fracture')) c += 1;           // 骨折：走不快
+  /* M31：腿伤/骨折（人体系统）也要让路变长 —— 与上面那条老伤口并存，取更大者不叠加 */
+  const bm = (typeof window.V4Medical === 'object' && window.V4Medical) ? window.V4Medical : null;
+  if(bm) c += bm.travelExtra();
   return c;
 }
 function travelTo(id, silent){
