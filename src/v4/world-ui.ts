@@ -599,12 +599,15 @@ function waterCard(): string {
     探索页只该有玩法（地图 + 卡片墙），存档账号属于设置。按钮 HTML 交给 legacy 的 openMenu 渲染。 */
 export function toolsButtonsHtml(): string {
   const who = accountUser();
+  /* M32：地图开关也放这里（用户要「在哪里都能开」）——顶栏还有一个 🗺️ 按钮，两处等价 */
+  const mapOpen = (window as any).V4Scale ? (window as any).V4Scale.mapOpen() : true;
   return '<div class="row">' +
+    '<button class="btn sm ' + (mapOpen ? 'ok' : '') + '" onclick="closeAllModals();V4Scale.toggleMap()" title="本地/大区地图（快捷键 M）">🗺️ 地图：' + (mapOpen ? '开' : '关') + '</button>' +
     '<button class="btn sm" onclick="closeAllModals();V4Worlds.open()" title="多世界 / 挑战码 / 幽灵据点 / 本机统计">🌍 世界 · 分享</button>' +
     '<button class="btn sm" onclick="closeAllModals();V4Account.open()" title="' + esc(accountSummary()) + '">' +
       (who ? '👤 ' + esc(String(who).slice(0, 14)) : '👤 注册 / 登录') + '</button>' +
     '</div>' +
-    '<div class="hint" style="margin-top:6px">多世界、挑战码、幽灵据点、本机统计与云存档都在这里；探索页不显示这些按钮。</div>';
+    '<div class="hint" style="margin-top:6px">地图是右上角的悬浮窗（任何页签都能开关，按 M 也行）；多世界、挑战码、幽灵据点、本机统计与云存档也都在这里。</div>';
 }
 
 /** 当前区块卡（原来的"POI 面板"）：这一格有什么、能搜什么、有什么活儿可干。
@@ -770,53 +773,62 @@ export function mountWorldPanel() {
   const S = L.S;
   const view = document.getElementById('view');
   if (!view) return;
-  // 切到别的页签（背包/任务…）时必须撤掉卡片墙，否则那些内容会被塞进探索页的网格里
-  if (!S || S.tab !== 'explore' || S.over) {
+  /* M32：地图不再塞进探索页 —— 它住在右上角的悬浮窗里（#v4mapwin），**任何页签都能开**。
+     所以 mountWorldPanel 现在只管两件事：
+       ① 确保悬浮窗存在，并把地图卡放进它的 body；
+       ② 探索页这边只维护卡片墙（整宽、单列），并把 legacy 的旧节点收进卡片墙。 */
+  ensureMapWindow();
+  if (!S || S.over) {
     view.classList.remove('v4-board');
+    paintMapWindow();
     return;
   }
-  /* M25.2：读档/换日之后把 AP 上限与睡眠债 + 体能对齐（R5：债是唯一真值）。
-     上限真的变了就补一次 renderHud + renderTop —— 不然会看到"地图上写着 14，
-     HUD 的格子还是 9 个"这种自相矛盾的画面（探针实测过）。 */
-  const capBefore = L.S.apMax;
-  syncApMax();
-  if (L.S.apMax !== capBefore) { L.renderHud(); L.renderTop(); }
-  ensureEvac();                 // 第 90 天进入撤离窗口时落盘并提示
-  pruneLegacy(view);
-
-  /* M21 版面：左地图 + 右卡片墙（CSS `#view.v4-board`，≥1024px 生效；窄屏自动叠成一列）。
-     用户反馈原文："配置不平衡（左边一大堆右边就一个）……为什么不多搞一些卡片"——
-     所以详情面板被拆成 9 张卡，卡片墙用 auto-fill 网格自己找平，不再有"三列高矮不一"。 */
+  if (S.tab === 'explore') {
+    /* M25.2：读档/换日之后把 AP 上限与睡眠债 + 体能对齐（R5：债是唯一真值）。 */
+    const capBefore = L.S.apMax;
+    syncApMax();
+    if (L.S.apMax !== capBefore) { L.renderHud(); L.renderTop(); }
+    ensureEvac();                 // 第 90 天进入撤离窗口时落盘并提示
+  }
   /* M26：探索页不再有工具条（世界/账号搬进 ☰ 菜单）——顺手把老版留下的 #v4tools 节点清掉，
      否则「整页不可滚」那条布局账会把它算进去（它已经不是网格的一部分了）。 */
   const staleTools = document.getElementById('v4tools');
   if (staleTools) staleTools.remove();
+  pruneLegacy(view);
+
   const mapHtml = renderMapPanel();
   const cardsHtml = renderCards();
+  /* M32：地图卡现在住在悬浮窗里 —— 注意 **必须自己创建** #v4world（旧代码是插进 #view 时顺手建的，
+     改成悬浮窗之后那条路径没了，实测第一次就是这里漏了：窗口在、body 空的、地图压根没画）。 */
   let map = document.getElementById('v4world') as HTMLElement | null;
-  let board = view.querySelector(':scope > .v4board') as HTMLElement | null;
-  if (!map) { map = document.createElement('div'); map.id = 'v4world'; map.className = 'card v4world v4-mapcol'; }
-  if (!board) { board = document.createElement('div'); board.id = 'v4cards'; board.className = 'v4board'; }
-  // 内容没变就别重写 innerHTML（否则每次 render 都会重置地图滚动位置/悬停态）
+  if (!map) { map = document.createElement('div'); map.id = 'v4world'; map.className = 'card v4world'; }
+  const body = document.querySelector('#v4mapwin .mwbody') as HTMLElement | null;
+  if (map.parentElement !== body && body) body.appendChild(map);
   if (map.dataset.sig !== mapHtml) { map.innerHTML = mapHtml; map.dataset.sig = mapHtml; }
+  paintMapWindow();
+
+  if (S.tab !== 'explore') {
+    /* 别的页签：只要地图窗还在就行，卡片墙不参与（那些页由 legacy/人体页渲染） */
+    view.classList.remove('v4-board');
+    return;
+  }
+  let board = view.querySelector(':scope > .v4board') as HTMLElement | null;
+  if (!board) { board = document.createElement('div'); board.id = 'v4cards'; board.className = 'v4board'; }
+  // 内容没变就别重写 innerHTML（否则每次 render 都会重置悬停态）
   if (board.dataset.sig !== cardsHtml) {
     board.innerHTML = cardsHtml;
     board.dataset.sig = cardsHtml;
     adoptLegacy(view, board);          // 卡片墙重建后，把 legacy 那几张（委托板/日历）重新认领进来
   }
-
-  if (view.firstChild !== map) view.insertBefore(map, view.firstChild);
-  if (map.nextSibling !== board) view.insertBefore(board, map.nextSibling);
+  if (view.firstChild !== board) view.insertBefore(board, view.firstChild);
   view.classList.add('v4-board');
-  /* M26.2：大区图（12×12）单独一个 class —— 它只有 144 格，用户要「放大到跟小区地图一样」。
-     并排布局下地图列只有 670px 宽，12 列被宽度卡死在 50px 上下；这里让**大区模式下地图卡独占整行**，
-     格子尺寸只受高度约束（实测 2048 宽下能到 40px 上下，接近本地地图的观感）。 */
-  view.classList.toggle('v4-region', mapMode === 'region');
-  /* M25.1：fitMap 必须等**两次** rAF —— 第一次 rAF 时 #v4world 的 flex 高度还在布局中途，
-     量出来的 clientHeight 是旧值（会算错格子边长，实测把 514px 的图塞进 512px 的框 → 地图又滚了）。 */
+  /* M32：卡片墙是刚刚才建的，字号（zoom）要在这里补一次 —— applyScale 在 boot 时跑过一次，
+     那时 #v4cards 还不存在（实测：探针读到的 zoom 一直是 none）。 */
+  try { (window as any).V4Scale?.paintMap(); } catch { /* 忽略 */ }
+  try { (window as any).V4Scale?.applyCardsZoom?.(); } catch { /* 忽略 */ }
+  /* M25.1：fitMap 必须等**两次** rAF —— 第一次 rAF 时容器高度还在布局中途，量出来的是旧值。 */
   requestAnimationFrame(() => requestAnimationFrame(fitMap));
-  /* 窗口尺寸变化 / 面板高度变化（BETA 条出现、浏览器 UI 收起）时重算一次；
-     只在尺寸真的变了才动，避免和 fitMap 自己改格子尺寸打架（改格子 → 触发 observer → 死循环）。 */
+  /* 窗口尺寸变化 / 折叠展开时重算格子尺寸；只在尺寸真的变了才动，避免"改格子→触发 observer→死循环" */
   if (typeof ResizeObserver !== 'undefined') {
     const mapCard = document.getElementById('v4world');        // 注意：本函数里 `card` 是"造卡片"的工具函数，别撞名
     const ro = mapCard ? (mapCard as any).__ro as ResizeObserver | undefined : undefined;
@@ -836,12 +848,65 @@ export function mountWorldPanel() {
   }
 }
 
+/** M32 · 地图悬浮窗：右上角一个浮层，头部有标题与关闭键，折叠后只剩一条小条 */
+export function ensureMapWindow(): void {
+  let win = document.getElementById('v4mapwin') as HTMLElement | null;
+  if (!win) {
+    win = document.createElement('div');
+    win.id = 'v4mapwin';
+    win.innerHTML = '<div class="mwhead">' +
+      '<span class="mwname" id="v4mapwin-title">🗺️ 地图</span>' +
+      '<span class="hint" style="margin:0">按 <span class="mono">M</span> 折叠</span>' +
+      '<button class="btn sm" onclick="V4Scale.toggleMap()" title="折叠地图（M）">✕ 收起</button>' +
+      '</div><div class="mwbody"></div>';
+    document.body.appendChild(win);
+  }
+  let bar = document.getElementById('v4mapbar') as HTMLElement | null;
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.id = 'v4mapbar';
+    bar.setAttribute('role', 'button');
+    bar.title = '打开地图（M）';
+    bar.innerHTML = '🗺️ <b>地图</b> <span class="hint" style="margin:0">M</span>';
+    bar.addEventListener('click', () => { try { (window as any).V4Scale?.toggleMap(true); } catch { /* 忽略 */ } });
+    document.body.appendChild(bar);
+  }
+  const btn = document.getElementById('btn-v4map');
+  if (!btn) {
+    const tools = document.querySelector('#topbar .tools');
+    if (tools) {
+      const b = document.createElement('button');
+      b.id = 'btn-v4map';
+      b.className = 'icobtn';
+      b.title = '地图：本地/大区（快捷键 M）';
+      b.textContent = '🗺️';
+      b.addEventListener('click', () => { try { (window as any).V4Scale?.toggleMap(); } catch { /* 忽略 */ } });
+      tools.insertBefore(b, tools.firstChild);
+    }
+  }
+}
+
+/** 头部标题跟着当前模式/区域变（本地 ↔ 大区） */
+export function paintMapWindow(): void {
+  const win = document.getElementById('v4mapwin');
+  if (!win) return;
+  const t = document.getElementById('v4mapwin-title');
+  if (t) {
+    const here = homeRegion();
+    t.textContent = mapMode === 'region' ? '🌐 大区地图 · ' + here.name : '🗺️ 本地地图 · ' + here.short;
+  }
+  try { (window as any).V4Scale?.paintMap(); } catch { /* 还没装好 */ }
+}
+
 /** 地图格子尺寸自适应：算「整列内容总高（含上方标题与工具条）」，超了就缩格子，直到不用滚。
     下限 24px（R4 定的点击命中区），上限 28px（再大就顶出屏幕）。 */
 function fitMap() {
   const view = document.getElementById('view');
   const card = document.getElementById('v4world');
   if (!view || !card || !view.classList.contains('v4-board')) return;
+  /* M32：地图在悬浮窗里，折叠时量不到尺寸 —— 直接跳过（否则会拿 0 去反推格子边长） */
+  const win = document.getElementById('v4mapwin');
+  if (!win || !win.classList.contains('open')) return;
   const rgrid = card.querySelector('.rgrid') as HTMLElement | null;
   if (rgrid) { fitRegion(view, card, rgrid); return; }        // 大区图走 12×12 那套算法
   const wrap = card.querySelector('.wmapwrap') as HTMLElement | null;

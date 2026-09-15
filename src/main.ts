@@ -27,7 +27,7 @@ export const V4: Record<string, unknown> = {};
 (window as any).V4 = V4;
 
 async function main() {
-  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi, integrity, betaNotice, regionEventsCore, regionEvents, regionsCore, worldsUi, tutorial, saveVault, accountVault, survival, envCore, medical] = await Promise.all([
+  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi, integrity, betaNotice, regionEventsCore, regionEvents, regionsCore, worldsUi, tutorial, saveVault, accountVault, survival, envCore, medical, uiScale] = await Promise.all([
     import('./v4/worldgen'),
     import('./v4/pois'),
     import('./v4/combat'),
@@ -55,6 +55,7 @@ async function main() {
     import('./v4/survival'),
     import('./v4/env-core'),
     import('./v4/medical'),
+    import('./v4/ui-scale'),
   ]);
   // BETA 声明条：整站/整游戏最上面那一条（本站所有子页面都要有）
   betaNotice.installBetaNotice();
@@ -281,6 +282,15 @@ async function main() {
     travelExtra: medical.bodyTravelExtra, hudLine: medical.bodyHudLine, bodyNow: medical.bodyNow,
   };
   (V4 as any).medical = medical;
+  /* M32：字号适配 + 地图悬浮窗（顶栏 🗺️、☰ 菜单里的 A−/A+、快捷键 Ctrl±/M 都走这里） */
+  (window as any).V4Scale = {
+    step: uiScale.stepFsBtn, set: uiScale.setFs, name: uiScale.fsName, prefs: uiScale.uiPrefs,
+    toggleMap: uiScale.toggleMap, mapOpen: uiScale.mapOpenNow, paintMap: uiScale.paintMapOverlay,
+    buttons: uiScale.scaleButtonsHtml, status: uiScale.scaleStatusNow,
+    applyCardsZoom: uiScale.applyCardsZoom,        // mountWorldPanel 每次重建卡片墙后都要补一次
+  };
+  (V4 as any).uiScale = uiScale;
+  uiScale.applyScale();
   /* 探针/调试用的纯函数出口（只在本地探针里读，游戏逻辑不依赖它） */
   (window as any).V4Debug = Object.assign((window as any).V4Debug || {}, {
     salvageYields: envCore.salvageYields, regionById: regionsCore.regionById,
@@ -302,6 +312,20 @@ async function main() {
   }
   mountWorld();
   L.log('🧪 v4 引擎已接管战斗：4 招式槽 / 速度出手 / 属性克制。', 'info');
+  /* M32：地图悬浮窗与字号都在 boot 之后再落一次 —— #hud/#topbar 这时候才齐，
+     顶栏那个 🗺️ 按钮也才有地方插（ensureMapWindow 是幂等的）。 */
+  try { worldUi.ensureMapWindow(); uiScale.applyScale(); uiScale.paintMapOverlay(); } catch (e) { console.warn('[v4] 界面适配初始化失败', e); }
+  /* M32 快捷键：Ctrl + / − / 0 调字号，M 开关地图（输入框里打字时不抢键） */
+  document.addEventListener('keydown', (e) => {
+    const t = e.target as HTMLElement | null;
+    if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return;
+    if (e.ctrlKey && (e.key === '=' || e.key === '+')) { e.preventDefault(); uiScale.stepFsBtn(1); return; }
+    if (e.ctrlKey && (e.key === '-' || e.key === '_')) { e.preventDefault(); uiScale.stepFsBtn(-1); return; }
+    if (e.ctrlKey && e.key === '0') { e.preventDefault(); uiScale.setFs(100); return; }
+    if (!e.ctrlKey && !e.altKey && !e.metaKey && (e.key === 'm' || e.key === 'M')) {
+      e.preventDefault(); uiScale.toggleMap();
+    }
+  });
   /* M27 新手教程：第一次进游戏自动弹一次（看完/跳过之后不再自动弹；☰ 菜单里随时能重看）。
      ?dev=ready 这类开发钩子不弹，免得探针每次都被挡住。 */
   const devFlags = String(new URLSearchParams(location.search).get('dev') || '');

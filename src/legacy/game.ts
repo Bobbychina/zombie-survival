@@ -3407,6 +3407,8 @@ function openMenu(){
   /* M27：新手教程入口 —— 想再看一遍（或朋友第一次玩）就点这里 */
   const v4tut = (typeof window.V4Tutorial === 'object' && window.V4Tutorial)
     ? '<button class="btn sm" onclick="closeAllModals();V4Tutorial.start(true)">🎓 新手指南（从头看一遍）</button>' : '';
+  /* M32：字号 + 地图开关也进菜单（用户："字体太小了，做可自定义字号适配"） */
+  const v4scale = (typeof window.V4Scale === 'object' && window.V4Scale && window.V4Scale.buttons) ? String(window.V4Scale.buttons() || '') : '';
   modal({ title:'☰ 菜单', body:'<div class="hint" style="line-height:2">' +
     '存档是<b>自动</b>的（每日结束、搜刮、制作、建造、战斗结束时）。手动存档随时可用。<br>' +
     'M29 起存档<b>全部加密</b>（AES-GCM-256，密钥只在本机 worker 里、不可导出）：本机读写的都是密文，' +
@@ -3419,7 +3421,9 @@ function openMenu(){
       '<button class="btn sm ' + (S.ui.amb ? 'ok' : '') + '" onclick="toggleAmb()">🌫️ 环境底噪：' + (S.ui.amb ? '开' : '关') + '</button>' +
       '<button class="btn sm ' + (S.sfx ? 'ok' : '') + '" onclick="document.getElementById(\'btn-sfx\').click();closeAllModals();openMenu()">🔊 总音效：' + (S.sfx ? '开' : '关') + '</button>' +
       '<button class="btn sm ' + (S.ui.music ? 'ok' : '') + '" onclick="toggleMusic()">🎵 配乐：' + (S.ui.music ? '开' : '关') + '</button>' +
-    '</div><div class="hint" style="margin-top:6px">节拍模式会让每次攻击分三段演出（约 +0.3 秒/回合），方便看清谁挨了打；即时模式保持原来的手感。<br>配乐是程序现场合成的四小节循环（Am–F–C–E），没有音频文件：白天/夜晚/战斗/残血各有一套速度与配器。</div>',
+    '</div>' +
+    (v4scale ? '<div class="sect-title" style="margin-top:10px">显示（字号 / 地图）</div>' + v4scale : '') +
+    '<div class="hint" style="margin-top:6px">节拍模式会让每次攻击分三段演出（约 +0.3 秒/回合），方便看清谁挨了打；即时模式保持原来的手感。<br>配乐是程序现场合成的四小节循环（Am–F–C–E），没有音频文件：白天/夜晚/战斗/残血各有一套速度与配器。</div>',
     footer:'<button class="btn ok" onclick="saveGame();closeAllModals()">💾 保存</button>' +
       '<button class="btn" onclick="closeAllModals();loadGame()">📂 读取</button>' +
       '<button class="btn" onclick="restoreBackup()">🛟 回滚备份</button>' +
