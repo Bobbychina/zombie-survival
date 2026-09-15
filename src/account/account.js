@@ -1014,29 +1014,10 @@
       return { ok: r.ok, err: r.err };
     },
 
-    /* ----- 备份 / 迁移 ----- */
-    exportAll: function () {
-      var db = loadDB(), id = Account.currentUid(), u = db.users[id];
-      if (!u) return { ok: false, err: '先登录' };
-      var bag = { v: 1, exportedAt: nowISO(), account: { name: u.name, email: u.email }, saves: {} };
-      Object.keys(u.games || {}).forEach(function (g) {
-        bag.saves[g] = {};
-        Account.slots(g).forEach(function (s) { bag.saves[g][s.slot] = Account.saveGet(g, s.slot); });
-      });
-      return { ok: true, json: JSON.stringify(bag), name: u.name };
-    },
-    importAll: function (json) {
-      var u = Account.current(); if (!u) return { ok: false, err: '先登录' };
-      var bag; try { bag = JSON.parse(json); } catch (e) { return { ok: false, err: '不是合法 JSON' }; }
-      if (!bag || !bag.saves) return { ok: false, err: '缺少存档内容' };
-      var n = 0;
-      Object.keys(bag.saves).forEach(function (g) {
-        Object.keys(bag.saves[g]).forEach(function (slot) {
-          if (Account.savePut(g, slot, bag.saves[g][slot]).ok) n++;
-        });
-      });
-      return { ok: true, count: n };
-    },
+    /* ----- 备份 / 迁移 -----
+       M29：exportAll / importAll 已删除（用户：「强制云端存档或者本地存档，不做可直接导出存档」）。
+       这两个函数会把**明文存档**整包吐给任何能执行 JS 的人（控制台一行 `DSHAccount.exportAll()`），
+       与"存档全部加密"直接冲突；账号库现在只提供 saveGet / savePut / pushAll / pullAll。 */
 
     /* ----- 事件 ----- */
     onChange: function (fn) { listeners.push(fn); return function () { listeners = listeners.filter(function (x) { return x !== fn; }); }; },

@@ -1,5 +1,6 @@
-// M28 取证：① 导出存档是加密信封（不是明文）② 导入能解回来（原样恢复）③ 老格式（base64 明文）仍然能导入
-//   ④ 改一个字符就报损坏 ⑤ 柏林噪声难度场在真世界里的三个硬约束
+// M28 取证（M29 后已收窄）：柏林噪声难度场在真世界里的三个硬约束。
+//   原来这里的"加密导出 / 粘贴导入 / 老明文兼容"五条随 M29 **下线**（导出/导入入口整体删除，
+//   存档改成 worker 密钥落地加密）——那部分现在由 `docs/_m29_probe.mjs` 负责（23 条）。
 const [, , cdpPort, url, outDir] = process.argv
 const fs = await import('node:fs/promises')
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -34,79 +35,22 @@ await send('Network.enable'); await send('Network.setCacheDisabled', { cacheDisa
 await send('Emulation.setDeviceMetricsOverride', { width: 2048, height: 1105, deviceScaleFactor: 1, mobile: false })
 await send('Page.navigate', { url: url + '?dev=ready' }); await sleep(3500)
 
-/* ── ① 加密导出 ── */
-const packed = JSON.parse(await ev(`(async () => {
-  const S2 = DEV.state(); S2.day = 7; S2.mat = 123
-  const plain = JSON.stringify(S2)
-  const code = await window.__v4PackSave(plain)
-  return JSON.stringify({ code, plainLen: plain.length, codeLen: code.length,
-    head: code.slice(0, 5), 明文片段: /"day"/.test(code) || /余烬/.test(code) })
-})()`))
-ok('导出是加密信封（ZSE1: 开头）', packed.head === 'ZSE1:', packed.head)
-ok('导出文本里没有任何明文字段（day / 余烬 都搜不到）', packed.明文片段 === false, '长度 ' + packed.plainLen + ' → ' + packed.codeLen)
-/* base64 本身就要 +33%，再加词表与 22 字节头：实测 ≈1.65×。两倍以内就算"没爆炸"，
-   真正的对照组是第一版：那一版 LZ 出来是 3.2 倍（越压越大，探针抓到的）。 */
-ok('加密后的长度可控（压缩 + base64 后没有爆炸）', packed.codeLen < packed.plainLen * 2.0, packed.plainLen + ' → ' + packed.codeLen);
-await shot('51_export_encrypted')
-
-/* ── ② 解回来一模一样 ── */
-const back = JSON.parse(await ev(`(async () => {
-  const S2 = DEV.state()
-  const plain = JSON.stringify(S2)
-  const j = await window.__v4UnpackSave(await window.__v4PackSave(plain))
-  return JSON.stringify({ same: j === plain, day: JSON.parse(j).day })
-})()`))
-ok('解密回来与原文逐字节一致', back.same === true, 'day=' + back.day)
-
-/* ── ③ 改一个字符 → 报损坏 ── */
-const tampered = await ev(`(async () => {
-  const S2 = DEV.state()
-  const code = await window.__v4PackSave(JSON.stringify(S2))
-  const i = Math.floor(code.length / 2)
-  const bad = code.slice(0, i) + (code[i] === 'A' ? 'B' : 'A') + code.slice(i + 1)
-  try { await window.__v4UnpackSave(bad); return 'NO-THROW' } catch (e) { return e.message }
+/* ── ① M29 之后：导出/导入这条路必须彻底没了 ── */
+const gone = JSON.parse(await ev(`JSON.stringify({
+  exportSave: typeof window.exportSave, importSave: typeof window.importSave,
+  pack: typeof window.__v4PackSave, unpack: typeof window.__v4UnpackSave,
+})`))
+ok('旧的导出/导入函数已经不在 window 上（exportSave / importSave / pack / unpack）',
+  gone.exportSave === 'undefined' && gone.importSave === 'undefined' && gone.pack === 'undefined' && gone.unpack === 'undefined',
+  JSON.stringify(gone))
+const saveHead = await ev(`(async () => {
+  const S2 = DEV.state(); S2.day = 66; saveGame(true)
+  await new Promise(r => setTimeout(r, 800))
+  const raw = localStorage.getItem('zombie_survival_save_v2') || ''
+  return JSON.stringify({ head: raw.slice(0, 5), 明文可见: /"day"/.test(raw) })
 })()`)
-ok('改一个字符就报"存档已损坏/校验和不匹配"', /校验和不匹配|损坏|太短/.test(String(tampered)), String(tampered).slice(0, 40))
-
-/* ── ④ UI 走一遍：导出弹窗 → 导入弹窗（加密格式） ──
-   先把当天改成 42 再导出：这样"导出的存档里就是第 42 天"，导入之后能验证"读回来的确实是那份存档"，
-   而不是碰巧和当前状态一样。 */
-await ev(`(() => { DEV.state().day = 42; exportSave(); return 1 })()`); await sleep(1100)
-const dlg = JSON.parse(await ev(`(() => {
-  const b = document.getElementById('exp-box')
-  return JSON.stringify({ has: !!b, val: b ? b.value.slice(0, 5) : '', len: b ? b.value.length : 0,
-    warn: /加密/.test(document.body.innerText) })
-})()`))
-ok('导出弹窗里给的是加密文本（ZSE1:…）且写明"已加密"', dlg.has && dlg.val === 'ZSE1:' && dlg.warn === true, JSON.stringify({ val: dlg.val, len: dlg.len }))
-await shot('52_export_dialog')
-const code = await ev(`document.getElementById('exp-box').value`)
-await ev(`closeAllModals(); 1`); await sleep(300)
-const imported = JSON.parse(await ev(`(async () => {
-  const S2 = DEV.state(); S2.day = 7                      // 故意改乱：证明是"导入"把它还原回 42
-  const want = JSON.parse(${JSON.stringify(code)}.startsWith('ZSE1:') ? await window.__v4UnpackSave(${JSON.stringify(code)}) : '{}')
-  importSave()
-  await new Promise(r => setTimeout(r, 300))
-  document.getElementById('imp-box').value = ${JSON.stringify(code)}
-  document.getElementById('imp-go').click()
-  await new Promise(r => setTimeout(r, 1500))
-  return JSON.stringify({ day: DEV.state().day, 存档里的天: want.day, modalGone: !document.querySelector('.modal'),
-    logTail: (document.getElementById('log')||document.body).innerText.split('\\n').slice(-1)[0] })
-})()`))
-ok('粘回导入弹窗能恢复（存档里的第 42 天原样回来）', imported.day === imported.存档里的天 && imported.day === 42, JSON.stringify(imported))
-
-/* ── ⑤ 老格式（明文 base64）仍然能导入：老玩家的备份不作废 ── */
-const legacy = JSON.parse(await ev(`(async () => {
-  const S2 = DEV.state(); S2.day = 66
-  const old = btoa(unescape(encodeURIComponent(JSON.stringify(S2))))
-  S2.day = 1; DEV.state().day = 1
-  importSave()
-  await new Promise(r => setTimeout(r, 300))
-  document.getElementById('imp-box').value = old
-  document.getElementById('imp-go').click()
-  await new Promise(r => setTimeout(r, 500))
-  return JSON.stringify({ day: DEV.state().day })
-})()`))
-ok('老版明文 base64 存档仍然能导入（向后兼容）', legacy.day === 66, JSON.stringify(legacy))
+const sh = JSON.parse(saveHead)
+ok('本机主档是 M29 的 ZSV1: 密文（M28 的 ZSE1 信封已退役）', sh.head === 'ZSV1:' && sh.明文可见 === false, JSON.stringify(sh))
 
 /* ── ⑥ 大区难度场：三个硬约束 ──
    必须先切到"大区地图"再量：本地视图里根本没有 .rcell2（线上探针第一版就在这儿量到 144 个 0）。 */

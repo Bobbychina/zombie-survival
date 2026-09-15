@@ -17,6 +17,8 @@ export interface AccountResult { ok: boolean; err?: string; uid?: string; user?:
 
 export interface DshAccount {
   version: string;
+  /** 当前账号的内部 uid（本机账号记录都按它隔离；account-vault 用它分桶） */
+  currentUid(): string | null;
   /** 云后端信息：enabled = 配了 api 地址；loggedIn = 当前会话带服务端 token */
   serverInfo(): { base: string; enabled: boolean; loggedIn: boolean };
   serverAvailable(): Promise<boolean>;
@@ -69,8 +71,8 @@ export interface DshAccount {
   pullAll(game: string): Promise<AccountResult & { pulled?: string[]; provider?: string }>;
   cloudSummary(game: string): Promise<AccountResult & { remote?: SaveSlot[] }>;
   cloudDelete(game: string, slot: string): Promise<AccountResult>;
-  exportAll(): { ok: boolean; json?: string; name?: string; err?: string };
-  importAll(json: string): AccountResult & { count?: number };
+  /* M29：exportAll / importAll 已从账号库删掉（游戏侧不再提供明文导出/导入）。
+     account.js 里还留着这两个函数给 /games/ 大厅的老页面用，但游戏侧不再引用它们。 */
   onChange(fn: (ev: Record<string, unknown>) => void): () => void;
 }
 

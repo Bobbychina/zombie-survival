@@ -11,6 +11,8 @@ declare module 'node:fs' {
    同样只声明用到的那一个入口，不引整个 @types/node。 */
 declare module 'node:crypto' {
   export const webcrypto: {
-    subtle: { digest(alg: string, data: ArrayBuffer | Uint8Array): Promise<ArrayBuffer> };
+    subtle: SubtleCrypto;
+    getRandomValues<T extends ArrayBufferView | null>(array: T): T;
+    randomUUID(): string;
   };
 }

@@ -8,6 +8,8 @@
    未登录/未绑定时给出明确文案，而不是把功能藏起来。 */
 import { L } from '../main';
 import { integritySummary, isTampered, onSaveWritten, stampInPlace, verifyForeign } from './integrity';
+import { isEnvelope } from './account-vault-core';
+import { sealMainSlot } from './account-vault';
 
 export const GAME = 'zombie-survival';
 export const SLOT = 'main';                    // 主槽：一键上传/下载就是它
@@ -129,7 +131,7 @@ export function showRecover(): void {
       '<div class="row" style="margin-top:8px"><input id="acc-rc-code2" placeholder="恢复码（如 R3J7-6DAM-…）" style="flex:1"></div>' +
       '<div class="row" style="margin-top:8px"><input id="acc-rc-pass" type="password" placeholder="新密码（≥6 位）" style="flex:1"></div>' +
       '<div class="hint" style="margin-top:8px">没设过恢复码的账号找回不了（服务端只有口令哈希，没有任何后门）——' +
-      '那就只能用还留着本地存档的设备导出存档文件，重新注册一个账号再导入。</div>' +
+      '这种账号只能重开一局（本机存档是加密的，没有"导出明文"这条路可走）。</div>' +
       '<div class="hint" id="acc-msg" style="margin-top:8px"></div>',
     footer: '<button class="btn ok" onclick="V4Account.doRecover()">找回并设置新密码</button>' +
       '<button class="btn" data-close>取消</button>',
@@ -186,10 +188,10 @@ function loggedInHtml(u: NonNullable<ReturnType<typeof currentUser>>, a: NonNull
       : '<button class="btn" onclick="V4Account.bindMicrosoft()">🪟 绑定微软账号</button>';
   }
   h += '</div>';
-  if (!g && !m) h += '<div class="hint">没启用云存档也能玩：进度就在这台设备的浏览器里，下面的「导出存档文件」能拷到别的设备。' +
-    '想跨设备就贴一次 GitHub 令牌码——存档会写进你自己账号下的一个私有 Gist，随时能删。</div>';
+  if (!g && !m) h += '<div class="hint">没绑定云账号也能玩：进度加密存在这台设备的浏览器里。' +
+    '想跨设备就贴一次 GitHub 令牌码——存档（密文）会写进你自己账号下的一个私有 Gist，随时能删。</div>';
   if (!a.config().microsoft.clientId) h += '<div class="hint">微软那条路暂时没有：它要求在 Azure 注册应用，' +
-    '而个人微软账号走注册流程时被要求绑信用卡。GitHub 一条够用（免费、无额度限制），不想给令牌就导出存档文件。</div>';
+    '而个人微软账号走注册流程时被要求绑信用卡。GitHub 一条够用（免费、无额度限制）。</div>';
   if (g && g.serverSide) h += '<div class="hint">令牌保存在你自己的 Worker 里（前端拿不到），中继只允许读写你名下那一个存档 Gist。</div>';
   if (g && !g.serverSide) h += '<div class="hint">令牌记在这台设备的浏览器里（localStorage，关标签页不用重登），' +
     '除了 api.github.com 不向别处发请求；点上面的「✕」解绑就会清掉它，也可在 GitHub → Settings → Developer settings → Tokens 删掉。</div>';
@@ -207,11 +209,12 @@ function loggedInHtml(u: NonNullable<ReturnType<typeof currentUser>>, a: NonNull
   h += '<div class="sect-title" style="margin-top:12px">账号操作</div><div class="row">' +
     (u.hasPassword ? '<button class="btn" onclick="V4Account.changePass()">🔑 改密码</button>' +
       '<button class="btn" onclick="V4Account.setupRecovery()">🎫 设/换恢复码</button>' : '') +
-    '<button class="btn" onclick="V4Account.exportFile()">💾 导出存档文件</button>' +
-    '<button class="btn" onclick="V4Account.importFile()">📂 从文件导入</button>' +
-    '<button class="btn ghost" onclick="V4Account.exportAll()">⬆️ 导出文本</button>' +
     '<button class="btn" onclick="V4Account.logout()">🚪 退出登录</button>' +
     '<button class="btn danger" onclick="V4Account.del()">🗑️ 注销账号</button></div>';
+  /* M29：不再提供"导出明文存档" —— 想换设备/多端同步就用上面的「上传存档 / 读取存档 / 同步」，
+     上云与本机落盘的都是密文（本机 `ZSV1:`，账号库 `ZSV2:`）。 */
+  h += '<div class="hint" style="color:#e0b06a">🔒 存档不再支持「导出明文文件」：本机与云上都是密文' +
+    '（换设备请登录同一个账号，用上面的「上传存档 / 读取存档」；本机写坏可回滚加密备份）。</div>';
   h += '<div class="hint" id="acc-msg" style="margin-top:8px"></div>';
   return h;
 }
@@ -247,7 +250,7 @@ async function paintQuota(): Promise<void> {
     } else if (info && info.hasRecovery) {
       rcBox.textContent = '已设置（服务端只存校验值，明文只有你手里那份）';
     } else {
-      rcBox.textContent = '本机账号：密码忘了可以用「导出存档文件」救，再去新账号导入';
+      rcBox.textContent = '本机账号：没设恢复码就找不回（存档是加密的，密文换账号解不开）';
     }
   }
 }
@@ -378,7 +381,7 @@ export function openTokenBind(): void {
         : '只在这台设备的浏览器（localStorage）——本站没有后端，除了 api.github.com 不向别处发请求；公用电脑上别贴。') + '</div>' +
       '<div class="hint">怎么收回：GitHub → Settings → Developer settings → Tokens 里删掉它（本地存档不受影响）；云端存档就是那个 Gist。' +
       '面板上点「GitHub @你 ✕」也能解绑。</div>' +
-      '<div class="hint" style="color:#e0b06a">⚠️ 不想给令牌？关掉窗口：用「💾 导出存档文件 / 📂 从文件导入」换设备，完全不需要第三方账号。</div>' +
+      '<div class="hint" style="color:#e0b06a">⚠️ 不想给令牌？关掉窗口也能玩：进度加密存在本机（只是没法跨设备）。</div>' +
       '<div class="hint" id="acc-msg" style="margin-top:8px"></div>',
     footer: '<button class="btn ok" onclick="V4Account.bindGitHubToken()">' + (loggedIn ? '保存并启用' : '登录并启用云存档') + '</button>' +
       '<button class="btn" data-close>取消</button>',
@@ -453,6 +456,7 @@ async function pushAsync(): Promise<void> {
      —— 每账号每天只有 10 次上传额度，白烧一半 */
   const r = a.savePut(GAME, SLOT, L.S, { noServer: true });
   if (!r.ok) { toastMsg('存档失败', r.err ?? '', 'bad'); return; }
+  await sealMainSlot(GAME);                              // M29：确认磁盘上那份已是密文（上传走它）
   const up = await a.pushAll(GAME);
   if (up.ok) toastMsg('已存档到账号', '本机 + ' + (up.provider === 'github' ? 'GitHub Gist' : 'OneDrive') + ' 都写好了。', 'ok');
   else toastMsg('只存到了本机', up.err ?? '绑定云账号后才能跨设备。', 'info');
@@ -466,6 +470,9 @@ async function pullAsync(): Promise<void> {
   const down = await a.pullAll(GAME);
   const data = a.saveGet(GAME, SLOT);
   if (!data) { toastMsg('账号里没有存档', down.ok ? '云端和本机都没有这一槽。' : (down.err ?? ''), 'bad'); return; }
+  /* M29：账号库里存的是密文串；pullAll 的钩子已经把它解进内存了，这里拿到的应该是明文对象。
+     万一还是密文（密钥没准备好），提示一下而不是假装成功。 */
+  if (isEnvelope(data)) { toastMsg('存档还没解密好', '稍等一秒再点一次「读取账号存档」。', 'info'); return; }
   if (!applySave(data)) { toastMsg('这份存档读不了', '可能来自更新的版本。', 'bad'); return; }
   toastMsg('已读取账号存档', down.ok ? '来源：' + (down.provider === 'github' ? 'GitHub' : 'OneDrive') : '来源：本机', 'ok');
 }
@@ -491,6 +498,8 @@ export const isAutoSync = () => autoSync;
  *  M8：放进来之前先验指纹——云端那份如果在 Gist 网页上被人手改过，这里要拦一下并问玩家 */
 export function applySave(data: unknown): boolean {
   try {
+    /* M29：密文串不是存档对象 —— 先让调用方的异步钩子解出来，别在这里当成坏档 */
+    if (isEnvelope(data)) { L.log('🔐 这份存档还是密文，稍等解密完成再点一次。', 'dim'); return false; }
     const v = verifyForeign(data);
     if (v.tampered) {
       const go = window.confirm('这份存档的指纹对不上（' + v.detail + '）。\n\n' +
@@ -510,81 +519,12 @@ export function applySave(data: unknown): boolean {
   } catch (e) { console.warn('[v4] 应用账号存档失败', e); return false; }
 }
 
-/* ── 导入 / 导出 / 改密 / 删号 ── */
-export function exportAll(): void {
-  const a = A(); if (!a) return;
-  const r = a.exportAll();
-  if (!r.ok) { toastMsg('导出失败', r.err ?? '', 'bad'); return; }
-  L.modal({
-    title: '⬆️ 导出全部存档', sticky: true,
-    body: '<p class="muted">把下面的文本抄走就完成了离线备份（换设备时用「导入存档」还原）。</p>' +
-      '<textarea id="acc-exp" style="width:100%;height:130px;margin-top:10px;background:#0d0f13;color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:8px;font-family:var(--mono);font-size:11px;">' +
-      esc(r.json) + '</textarea>',
-    footer: '<button class="btn" data-close>关闭</button>',
-  });
-}
-export function importAll(): void {
-  const a = A(); if (!a) return;
-  L.modal({
-    title: '⬇️ 导入存档', sticky: true,
-    body: '<p class="muted">粘贴之前导出的文本，导入会按槽位覆盖本机存档。</p>' +
-      '<textarea id="acc-imp" style="width:100%;height:130px;margin-top:10px;background:#0d0f13;color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:8px;font-family:var(--mono);font-size:11px;"></textarea>' +
-      '<div class="hint" id="acc-msg" style="margin-top:8px"></div>',
-    footer: '<button class="btn ok" onclick="V4Account.doImport()">导入</button><button class="btn" data-close>取消</button>',
-  });
-}
-export function doImport(): void {
-  const a = A(); if (!a) return;
-  const r = a.importAll(val('#acc-imp'));
-  if (!r.ok) { msg(r.err ?? '导入失败', true); return; }
-  L.closeAllModals(); L.render();
-  toastMsg('导入完成', '恢复了 ' + r.count + ' 个存档槽。', 'ok');
-}
-/* ── 存档文件导入 / 导出（不依赖任何第三方账号：换设备最省事的办法） ── */
-export function exportFile(): void {
-  const a = A(); if (!a) return;
-  const r = a.exportAll();
-  if (!r.ok) { toastMsg('导出失败', r.err ?? '', 'bad'); return; }
-  try {
-    const blob = new Blob([String(r.json)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const el = document.createElement('a');
-    el.href = url;
-    el.download = GAME + '-saves-' + new Date().toISOString().slice(0, 10) + '.json';
-    document.body.appendChild(el);
-    el.click();
-    el.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
-    L.log('💾 存档文件已下载（' + Math.round(String(r.json).length / 1024) + ' KB）——存网盘或拷 U 盘都行。', 'success');
-  } catch (e) {
-    toastMsg('下载失败', '浏览器拦了下载，可以改用「导出文本」复制粘贴。', 'bad');
-    console.warn('[v4] 导出文件失败', e);
-  }
-}
-export function importFile(): void {
-  L.modal({
-    title: '📂 从文件导入存档', sticky: true,
-    body: '<p class="muted">选之前导出的那个 <span class="mono">' + GAME + '-saves-日期.json</span>，按槽位覆盖本机存档。</p>' +
-      '<input type="file" id="acc-file" accept=".json,application/json" style="margin-top:10px;width:100%">' +
-      '<div class="hint" id="acc-msg" style="margin-top:8px"></div>',
-    footer: '<button class="btn ok" onclick="V4Account.doImportFile()">导入</button><button class="btn" data-close>取消</button>',
-  });
-}
-export function doImportFile(): void {
-  const a = A(); if (!a) return;
-  const input = L.$('#acc-file') as HTMLInputElement | null;
-  const f = input?.files?.[0];
-  if (!f) { msg('先选一个文件', true); return; }
-  const fr = new FileReader();
-  fr.onload = () => {
-    const r = a.importAll(String(fr.result ?? ''));
-    if (!r.ok) { msg(r.err ?? '导入失败', true); return; }
-    L.closeAllModals(); L.render();
-    toastMsg('导入完成', '从文件恢复了 ' + r.count + ' 个存档槽。', 'ok');
-  };
-  fr.onerror = () => msg('读文件失败', true);
-  fr.readAsText(f);
-}
+/* ── 改密 / 删号 ──
+   M29：这里原来有「导出全部存档 / 导出存档文件 / 从文件导入 / 导入存档」四个入口，
+   现在**全部删掉**（用户：「不做可直接导出存档」）。换设备的唯一正路 = 登录同一账号 +
+   ☁️ 上传/读取（本机落盘 `ZSV1:`、账号库落盘与 Gist/OneDrive `ZSV2:`，都是密文）。 */
+/** 给面板/菜单提示用：M29 之后存档只在"本机加密存档"与"账号云存档"两条路上跑 */
+export const EXPORT_REMOVED_HINT = 'M29 起不再提供明文导出：换设备用账号云存档（上传的也是密文）。';
 
 export function changePass(): void {
   L.modal({
@@ -631,7 +571,7 @@ export function subscribeAutoSync(): void {
       try {
         stampInPlace(L.S as Record<string, unknown>);      // 先盖指纹再上传，云端那份才校验得通过
         a.savePut(GAME, SLOT, L.S, { noServer: true });    // 同上：别让 savePut 和 pushAll 各推一次（额度翻倍消耗）
-        void a.pushAll(GAME).then(res => {
+        void sealMainSlot(GAME).then(() => a.pushAll(GAME)).then(res => {   // M29：先确认落盘是密文，再上云
           if (res.ok) L.log('☁️ 自动同步：存档已推到云端。', 'dim');
         });
       } catch (e) { console.warn('[v4] 自动同步失败', e); }

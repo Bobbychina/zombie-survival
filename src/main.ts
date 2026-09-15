@@ -27,7 +27,7 @@ export const V4: Record<string, unknown> = {};
 (window as any).V4 = V4;
 
 async function main() {
-  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi, integrity, betaNotice, regionEventsCore, regionEvents, regionsCore, worldsUi, tutorial, saveCrypto] = await Promise.all([
+  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi, integrity, betaNotice, regionEventsCore, regionEvents, regionsCore, worldsUi, tutorial, saveVault, accountVault] = await Promise.all([
     import('./v4/worldgen'),
     import('./v4/pois'),
     import('./v4/combat'),
@@ -50,7 +50,8 @@ async function main() {
     import('./v4/regions-core'),
     import('./v4/worlds-ui'),
     import('./v4/tutorial'),
-    import('./v4/save-crypto'),
+    import('./v4/save-vault'),
+    import('./v4/account-vault'),
   ]);
   // BETA 声明条：整站/整游戏最上面那一条（本站所有子页面都要有）
   betaNotice.installBetaNotice();
@@ -147,8 +148,7 @@ async function main() {
     bindGitHubToken: accountUi.bindGitHubToken, openTokenBind: accountUi.openTokenBind,
     bindMicrosoft: accountUi.bindMicrosoft, unbind: accountUi.unbind,
     push: accountUi.push, pull: accountUi.pull, sync: accountUi.sync, toggleAuto: accountUi.toggleAuto,
-    exportAll: accountUi.exportAll, importAll: accountUi.importAll, doImport: accountUi.doImport,
-    exportFile: accountUi.exportFile, importFile: accountUi.importFile, doImportFile: accountUi.doImportFile,
+    /* M29：exportAll / importAll / exportFile / importFile 全部下线 —— 见 account-ui.ts 的注释 */
     unlock: accountUi.unlock, doUnlock: accountUi.doUnlock,
     changePass: accountUi.changePass, doChangePass: accountUi.doChangePass, del: accountUi.del, doDelete: accountUi.doDelete,
   };
@@ -189,9 +189,6 @@ async function main() {
   /* M27：新手教程 —— 第一次进游戏自动弹（看完了不再自动弹），菜单里也能重看 */
   (window as any).V4Tutorial = tutorial.V4Tutorial;
   (window as any).__v4TutorialBattleTip = tutorial.maybeBattleTip;
-  /* M28：导出存档加密（legacy 的 exportSave/importSave 是同步流程，这里只把两个函数挂出去） */
-  (window as any).__v4PackSave = saveCrypto.packSave;
-  (window as any).__v4UnpackSave = saveCrypto.unpackSave;
   (window as any).V4Camp = camp.V4Camp;
   // M6：季节/天气/体温的最小 HUD（挂在顶栏 chips 里，不动地图面板结构）
   const paintEnv = () => {
@@ -219,11 +216,21 @@ async function main() {
   // 窗口尺寸变了要重算地图格子（fitMap 会按可用高度重新定格子边长）
   window.addEventListener('resize', () => mountWorld());
 
-  // M8：存档完整性——必须在 L.boot() 读档之前看原始 JSON（loadGame 会 sanitize，夹取之后就查不出越界了）
+  /* M29：存档保险箱先行 —— worker 里生成/取出 AES-GCM-256 密钥（不可导出），
+     把磁盘上的密文解进内存；legacy 的 boot() 是同步流程，所以必须在它之前 hydrate。 */
+  const vaultState = await saveVault.SaveVault.init();
+  (window as any).V4Vault = saveVault.SaveVault;
+  /* M29：账号库那条链路（本机记录 / GitHub Gist / OneDrive）也走同一把 worker 密钥加密 —— */
+  accountVault.initAccountVault();
+  (window as any).V4AccountVault = { status: accountVault.accountVaultStatus, warmUp: accountVault.warmUp };
+  /* M8：存档完整性——必须在 L.boot() 读档之前看原始 JSON（loadGame 会 sanitize，夹取之后就查不出越界了） */
   const preVerdict = integrity.inspectBeforeBoot();
   integrity.installWriteHook();
   L.boot();
   integrity.reportAfterBoot();
+  if (vaultState.mode === 'main-thread') L.log('🔐 存档加密：worker 不可用，已降级成主线程 AES-GCM（存档同样不是明文）。', 'dim');
+  else if (vaultState.mode === 'worker') L.log('🔐 存档已加密（AES-GCM-256，密钥只在本机 worker 里，不可导出）。', 'dim');
+  if (vaultState.lastError) L.log('⚠️ 保险箱初始化有问题：' + vaultState.lastError, 'danger');
   /* M15.1：地图重画（世界生成器版本变了）。BETA 阶段地形会随生成器更新而变，
      存档里保留人物进度、清掉按坐标记的地形进度——这事必须告诉玩家，否则会以为丢档了。 */
   if (worldState.takeWorldMigration()) {

@@ -497,30 +497,47 @@ let S = newState();
 let battle = null, fxLock = false;
 const RM = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)').matches : false;
 
-/* ── C01 存档安全带：先转存 .bak 并回读校验，成功才允许覆写主键 ── */
+/* ── M29 存档安全带（加密版）：所有落盘都经过保险箱（worker 里的 AES-GCM-256）──
+   写：内存缓存立刻更新，密文异步落盘；读：启动时已解密好，同步取。
+   备份（.bak）也是密文，供"主档写坏"时在 ☰ 菜单里回滚。 */
 const BAK_KEY = SAVE_KEY + '.bak';
 window.__renderErr = null;
+const vault = () => (typeof window.V4Vault === 'object' && window.V4Vault) ? window.V4Vault : null;
 function writeSave(s){
   try{
     const payload = JSON.stringify(s);
-    const prev = localStorage.getItem(SAVE_KEY);
-    if(prev){
-      localStorage.setItem(BAK_KEY, prev);
-      if(localStorage.getItem(BAK_KEY) !== prev) return false;   // .bak 写失败 → 跳过本次写入，宁可少存一次
+    const v = vault();
+    if(v){
+      const prev = (v.status && v.status().cached) || null;   // 上一份明文（内存里的），当备份
+      v.write(payload, { backup: !!prev, backupRaw: prev });
+      return true;                                            // 落盘是异步的，失败会写进 status().lastError
+    }
+    /* 保险箱没起来（极罕见）：退回老的 localStorage 直写，宁可明文也不能丢档 */
+    const prev2 = localStorage.getItem(SAVE_KEY);
+    if(prev2){
+      localStorage.setItem(BAK_KEY, prev2);
+      if(localStorage.getItem(BAK_KEY) !== prev2) return false;
     }
     localStorage.setItem(SAVE_KEY, payload);
-    return localStorage.getItem(SAVE_KEY) === payload;           // 回读校验
+    return localStorage.getItem(SAVE_KEY) === payload;
   }catch(e){ return false; }
 }
 function saveGame(quiet){
   const ok = writeSave(S);
-  if(!quiet) ok ? log('💾 进度已保存（第 '+S.day+' 天）。','info') : toast('保存失败','本地存储被拒绝或已满。','bad');
+  if(!quiet) ok ? log('💾 进度已保存（第 '+S.day+' 天，加密落盘）。','info') : toast('保存失败','本地存储被拒绝或已满。','bad');
   return ok;
 }
 function autosave(){
   if(S.over) return;
   if(window.__renderErr) return;   // C01 熔断：渲染已崩，不把坏状态写死进唯一键位
   writeSave(S);
+}
+/** M29：读档走保险箱解密后的内存副本（boot 时已 hydrate）；没有就回退老路径 */
+function readSavedRaw(){
+  const v = vault();
+  const cached = v && v.read ? v.read() : null;
+  if(cached) return cached;
+  return localStorage.getItem(SAVE_KEY);
 }
 function lsGet(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
 function lsSet(k,v){ try{ localStorage.setItem(k,v); return true; }catch(e){ return false; } }
@@ -671,11 +688,31 @@ function migrateSave(d){
 }
 
 function loadGame(silent){
-  const readAndParse = (key) => { const raw = lsGet(key); return raw ? JSON.parse(raw) : null; };
+  /* M29：主档走保险箱的内存副本（启动时已解密）；备份是密文，异步解 —— 这里用同步的
+     `readSavedRaw()`，坏档回退那一步交给下面 catch 里的异步备份读取。 */
+  const rawText = (key) => (key === SAVE_KEY ? readSavedRaw() : lsGet(key));
+  const readAndParse = (key) => { const raw = rawText(key); return raw ? JSON.parse(raw) : null; };
   try{
     let d = null, source = '';
     try{ d = readAndParse(SAVE_KEY); source = '主存档'; }catch(e){ d = null; }
-    if(!d){ // 主键损坏 → 回退到 .bak
+    if(!d){ // 主键损坏 → 回退到 .bak（备份是密文，异步解一次）
+      const v = vault();
+      if(v && v.loadBackup){
+        v.loadBackup().then((txt) => {
+          if(!txt){ if(!silent) toast('没有可用存档','主存档与备份都读不出来，可以重新开始。','bad'); return; }
+          try{
+            const mig2 = migrateSave(JSON.parse(txt));
+            if(mig2.error){ toast('读档被拒绝', mig2.error, 'bad'); return; }
+            S = sanitizeSave(mig2.data);
+            if(!S){ toast('读档失败','存档内容无法解析。','bad'); return; }
+            battle = null; window.__renderErr = null; closeAllModals(); clearLog();
+            log('📂 读取存档：第 '+S.day+' 天（来源：加密备份 .bak）。','info');
+            log('🛟 主存档损坏，已自动回退到上一次的备份。','danger');
+            render();
+          }catch(e){ toast('读档失败','备份也解析不了。','bad'); }
+        });
+        return true;
+      }
       try{ d = readAndParse(BAK_KEY); source = '备份存档(.bak)'; }catch(e){ d = null; }
     }
     if(!d){ if(!silent) toast('没有可用存档','主存档与备份都读不出来，可以重新开始。','bad'); return false; }
@@ -736,60 +773,34 @@ function deepMerge(base, over){
   }
   return base;
 }
-/** M28：导出 = **加密信封**（ZSE1:…）。
-    为什么加密 / 为什么不去对抗 F12 —— 见 src/v4/save-crypto.ts 的文件头（一句话版：
-    纯前端游戏的解密代码一定在客户端，加密是为了"不明文外泄 + 提高手改门槛"，
-    真正拦改档的是 M8.1 的存档指纹，而不是禁用开发者工具）。 */
-function exportSave(){
-  const box = $('#exp-box');
-  const plain = JSON.stringify(S);
-  if(box) box.value = '正在加密…';
-  const run = (typeof window.__v4PackSave === 'function') ? window.__v4PackSave(plain) : null;
-  if(!run || typeof run.then !== 'function'){
-    modal({ title:'导出存档', body:'<p class="danger">这个构建缺少加密模块（save-crypto 没加载），为安全起见不导出明文。</p>',
-      footer:'<button class="btn" data-close>关闭</button>' });
-    return;
-  }
-  modal({ title:'导出存档', body:'<p class="muted">这一段就是你的存档（<b>已加密</b>）：复制走即可备份到别处，改游戏目录也不会丢。</p>'+
-    '<textarea id="exp-box" readonly style="width:100%;height:130px;margin-top:10px;background:#0d0f13;color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:8px;font-family:var(--mono);font-size:11px;">正在加密…</textarea>'+
-    '<div class="hint" style="margin-top:8px">粘贴回「导入」就能恢复。<b>老实说</b>：这是单机游戏、解密代码就在页面里，'+
-    '加密挡的是"明文被人一眼看懂 / 手一抖改坏"，挡不住铁了心要改档的人；改过的档在云同步与导入时会被<b>指纹校验</b>标出来。</div>',
-    footer:'<button class="btn ok" id="exp-copy">📋 复制</button><button class="btn" data-close>关闭</button>',
-    onMount(){ $('#exp-copy').onclick = () => {
-      try{ const b = $('#exp-box'); b.select(); document.execCommand('copy'); toast('已复制','存档文本已在剪贴板里。','ok'); }
-      catch(e){ toast('复制失败','手动全选文本框内容复制即可。','bad'); }
-    }; } });
-  run.then((code) => { const b = $('#exp-box'); if(b) b.value = code; })
-    .catch((e) => { const b = $('#exp-box'); if(b) b.value = ''; toast('加密失败', (e && e.message) ? e.message : '未知错误', 'bad'); });
-}
-function importSave(){
-  modal({ title:'导入存档', body:'<p class="muted">粘贴导出的存档文本，导入会覆盖当前进度（新旧格式都认）。</p>'+
-    '<textarea id="imp-box" style="width:100%;height:130px;margin-top:10px;background:#0d0f13;color:var(--ink);border:1px solid var(--line);border-radius:4px;padding:8px;font-family:var(--mono);font-size:11px;"></textarea>',
-    footer:'<button class="btn danger" id="imp-go">导入并覆盖</button><button class="btn" data-close>取消</button>',
-    onMount(){ $('#imp-go').onclick = () => {
-      const txt = $('#imp-box').value.trim();
-      const finish = (jsonText) => {
+/** M29：**导出/导入存档这两条路被去掉了**（用户：「强制云端存档或者本地存档，不做可直接导出存档」）。
+    取而代之的是：
+      · 本地存档 = 加密落盘（`writeSave` 走 SaveVault，密文前缀 ZSV1:）；
+      · 云存档 = ☰ 菜单 → 世界与账号 → 账号（上传的也是密文）；
+      · 本机加密备份 = `restoreBackup()`（主档写坏时回滚）。
+    老玩家手里可能还有 M28 的 ZSE1 导出文本 —— 那一版没进过正式发布，所以这里不保留导入入口；
+    如果哪天需要"换设备搬档"，正确做法是加一条**基于口令**的导出（口令不入代码），而不是回到明文。 */
+function restoreBackup(){
+  const v = (typeof window.V4Vault === 'object' && window.V4Vault) ? window.V4Vault : null;
+  if(!v || !v.loadBackup){ toast('没有备份','这个构建读不到本机备份。','bad'); return; }
+  const confirmModal = () => modal({ title:'🛟 回滚到上次备份', sticky:true,
+    body:'<p class="muted">本机保存着<b>上一次</b>的加密备份（每次存档前自动转存）。回滚会把当前进度换成它，'+
+      '当前进度会被覆盖。<br>用于"主档读不出来 / 刚做了一堆后悔的操作"这类情况。</p>',
+    footer:'<button class="btn danger" id="bak-go">回滚并覆盖当前进度</button><button class="btn" data-close>取消</button>',
+    onMount(){ $('#bak-go').onclick = () => {
+      v.loadBackup().then((txt) => {
+        if(!txt){ toast('没有备份','备份位是空的。','bad'); return; }
         try{
-          let d = JSON.parse(jsonText);
-          if(d && d.s && d.v) d = d.s;              // 兼容带信封的导出格式
-          const mig = migrateSave(d || {});
-          if(mig.error){ toast('导入被拒绝', mig.error, 'bad'); return; }
+          const mig = migrateSave(JSON.parse(txt));
+          if(mig.error){ toast('回滚被拒绝', mig.error, 'bad'); return; }
           const clean = sanitizeSave(mig.data);
-          if(!clean){ toast('导入失败','存档文本不完整或已损坏。','bad'); return; }
-          S = clean; battle = null; window.__renderErr = null; closeModal(); render();
-          log('📂 导入成功，第 '+S.day+' 天。','info'); autosave();
-        }catch(e){ toast('导入失败','存档文本不完整或已损坏。','bad'); }
-      };
-      /* ① 新格式：ZSE1: 加密信封 ② 老格式：base64(JSON) —— 老导出继续能导入，别让老玩家的备份作废 */
-      if(txt.indexOf('ZSE1:') === 0 && typeof window.__v4UnpackSave === 'function'){
-        Promise.resolve(window.__v4UnpackSave(txt))
-          .then(finish)
-          .catch((e) => toast('导入失败', (e && e.message) ? e.message : '解密失败（文本被改过或复制不完整）', 'bad'));
-        return;
-      }
-      try{ finish(decodeURIComponent(escape(atob(txt)))); }
-      catch(e){ toast('导入失败','存档文本不完整或已损坏。','bad'); }
+          if(!clean){ toast('回滚失败','备份内容不完整。','bad'); return; }
+          S = clean; battle = null; window.__renderErr = null; closeAllModals(); clearLog(); render();
+          log('🛟 已回滚到备份：第 '+S.day+' 天。','info'); autosave();
+        }catch(e){ toast('回滚失败','备份解析不了。','bad'); }
+      });
     }; } });
+  confirmModal();
 }
 
 /* ───────────── 工具 ───────────── */
@@ -2086,7 +2097,7 @@ function restart(){
 /** M7.1：自动读档之后，重开 = 不可逆地丢进度，必须二次确认（想做的是防误点丢档） */
 function confirmRestart(){
   modal({ title:'🔄 重开新档', sticky:true,
-    body:'<p class="muted">现在进游戏会自动读档。重开会丢弃当前进度、从第 1 天重新开始，旧存档被覆盖后<b>无法恢复</b>。<br>想留着就先去菜单里「⬆️ 导出」。</p>',
+    body:'<p class="muted">现在进游戏会自动读档。重开会丢弃当前进度、从第 1 天重新开始，旧存档被覆盖后<b>无法恢复</b>。<br>想留个后路：先在 ☰ 菜单点「💾 保存」（会刷新本机加密备份），之后还能用「🛟 回滚备份」找回来。</p>',
     footer:'<button class="btn danger" onclick="closeAllModals();restart()">确认重开</button>' +
       '<button class="btn" data-close>取消</button>' });
 }
@@ -3268,9 +3279,10 @@ function renderStats(){
   h += '<div class="sect-title">存档</div><div class="row">' +
     '<button class="btn" onclick="saveGame()">💾 保存</button>' +
     '<button class="btn" onclick="loadGame()">📂 读取</button>' +
-    '<button class="btn" onclick="exportSave()">⬆️ 导出</button>' +
-    '<button class="btn" onclick="importSave()">⬇️ 导入</button>' +
-    '<button class="btn danger" onclick="restart()">🔄 新游戏（清空进度）</button></div>';
+    '<button class="btn" onclick="restoreBackup()">🛟 回滚到上次备份</button>' +
+    '<button class="btn danger" onclick="restart()">🔄 新游戏（清空进度）</button></div>' +
+    '<div class="hint" style="margin-top:6px">M29 起存档<b>全部加密落在本机</b>（AES-GCM-256，密钥只存在 worker 里、不可导出），' +
+    '不再提供"导出明文存档"；换设备或想多端同步请用 <b>☰ 菜单 → 世界与账号 → 云存档</b>（上传的也是密文）。</div>';
   return h;
 }
 function checkAch(){
@@ -3329,7 +3341,9 @@ function openMenu(){
   const v4tut = (typeof window.V4Tutorial === 'object' && window.V4Tutorial)
     ? '<button class="btn sm" onclick="closeAllModals();V4Tutorial.start(true)">🎓 新手指南（从头看一遍）</button>' : '';
   modal({ title:'☰ 菜单', body:'<div class="hint" style="line-height:2">' +
-    '存档是<b>自动</b>的（每日结束、搜刮、制作、建造、战斗结束时）。手动存档随时可用。<br>导出存档可以把它复制到别的地方，也可以带到另一台电脑。</div>' +
+    '存档是<b>自动</b>的（每日结束、搜刮、制作、建造、战斗结束时）。手动存档随时可用。<br>' +
+    'M29 起存档<b>全部加密</b>（AES-GCM-256，密钥只在本机 worker 里、不可导出）：本机读写的都是密文，' +
+    '不再提供「导出明文存档」；想多端同步请用下面的<b>云存档</b>（上传的也是密文）。</div>' +
     (v4tools ? '<div class="sect-title" style="margin-top:14px">世界与账号</div>' + v4tools : '') +
     (v4tut ? '<div class="sect-title" style="margin-top:14px">上手帮助</div>' + v4tut +
       '<div class="hint" style="margin-top:6px">第一次玩建议先看一遍：15 步，会直接把界面上的东西圈出来给你看（随时能退出，下次从这里继续）。</div>' : '') +
@@ -3341,8 +3355,7 @@ function openMenu(){
     '</div><div class="hint" style="margin-top:6px">节拍模式会让每次攻击分三段演出（约 +0.3 秒/回合），方便看清谁挨了打；即时模式保持原来的手感。<br>配乐是程序现场合成的四小节循环（Am–F–C–E），没有音频文件：白天/夜晚/战斗/残血各有一套速度与配器。</div>',
     footer:'<button class="btn ok" onclick="saveGame();closeAllModals()">💾 保存</button>' +
       '<button class="btn" onclick="closeAllModals();loadGame()">📂 读取</button>' +
-      '<button class="btn" onclick="exportSave()">⬆️ 导出</button>' +
-      '<button class="btn" onclick="importSave()">⬇️ 导入</button>' +
+      '<button class="btn" onclick="restoreBackup()">🛟 回滚备份</button>' +
       '<button class="btn danger" onclick="closeAllModals();confirmRestart()">🔄 重开新档</button>' +
       '<button class="btn" data-close>关闭</button>' });
 }
@@ -3449,7 +3462,7 @@ function initGame(fresh){
 function boot(){
   initGame();
   // localStorage 在部分浏览器（file:// 或隐私模式）会直接抛错，探测必须包住
-  const hasV2 = !!lsGet(SAVE_KEY), hasV1 = !!lsGet(V1_KEY);
+  const hasV2 = !!readSavedRaw(), hasV1 = !!lsGet(V1_KEY);
   if(hasV2){
     // M7.1：用户反馈"每次进游戏都要点一下继续"太烦——有 v2 档就直接自动读档；想重开走菜单「🔄 重开新档」
     if(loadGame(true)) return;
@@ -3467,7 +3480,7 @@ function boot(){
 /* 内联 onclick 只能看到 window 上的属性，而顶层 let/const 不是 window 属性：
    这里把状态对象挂成访问器，保证内联事件与外部脚本读写的是同一份状态。 */
 /* ── C23 工程加固：显式导出（内联 onclick 与外部验证脚本依赖这些名字）── */
-Object.assign(window, { VER, SAVE_KEY, V1_KEY, ITEMS, itemName, isWpn, ZOMBIES, ZONES, BASE_UP, RECIPES, SKILLS, COMPANIONS, MERCHANT, LORE, ACHIEVEMENTS, AFFIX, BOUNTY_POOL, QUEST_BOUNTIES, SIDE_QUESTS, MODS, ZONE_SIL, newState, RM, BAK_KEY, writeSave, saveGame, autosave, lsGet, lsSet, sanitizeSave, MIGRATIONS, migrateSave, loadGame, confirmRestart, migrateV1, deepMerge, exportSave, importSave, $, $$, clamp, rnd, ri, chance, pick, wpick, esc, AUDIO_MAX, actx, AMB, ambStart, ambBlip, ambStop, ambMode, ambSync, MUS, MUS_MAX, CHORDS, PENTA, mtof, musicMood, musicTempo, musicVoice, musicNoiseHit, musicBar, musicStart, musicStop, musicSting, tone, arnd, noise, SFX, sfx, floatText, shake, toast, firstTip, award, addXP, log, clearLog, replayLog, hr, skillBonus, capWeight, carryWeight, encumbrance, armorTotal, addItem, takeItem, itemCount, has, ammoInMag, phaseName, spendAP, tickVitals, statMods, sleepNight, nightRaid, combatRepair, rescueEnding, recapHtml, TABS, renderTop, bar, renderHud, nextStep, renderTabs, setTab, render, baseLevel, modal, closeModal, closeAllModals, mkFoe, startCombat, openCombatModal, cbLog, drawCombat, battleTarget, siegePanelHtml, effDmg, combatAct, combatAfter, combatResolve, hitFoe, killFoe, afterPlayerTurn, companionTurn, foeTurn, endCombat, gameOver, restart, zoneOpen, zoneLockText, renderExplore, openZone, drawZone, grant, searchZone, applyFirst, lootItem, encounterRoll, survivorEvent, recruit, restHere, useConsumable, equipItem, equipWeapon, dropItem, deposit, withdraw, TYPE_LABEL, TYPE_TAG, renderInv, renderSideQuests, renderMods, renderCraft, craft, renderBase, scaledCost, build, renderSkills, QUEST_STAGES, questProgress, checkQuest, renderQuest, GOAL_DAY, MAP, WOUND_DEF, daysToHorde, nextEventText, threatLevel, travelCost, travelTo, goHome, defMax, defInit, repairDefense, TRAPS, buildTrap, hasWound, addWound, cureWound, woundTick, spoilTick, powerOff, raiseHorde, mapClick, renderMap, renderCalendar, noiseCheck, runScore, bountyBudget, bountyDef, metricValue, rollBounties, bountyTick, claimBounty, renderBounties, affixRoll, applyAffix, sideActive, sideTick, sideAdvance, sideNightCheck, modsOf, modSum, modMul, addMod, shopLeft, shopDayCheck, startFinalBattle, bossPhase2, finalVictory, enterEndless, renderCodex, discoverLore, renderStats, checkAch, merchantRate, openMerchant, buyMerchant, openMenu, openHelp, cheat, firstGesture, togglePace, toggleAmb, toggleMusic, initGame,
+Object.assign(window, { VER, SAVE_KEY, V1_KEY, ITEMS, itemName, isWpn, ZOMBIES, ZONES, BASE_UP, RECIPES, SKILLS, COMPANIONS, MERCHANT, LORE, ACHIEVEMENTS, AFFIX, BOUNTY_POOL, QUEST_BOUNTIES, SIDE_QUESTS, MODS, ZONE_SIL, newState, RM, BAK_KEY, writeSave, saveGame, autosave, readSavedRaw, lsGet, lsSet, sanitizeSave, MIGRATIONS, migrateSave, loadGame, confirmRestart, migrateV1, deepMerge, restoreBackup, $, $$, clamp, rnd, ri, chance, pick, wpick, esc, AUDIO_MAX, actx, AMB, ambStart, ambBlip, ambStop, ambMode, ambSync, MUS, MUS_MAX, CHORDS, PENTA, mtof, musicMood, musicTempo, musicVoice, musicNoiseHit, musicBar, musicStart, musicStop, musicSting, tone, arnd, noise, SFX, sfx, floatText, shake, toast, firstTip, award, addXP, log, clearLog, replayLog, hr, skillBonus, capWeight, carryWeight, encumbrance, armorTotal, addItem, takeItem, itemCount, has, ammoInMag, phaseName, spendAP, tickVitals, statMods, sleepNight, nightRaid, combatRepair, rescueEnding, recapHtml, TABS, renderTop, bar, renderHud, nextStep, renderTabs, setTab, render, baseLevel, modal, closeModal, closeAllModals, mkFoe, startCombat, openCombatModal, cbLog, drawCombat, battleTarget, siegePanelHtml, effDmg, combatAct, combatAfter, combatResolve, hitFoe, killFoe, afterPlayerTurn, companionTurn, foeTurn, endCombat, gameOver, restart, zoneOpen, zoneLockText, renderExplore, openZone, drawZone, grant, searchZone, applyFirst, lootItem, encounterRoll, survivorEvent, recruit, restHere, useConsumable, equipItem, equipWeapon, dropItem, deposit, withdraw, TYPE_LABEL, TYPE_TAG, renderInv, renderSideQuests, renderMods, renderCraft, craft, renderBase, scaledCost, build, renderSkills, QUEST_STAGES, questProgress, checkQuest, renderQuest, GOAL_DAY, MAP, WOUND_DEF, daysToHorde, nextEventText, threatLevel, travelCost, travelTo, goHome, defMax, defInit, repairDefense, TRAPS, buildTrap, hasWound, addWound, cureWound, woundTick, spoilTick, powerOff, raiseHorde, mapClick, renderMap, renderCalendar, noiseCheck, runScore, bountyBudget, bountyDef, metricValue, rollBounties, bountyTick, claimBounty, renderBounties, affixRoll, applyAffix, sideActive, sideTick, sideAdvance, sideNightCheck, modsOf, modSum, modMul, addMod, shopLeft, shopDayCheck, startFinalBattle, bossPhase2, finalVictory, enterEndless, renderCodex, discoverLore, renderStats, checkAch, merchantRate, openMerchant, buyMerchant, openMenu, openHelp, cheat, firstGesture, togglePace, toggleAmb, toggleMusic, initGame,
   /* M25：口径/弹种/辐射这几个查询函数被验收探针与将来的 UI 直接用，一并挂出去 */
   CALIBERS, AMMO_OF, ammoCount, loadedAmmo, setLoaded, cycleLoaded, penMul, radTier, apCapOf, fitnessApBonus, phaseOf, PHASE_LABEL,
   radLevelAt, radGain, radProtect, RAD_SOURCES, geigerText, boot });
