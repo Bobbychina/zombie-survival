@@ -44,6 +44,29 @@ export function matYield(rng: () => number, danger: number, deep: boolean, bonus
   return Math.max(1, Math.round(base * (deep ? mulDeep : mulNormal)) + bonus);
 }
 
+/** 搜刮要记的账（悬赏板 / 委托 / 大故事章节 / 成就都读这几本账）。
+ *  **必须与"这一趟有没有出货"解耦**：账记的是"你来过、你搜了"，不是"你搜到了"。
+ *  M35 用户报障的根因就在这里 —— 药房被搜空之后走的是早退分支，那支不记账，
+ *  于是「补给清单：去药房翻一趟」怎么搜都推不动（实测：zoneCnt 一直不动、委托卡 0/1）。 */
+export interface SearchStats { scav?: number; deep?: number; zoneCnt?: Record<string, number> }
+
+export function tallySearch(
+  stats: SearchStats,
+  rzones: Record<string, Record<string, number>>,
+  region: string,
+  poiId: string,
+  zone: string | null,
+  deep: boolean,
+): void {
+  stats.scav = (stats.scav || 0) + 1;
+  if (deep) stats.deep = (stats.deep || 0) + 1;
+  const zc = (stats.zoneCnt = stats.zoneCnt || {});
+  if (zone) zc[zone] = (zc[zone] || 0) + 1;        // legacy 区域粒度（老悬赏板按这个判）
+  zc[poiId] = (zc[poiId] || 0) + 1;                // M13：POI 粒度（委托文案写的是"药房"）
+  const bag = (rzones[region] = rzones[region] || {});
+  bag[poiId] = (bag[poiId] || 0) + 1;              // M14：区域 + POI（跨区委托 `rzone:<区>:*`）
+}
+
 /** 这个 POI 会派出哪些丧尸：危险越高、深搜时数量越多 */
 export function foesFor(rng: () => number, poiId: string, danger: number, deep: boolean): string[] {
   const pool = POIS[poiId]?.enemies ?? ['walker'];

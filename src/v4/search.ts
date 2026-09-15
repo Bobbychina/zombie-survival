@@ -5,11 +5,11 @@ import { L } from '../main';
 import { POIS } from './pois';
 import { bkey } from './worldgen';
 import { zoneOfPoi, type SaveWorld } from './worldstate';
-import { foesFor, matYield, pickLoot, rollSearchKind, searchWeights } from './search-core';
+import { foesFor, matYield, pickLoot, rollSearchKind, searchWeights, tallySearch } from './search-core';
 import { GEAR_HOSTS, MAT_MUL_DEEP, MAT_MUL_NORMAL, pickGear } from './env-core';
 import type { Block } from '../types';
 
-export { rollSearchKind, searchWeights, pickLoot, foesFor, matYield } from './search-core';
+export { rollSearchKind, searchWeights, pickLoot, foesFor, matYield, tallySearch } from './search-core';
 export type { SearchKind, SearchWeights } from './search-core';
 
 export function poiLeft(block: Block, sw: SaveWorld): number {
@@ -25,6 +25,13 @@ function trail(sw: SaveWorld, line: string) {
   if (sw.trail.length > 24) sw.trail.shift();
 }
 
+/** 搜刮收尾：推一次任务账（legacy 的悬赏/支线 + v4 委托/大故事都在这一下里结算）。
+ *  M35：抽成函数是因为**两条分支都要调** —— 搜空的早退分支以前直接 return，
+ *  账记了却不结算，玩家会看到"委托 1/1 挂着不完成"（探针实测 activeLeft=1）。 */
+function tickQuests() {
+  try { L.checkQuest(); L.bountyTick(); L.sideTick(); } catch (e) { console.warn('[v4] 收尾 tick 失败', e); }
+}
+
 /** 在玩家当前所在的区块搜刮（UI 已经保证人就在这儿） */
 export function searchPoi(block: Block, sw: SaveWorld, deep: boolean): boolean {
   const S = L.S;
@@ -32,32 +39,27 @@ export function searchPoi(block: Block, sw: SaveWorld, deep: boolean): boolean {
   if (!poi) { L.log('这里只是一片空地，没什么可搜的。', 'dim'); return false; }
   const left = poiLeft(block, sw);
   const zone = zoneOfPoi(block.poi);
+  const cost = deep ? 2 : 1;                       // M35：空点也按同价扣（深搜不能靠"空点 1 行动力"刷账）
+  if (!L.spendAP(cost)) return false;
+  /* M35：**先记账，再看出货**。这几本账（悬赏/委托/剧情/成就）判定的是"你去这一趟"，
+     跟这趟翻没翻到东西无关；以前它们只写在"还有剩余次数"的分支里，于是被搜空的药房
+     怎么搜都推不动「去药房翻一趟」的委托（用户报障：搜了药店但任务不完成）。 */
+  tallySearch(S.stats, (sw.regionZones = sw.regionZones || {}), sw.region, block.poi!, zone, deep);
   if (left <= 0) {
     // 搜空的 POI 不再产出好东西，但还能刮出一点材料（不让玩家白跑一趟）
-    if (!L.spendAP(1)) return false;
     const d = Math.max(1, Math.round(L.ri(1, 2) + block.danger * 0.6));
     S.mat += d; L.tickVitals(0.5); L.sfx('loot');
-    L.log('🧹 ' + poi.icon + poi.name + '已经被翻得底朝天，你只刮出 ' + d + ' 份材料。', 'loot');
-    L.render(); L.autosave();
+    L.log('🧹 ' + poi.icon + poi.name + '已经被翻得底朝天，你只刮出 ' + d + ' 份材料。' +
+      '（这一趟照样记进任务进度）', 'loot');
+    tickQuests();                                  // M35：记账了就得结算 —— 早退分支以前连 tick 都跳过
+    L.autosave(); L.render();
     return true;
   }
 
-  const cost = deep ? 2 : 1;
-  if (!L.spendAP(cost)) return false;
   const pk = bkey(block.x, block.y);
   const first = !sw.firstPoi[pk];                  // 第一次踏进这个 POI
   sw.firstPoi[pk] = 1;
   sw.left[pk] = Math.max(0, left - (deep ? 2 : 1));
-  S.stats.scav++;
-  if (zone) S.stats.zoneCnt[zone] = (S.stats.zoneCnt[zone] || 0) + 1;   // 悬赏/支线按区域计数
-  // M13：再按 POI 粒度记一次（药房/警局/家电城…）。legacy 的映射很粗（药房→医院、农场→老城），
-  // 委托文案写的是"去药房翻一趟"，判定就得按药房算，否则文案和进度对不上。
-  S.stats.zoneCnt[block.poi!] = (S.stats.zoneCnt[block.poi!] || 0) + 1;
-  // M14：再按"区域 + POI"记一次，跨区委托靠它判定"在那个区真的翻了几个地方"
-  const rz = (sw.regionZones = sw.regionZones || {});
-  const bag = (rz[sw.region] = rz[sw.region] || {});
-  bag[block.poi!] = (bag[block.poi!] || 0) + 1;
-  if (deep) S.stats.deep++;
   L.tickVitals(deep ? 1.5 : 1);
   L.addXP('survival', deep ? 5 : 3);
   if (S.hp <= 0) { L.gameOver('你的身体先一步投降了。'); return true; }
@@ -144,7 +146,7 @@ export function searchPoi(block: Block, sw: SaveWorld, deep: boolean): boolean {
     default:
       L.log('…什么都没有。只有灰尘和更深的安静。', 'dim');
   }
-  try { L.checkQuest(); L.bountyTick(); L.sideTick(); } catch (e) { console.warn('[v4] 收尾 tick 失败', e); }
+  tickQuests();
   L.autosave();
   L.render();
   return true;

@@ -1,0 +1,154 @@
+{
+  "checks": [
+    [
+      "① 药房还有次数时：搜一次 → zone:pharmacy 委托完成结算（对照组）",
+      true
+    ],
+    [
+      "② 药房已搜空（早退分支）搜一次 → 账照样记（zoneCnt.pharmacy +1）",
+      true
+    ],
+    [
+      "② 这张委托完成并被结算（用户报障：以前永远停在 0/1）",
+      true
+    ],
+    [
+      "② 日志里说明\"这一趟照样记进任务进度\"（不再让玩家以为白搜了）",
+      true
+    ],
+    [
+      "③ 空点深搜也算 deep（'深挖一层'/章节目标不会因为周围被翻空而永久卡住）",
+      true
+    ],
+    [
+      "④ 空点深搜扣 2 行动力（关掉\"空点 1 行动力刷账\"的口子）",
+      true
+    ],
+    [
+      "⑤ 跨区委托口径 regionZones 也落账（rzone:<区>:* 判定用）",
+      true
+    ],
+    [
+      "⑥ 大故事第 1 章「摸进圣玛丽医院的档案室」（zone:hospital）被这次搜刮推进",
+      true
+    ],
+    [
+      "⑦ 行动力不够时搜不动、也不记账（账只跟着真花掉的那一次走）",
+      true
+    ],
+    [
+      "⑧ 全程无 console 报错 / 未捕获异常",
+      true
+    ]
+  ],
+  "errs": [],
+  "case1": {
+    "before": {
+      "pharmacy": 0,
+      "hospital": 0,
+      "deep": 0,
+      "ap": 9,
+      "mat": 12,
+      "rz": 0
+    },
+    "after": {
+      "pharmacy": 1,
+      "hospital": 1,
+      "deep": 0,
+      "ap": 8,
+      "mat": 17,
+      "rz": 1
+    },
+    "activeLeft": 0,
+    "done": 1,
+    "prog": "closed",
+    "logs": [
+      "info,📋 主线推进：弄到一把枪",
+      "dim,　 第 9 分局的枪柜里也许还有漏网的东西。",
+      "success,✅ 委托完成：补给清单（+5 材料、bandage×2）",
+      "loot,📦 获得 污水 ×1"
+    ],
+    "storyObj0": {
+      "text": "摸进圣玛丽医院的档案室",
+      "cur": 1,
+      "need": 1,
+      "done": true
+    }
+  },
+  "case2": {
+    "before": {
+      "pharmacy": 1,
+      "hospital": 1,
+      "deep": 0,
+      "ap": 9,
+      "mat": 17,
+      "rz": 1
+    },
+    "after": {
+      "pharmacy": 2,
+      "hospital": 2,
+      "deep": 0,
+      "ap": 8,
+      "mat": 25,
+      "rz": 2
+    },
+    "activeLeft": 0,
+    "done": 2,
+    "prog": "closed",
+    "logs": [
+      "loot,📦 获得 污水 ×1",
+      "info,📋 接了委托：补给清单（搜刮 药房 ×1，2 天内）",
+      "loot,🧹 💊药房已经被翻得底朝天，你只刮出 3 份材料。（这一趟照样记进任务进度）",
+      "success,✅ 委托完成：补给清单（+5 材料、bandage×2）"
+    ],
+    "storyObj0": {
+      "text": "摸进圣玛丽医院的档案室",
+      "cur": 1,
+      "need": 1,
+      "done": true
+    }
+  },
+  "case3": {
+    "before": {
+      "pharmacy": 2,
+      "hospital": 2,
+      "deep": 0,
+      "ap": 9,
+      "mat": 25,
+      "rz": 2
+    },
+    "after": {
+      "pharmacy": 3,
+      "hospital": 3,
+      "deep": 1,
+      "ap": 7,
+      "mat": 34,
+      "rz": 3
+    },
+    "activeLeft": 0,
+    "done": 3,
+    "prog": "closed",
+    "logs": [
+      "success,✅ 委托完成：补给清单（+5 材料、bandage×2）",
+      "info,📋 接了委托：补给清单（搜刮 药房 ×1，2 天内）",
+      "loot,🧹 💊药房已经被翻得底朝天，你只刮出 4 份材料。（这一趟照样记进任务进度）",
+      "success,✅ 委托完成：补给清单（+5 材料、bandage×2）"
+    ],
+    "storyObj0": {
+      "text": "摸进圣玛丽医院的档案室",
+      "cur": 1,
+      "need": 1,
+      "done": true
+    }
+  },
+  "case4": {
+    "before": {
+      "pharmacy": 3,
+      "ap": 0
+    },
+    "after": {
+      "pharmacy": 3,
+      "ap": 0
+    }
+  }
+}
