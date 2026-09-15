@@ -9,6 +9,7 @@
 const [, , cdpPort, url, outDir] = process.argv
 const fs = await import('node:fs/promises')
 await fs.mkdir(outDir, { recursive: true }).catch(() => undefined)
+const BOOT = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'dev=ready'   // 线上复核会带 ?v= 破缓存，别把参数拼坏
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 let target = null
 for (let i = 0; i < 40 && !target; i++) {
@@ -34,6 +35,15 @@ const ev = async (x) => {
   return r.result?.result?.value
 }
 const shot = async (name) => { const r = await send('Page.captureScreenshot', { format: 'png' }); if (r.result?.data) await fs.writeFile(`${outDir}/${name}.png`, Buffer.from(r.result.data, 'base64')) }
+/* 线上比本地慢（account.js/加密 worker 要联网拉），固定 sleep 会撞上"引导没跑完就调函数"的 ReferenceError */
+const bootWait = async (tries = 30) => {
+  for (let i = 0; i < tries; i++) {
+    const r = await ev(`(() => (typeof S === 'object' && !!S && typeof closeAllModals === 'function' && !!document.getElementById('view')) ? 1 : 0)()`)
+    if (r === 1) return true
+    await sleep(800)
+  }
+  return false
+}
 const checks = []
 const ok = (n, c, extra = '') => { checks.push([n, !!c]); console.log((c ? 'PASS ' : 'FAIL ') + n + (extra ? '  ' + extra : '')) }
 // 世界面板体检：卡片墙 + 地图格子 + 顶栏天数 + 日历目标牌
@@ -54,7 +64,7 @@ const ui = () => ev(`(() => {
 await send('Runtime.enable'); await send('Page.enable')
 await send('Network.enable'); await send('Network.setCacheDisabled', { cacheDisabled: true })
 await send('Emulation.setDeviceMetricsOverride', { width: 1600, height: 1000, deviceScaleFactor: 1, mobile: false })
-await send('Page.navigate', { url: url + '?dev=ready' }); await sleep(4200)
+await send('Page.navigate', { url: BOOT }); await bootWait()
 await ev(`(() => { if (!localStorage.getItem('zombie_survival_save_v2')) { try { saveGame(true); } catch (e) {} } return 1 })()`)
 await sleep(500)
 
@@ -148,7 +158,7 @@ await ev(`(() => { try { closeAllModals(); } catch (e) {} return 1 })()`); await
 
 /* ⑥ 刷新页面：无尽标志要落盘，不能退回"已结束" */
 await ev(`(() => { try { autosave(); } catch (e) {} return 1 })()`); await sleep(600)
-await send('Page.navigate', { url: url + '?dev=ready' }); await sleep(4200)
+await send('Page.navigate', { url: BOOT }); await bootWait()
 const a4 = JSON.parse(await ui())
 ok('刷新后仍是无尽局（flags.endless 落盘）', a4.endless === true && a4.over === false, JSON.stringify({ endless: a4.endless, over: a4.over, day: a4.day }))
 ok('刷新后地图与卡片墙仍在', a4.board === true && a4.cells > 300, JSON.stringify({ board: a4.board, cells: a4.cells }))
