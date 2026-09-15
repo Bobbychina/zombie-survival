@@ -9,13 +9,14 @@
    这正是我们要的（云端那份被网页手改过，拉下来一验就知道）。
 */
 import { L } from '../main';
-import { canon, digest, INTEGRITY_KEY, rawForInspect, stamp, verdictText, verify, type Verdict } from './integrity-core';
+import { canon, digest, INTEGRITY_KEY, legacyTamperMarker, rawForInspect, stamp, unreadableVerdict, verdictText, verify, type Verdict } from './integrity-core';
 
 export const SAVE_KEY = 'zombie_survival_save_v2';
 let lastVerdict: Verdict | null = null;
 let lastDigest = '';
 let tampered = false;                 // 一旦发现被改过，本局一直记着（写档时把它写进标记）
 let vaultUnreadable = false;          // 有密文但这次没解开：既不是篡改，也别按"老存档"报
+let amnestyDone = false;              // M36.1：这次启动清掉了旧版本留下的误判标记
 
 export const integritySummary = () => (lastVerdict ? verdictText(lastVerdict) : 'ℹ️ 还没检查');
 export const isTampered = () => tampered;
@@ -25,21 +26,24 @@ export const lastVerdictOf = () => lastVerdict;
  *  M36：M29 之后主档是 `ZSV1:` 密文，localStorage 里那份**不是 JSON**——
  *  原先直接 parse 必然抛异常 → 判 corrupt + tampered=true → 玩家每次进游戏都被
  *  「存档被修改过，成就与排行不再计入本档」砸一脸（实测：第二次启动起 100% 复现）。
- *  现在优先用保险箱解密好的明文；解不开就按"读不出来"处理，不冤枉玩家。 */
+ *  现在优先用保险箱解密好的明文；解不开就按"读不出来"处理，不冤枉玩家。
+ *  M36.1：解不开还分两种 —— 密钥自检通过说明密文被动过（可判定篡改）；密钥都不对就不冤人。 */
 export function inspectBeforeBoot(): Verdict {
   let stored: string | null = null;
   let decrypted: string | null = null;
+  let keyOk = false;
   try { stored = localStorage.getItem(SAVE_KEY); } catch { stored = null; }
   try {
-    const v = (window as any).V4Vault as { read?: () => string | null } | undefined;
+    const v = (window as any).V4Vault as { read?: () => string | null; status?: () => { keyOk?: boolean } } | undefined;
     decrypted = v && typeof v.read === 'function' ? v.read() : null;
+    keyOk = !!(v && typeof v.status === 'function' && v.status().keyOk);
   } catch { decrypted = null; }
   const picked = rawForInspect(stored, decrypted);
   vaultUnreadable = picked.encryptedUnreadable;
   const rawText = picked.text;
   if (vaultUnreadable) {
-    lastVerdict = { state: 'missing', ok: false, detail: '存档是加密的，这次没解开（保险箱未就绪，或本机密钥丢了）', tampered: false };
-    tampered = false; lastDigest = '';
+    lastVerdict = unreadableVerdict(keyOk);
+    tampered = lastVerdict.tampered; lastDigest = '';
     return lastVerdict;
   }
   if (!rawText) {                                   // 全新一局：没有存档 ≠ 存档被改
@@ -57,6 +61,14 @@ export function inspectBeforeBoot(): Verdict {
   // 新开局的空档（什么都没有）不算篡改；但"有内容却缺指纹"是可疑的，仍按 missing 提示
   lastVerdict = v;
   tampered = v.tampered;
+  /* M36.1 一次性特赦：内容指纹自洽（ok）却带着旧版本（v≤1）的 tampered 标记 ——
+     那正是"加密存档被误判损坏"那个 bug 盖进去的冤枉标记，清掉；真被改过的档过不了 verify，标记照留。 */
+  amnestyDone = false;
+  if (v.state === 'ok' && raw && typeof raw === 'object' &&
+      legacyTamperMarker((raw as Record<string, unknown>)[INTEGRITY_KEY])) {
+    tampered = false;
+    amnestyDone = true;
+  }
   if (raw && typeof raw === 'object') {
     const sig = (raw as Record<string, unknown>)[INTEGRITY_KEY] as { d?: string } | undefined;
     lastDigest = sig && typeof sig.d === 'string' ? sig.d : '';
@@ -68,7 +80,12 @@ export function inspectBeforeBoot(): Verdict {
 export function reportAfterBoot(): void {
   const v = lastVerdict;
   if (!v) return;
-  if (v.state === 'ok') { L.log('🔒 存档指纹校验通过（未被修改）。', 'dim'); return; }
+  if (v.state === 'ok') {
+    L.log(amnestyDone
+      ? '🔒 存档指纹校验通过（未被修改）；顺带清掉了旧版本留下的误判标记（本档内容自洽）。'
+      : '🔒 存档指纹校验通过（未被修改）。', 'dim');
+    return;
+  }
   if (v.state === 'missing') {
     L.log(vaultUnreadable ? 'ℹ️ ' + v.detail : 'ℹ️ 这份存档没有指纹（老版本存档），本次会补上。', 'dim');
     return;

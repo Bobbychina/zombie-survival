@@ -14,7 +14,9 @@
    原始值一旦越界，就说明有人在 sanitize 之外动过手（这是最有用的篡改信号）。
 */
 export const INTEGRITY_KEY = '__integrity';
-export const INTEGRITY_V = 1;
+/** 指纹格式版本。M36.1 起 v2：v1 的标记可能来自"加密存档被误判损坏"那个 bug，校验自洽时会一次性特赦（见 legacyTamperMarker） */
+export const INTEGRITY_V = 2;
+export const LEGACY_INTEGRITY_V = 1;
 
 export type IntegrityVerdict = 'ok' | 'missing' | 'mismatch' | 'implausible' | 'corrupt';
 
@@ -138,11 +140,29 @@ export function rawForInspect(stored: string | null, decrypted: string | null): 
   return { text: stored, encryptedUnreadable: false };
 }
 
+/** M36.1 一次性特赦：指纹版本 ≤ v1 的 `tampered` 标记不一定是真的 ——
+ *  "加密存档被误判损坏"那个 bug 每次启动都会把标记盖进档里（实测），是真冤枉。
+ *  所以只有"标记是老的（v≤1）**且**本档内容指纹自洽（verify 已判 ok）"时才清：
+ *  真被改过的档过不了 verify（mismatch / implausible），标记照旧留着。 */
+export function legacyTamperMarker(sig: unknown): boolean {
+  const s = sig as { v?: unknown; tampered?: unknown } | undefined;
+  return !!s && s.tampered === true && typeof s.v === 'number' && s.v <= LEGACY_INTEGRITY_V;
+}
+
+/** 密文解不开时的结论（M36.1）：AES-GCM 是**带认证**的加密——
+ *  如果本机密钥自检通过（能解开密钥自检位），却解不开存档密文，那就是密文被改过或写坏了，
+ *  这是可判定的篡改/损坏；密钥本身都不对（换过浏览器 / 清过站点数据 / 密钥丢了）就不冤人。 */
+export function unreadableVerdict(keyOk: boolean): Verdict {
+  return keyOk
+    ? { state: 'corrupt', ok: false, detail: '加密存档解不开，而本机密钥是好的 —— 密文被改过或写坏了', tampered: true }
+    : { state: 'missing', ok: false, detail: '存档是加密的，这次没解开（保险箱未就绪，或本机密钥丢了）', tampered: false };
+}
+
 /** 人话结论（界面直接用） */
 export function verdictText(v: Verdict): string {
   switch (v.state) {
     case 'ok': return '✅ 存档完整（指纹一致）';
-    case 'missing': return 'ℹ️ 老存档：没有指纹，无法判断是否被改过';
+    case 'missing': return v.detail && v.detail.indexOf('加密') >= 0 ? 'ℹ️ ' + v.detail : 'ℹ️ 老存档：没有指纹，无法判断是否被改过';
     case 'mismatch': return '⚠️ 存档被外部修改过（指纹对不上）——成就/排行不计入';
     case 'implausible': return '⚠️ 存档里有越界数值：' + v.detail;
     default: return '⛔ 存档损坏：' + v.detail;

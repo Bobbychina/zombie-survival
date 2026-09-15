@@ -31,9 +31,20 @@ export interface VaultState {
   ready: boolean;
   cached: string | null;      // 已解密的内存副本（给同步读取用）
   lastError?: string;
+  /* ── M36.1：把"解不开"分成两种，别把密钥丢了冤枉成玩家改档 ── */
+  keyOk?: boolean;            // 密钥自检位对得上（说明本机密钥还是原来那把）
+  decryptFailed?: boolean;    // 主档是密文，但这次没解开
+  tamperSuspect?: boolean;    // 没解开 **且** 密钥自检通过 ⇒ 密文被改过或写坏了（GCM 带认证，可判定）
 }
 
 const st: VaultState = { mode: 'none', ready: false, cached: null };
+
+/* 密钥自检位：一小段用同一把密钥加密的固定明文。
+   为什么要它：AES-GCM 解不开可能是"密文被动过"，也可能是"密钥换了/丢了"，光看报错分不出来。
+   有了它就能分开：自检位解得开 = 密钥没变 ⇒ 存档解不开就是密文的问题（可判定篡改/损坏）；
+   自检位都解不开 = 密钥不对 ⇒ 只是读不出来，不冤人。 */
+const KEYCHECK_KEY = 'zombie_survival_keycheck_v1';
+const KEYCHECK_PLAIN = 'zsv-keycheck-v1';
 
 /* ── 降级路径：主线程 CryptoKey，密钥存 IndexedDB ── */
 const DB = 'zsv-vault', STORE = 'keys', KEY_ID = 'save-key-v1', PARAMS_ID = 'save-key-v1:params';
@@ -173,6 +184,14 @@ async function decryptText(text: string): Promise<string> {
   return mainDecrypt(text);
 }
 
+/** 密钥自检：本机那把密钥还解得开自检位吗（解不开 = 密钥换了/丢了，不是存档被动过） */
+async function keyCheckOk(): Promise<boolean> {
+  let token: string | null = null;
+  try { token = localStorage.getItem(KEYCHECK_KEY); } catch { token = null; }
+  if (!token || !token.startsWith(MAGIC)) return false;
+  try { return (await decryptText(token)) === KEYCHECK_PLAIN; } catch { return false; }
+}
+
 export const SaveVault = {
   /** 启动时调用一次：起 worker、要密钥、把磁盘上的密文解进内存（**同步读**就靠它）。
       外面再套一层总超时：**init 绝不允许把 boot 卡住**（起不来就降级成主线程密钥）。 */
@@ -192,16 +211,32 @@ export const SaveVault = {
     }
     try {
       const raw = localStorage.getItem('zombie_survival_save_v2');
+      /* saveProven：这次启动"密钥确实是对的"（主档解开了 / 压根没有主档要解）。
+         只有它为真才敢刷新密钥自检位 —— 否则密钥丢了的机器会把自检位也换成新密钥的，
+         下次就再也分不清"密文被改"和"密钥丢了"。 */
+      let saveProven = false;
       if (raw) {
         if (raw.startsWith(MAGIC)) {
           st.cached = await decryptText(raw);
+          saveProven = true;
         } else {
           /* 老版本的明文存档：读出来 → 立刻加密写回 → 删掉明文（迁移只有这一次） */
           st.cached = raw;
           const enc = await encryptText(raw);
           localStorage.setItem('zombie_survival_save_v2', enc);
+          saveProven = true;
           try { localStorage.removeItem('zombie_survival_save_v2.plain'); } catch { /* 忽略 */ }
         }
+      } else {
+        saveProven = true;              // 没有主档（新开局 / 清过档）：当前这把就是本机密钥
+      }
+      if (saveProven) {
+        st.keyOk = true;
+        try { localStorage.setItem(KEYCHECK_KEY, await encryptText(KEYCHECK_PLAIN)); } catch { /* 写不进去就算了 */ }
+      } else {
+        st.decryptFailed = true;
+        st.keyOk = await keyCheckOk();
+        st.tamperSuspect = st.keyOk === true;
       }
       const bak = localStorage.getItem('zombie_survival_save_v2.bak');
       if (bak && !bak.startsWith(MAGIC)) {
@@ -210,6 +245,10 @@ export const SaveVault = {
       }
     } catch (e) {
       st.lastError = e instanceof Error ? e.message : String(e);
+      /* 解密抛异常（GCM 认证失败 / 格式坏）：同样走"密钥自检"分流 */
+      st.decryptFailed = true;
+      st.keyOk = await keyCheckOk();
+      st.tamperSuspect = st.keyOk === true;
     }
   },
 
@@ -263,8 +302,10 @@ export const SaveVault = {
   /** 抹掉本机密钥与存档（"清档"用；清了就再也解不开旧密文，属于用户明确要求的操作） */
   async wipe(): Promise<void> {
     st.cached = null;
+    st.keyOk = undefined; st.decryptFailed = undefined; st.tamperSuspect = undefined;
     if (worker) await callWorker('wipe');
     try { await idbDel(KEY_ID); } catch { /* 忽略 */ }
+    try { localStorage.removeItem(KEYCHECK_KEY); } catch { /* 忽略 */ }
     mainKey = null;
   },
 

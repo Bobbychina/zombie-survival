@@ -1,6 +1,6 @@
 /* M8 存档完整性单测：指纹稳定、改一个数字就露馅、越界值在 sanitize 之前就能看穿、链条断裂、老存档不误判。 */
 import { describe, expect, it } from 'vitest';
-import { canon, digest, implausible, rawForInspect, stamp, verdictText, verify, INTEGRITY_KEY } from '../src/v4/integrity-core';
+import { canon, digest, implausible, INTEGRITY_V, legacyTamperMarker, rawForInspect, stamp, unreadableVerdict, verdictText, verify, INTEGRITY_KEY } from '../src/v4/integrity-core';
 
 const base = () => ({ v: 2, day: 5, ap: 7, apMax: 9, hp: 80, hpMax: 100, sta: 60, staMax: 100, hun: 55, thi: 44, infect: 3, ammo: 12, mat: 30, noise: 1, inv: { can: 2, wood: 5 } });
 
@@ -118,5 +118,46 @@ describe('启动取证该拿哪一份（rawForInspect）', () => {
     const text = JSON.stringify(stamped);
     const r = rawForInspect(cipher, text);
     expect(verify(JSON.parse(r.text as string)).state).toBe('ok');
+  });
+});
+
+/* M36.1：把"解不开"分成两种 —— 密钥自检通过说明密文被动过（可判定），密钥不对就不冤人 */
+describe('密文解不开时的结论（unreadableVerdict）', () => {
+  it('密钥是好的 → 判损坏 + 篡改（GCM 带认证，解不开就是密文被动过/写坏了）', () => {
+    const v = unreadableVerdict(true);
+    expect(v.state).toBe('corrupt');
+    expect(v.tampered).toBe(true);
+    expect(v.detail).toContain('密钥是好的');
+    expect(verdictText(v)).toContain('损坏');
+  });
+
+  it('密钥都不对（换过浏览器/清过站点数据）→ 只算读不出来，不算篡改', () => {
+    const v = unreadableVerdict(false);
+    expect(v.state).toBe('missing');
+    expect(v.tampered).toBe(false);
+    expect(verdictText(v)).toContain('没解开');
+  });
+});
+
+/* M36.1：一次性特赦 —— 只有"老版本标记（v≤1）+ 内容指纹自洽"才清，真被改过的照旧留着 */
+describe('旧版本误判标记的特赦判据（legacyTamperMarker）', () => {
+  it('v1 + tampered=true → 是旧标记（可特赦）', () => {
+    expect(legacyTamperMarker({ v: 1, tampered: true })).toBe(true);
+  });
+  it('v2 + tampered=true → 新标记，不特赦', () => {
+    expect(legacyTamperMarker({ v: 2, tampered: true })).toBe(false);
+  });
+  it('没有标记 / 没带 tampered / 不是对象 → 不动', () => {
+    expect(legacyTamperMarker(undefined)).toBe(false);
+    expect(legacyTamperMarker({ v: 1 })).toBe(false);
+    expect(legacyTamperMarker({ v: 1, tampered: false })).toBe(false);
+    expect(legacyTamperMarker('nope')).toBe(false);
+  });
+  it('本次写的指纹是 v2（特赦之后不会再被当成旧标记）', () => {
+    expect(INTEGRITY_V).toBe(2);
+    expect(stamp({ a: 1 }).v).toBe(INTEGRITY_V);
+    const s: Record<string, unknown> = base();
+    s[INTEGRITY_KEY] = stamp(s);
+    expect(legacyTamperMarker(s[INTEGRITY_KEY])).toBe(false);
   });
 });

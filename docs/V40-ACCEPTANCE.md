@@ -2112,8 +2112,43 @@ M27 的 15 步高亮教程解决的是"第一次不知道怎么点"，但**练�
   `docs/_m36_shots/{local-head,online}/a3_help_modal.png` 四块均无「彩蛋 / 作弊码」字样。
 
 ### 已知问题
-- **不回溯旧档标记**：历史上被误导判成 `tampered` 并盖进档/云端的档（M29 之后、本次修复前上传过的），本批不清洗——
-  它下次校验仍会报一次 `mismatch`；口径仍是"游戏照常能玩"，要干净档就重开一局。
-- **M29 之后"直接改密文"不再是可判定的篡改**（解不开就只是解不开）：取证重心在云端/导入路径（`verifyForeign`）与明文老档，
-  与既定口径一致（加密优先于取证）。
+- ~~**不回溯旧档标记**~~ → **M36.1 已补修**（一次性特赦，见第四十七节）。
+- ~~**M29 之后"直接改密文"不再是可判定的篡改**~~ → **M36.1 已补修**（密钥自检位，见第四十七节）；
+  只有"密钥自检都不可用"（换过浏览器 / 清过站点数据 / 密钥真丢了）才按"读不出来"处理。
 - 本批只动 `src/v4/integrity*.ts` 与两个测试资产，**没动**数值/玩法/存档格式；线上构建由 M33.1 那批的 HEAD 干净构建叠加本次修复。
+
+---
+
+## 四十七、M36.1：把第四十六节剩下的两条也修掉（用户：「那你全部修一下（除了那个push的，没啥意义）」）
+
+### ① 旧版本的误判标记：一次性特赦（回溯清洗）
+- 背景：第四十六节那个 bug 每次启动都会把 `tampered: true` 盖进档（本地 + 云端），玩家看不到"我为什么被标记"，却要一直背着"成就与排行不计入"。
+- 判据（`integrity-core.legacyTamperMarker`，纯函数）：标记 `v ≤ 1` **且** 本档内容指纹自洽（`verify` 已判 `ok`）。
+  真被改过的档过不了 `verify`（`mismatch` / `implausible`），标记照旧留着 —— 特赦只清"内容没被改却带着标记"的冤枉档。
+- 落地：`inspectBeforeBoot()` 命中特赦时把模块标记清成 `false`；`INTEGRITY_V` 从 1 提到 **2**，
+  下次写档就换成 v2 指纹且不带 `tampered`（`stampInPlace` 会整块替换 `__integrity`，旧标记自然消失）。
+  启动日志给一行人话：「🔒 存档指纹校验通过（未被修改）；顺带清掉了旧版本留下的误判标记（本档内容自洽）。」
+
+### ② 密文被改要能判定：密钥自检位（`zombie_survival_keycheck_v1`）
+- 问题：AES-GCM 解不开可能是"密文被动过"，也可能是"密钥换了/丢了"——光看报错分不出来，
+  第四十六节只能保守地按"读不出来"处理，等于**改密文不再可判定**。
+- 改法：保险箱里多存一小段"用同一把密钥加密的固定明文"（自检位）。
+  - 主档解得开 / 压根没有主档（新开局、清过档）→ 证明密钥是这把 → 刷新自检位、`status().keyOk = true`；
+  - 主档解不开 → 再解一次自检位：**解得开 ⇒ 密钥没变 ⇒ 密文被改过或写坏了**（`tamperSuspect: true`，判 `corrupt` + 篡改）；
+    自检位也解不开 ⇒ 只是"读不出来"（`missing`，`tampered: false`，不冤人）。
+  - `wipe()` 一并删掉自检位；判定逻辑抽成纯函数 `integrity-core.unreadableVerdict(keyOk)` 便于单测。
+- 顺带发现并记录（不是本批引入）：主档密文损坏时 legacy 会自动回退 `.bak`，那条路径 `clearLog()` 会把
+  `reportAfterBoot` 刚打的那行日志冲掉 —— 判定本身不受影响（`tampered` 仍为 true、面板那行 `🔒` 与 `summary` 都是"损坏"），
+  玩家也照样看到 toast「存档被修改过」+「🛟 主存档损坏，已自动回退到上一次的备份」。探针里已注明以"状态 + summary"为准。
+
+### 实测证据
+- 单测 **455/455**（35 文件）：新增 `legacyTamperMarker` 4 条、`unreadableVerdict` 2 条、
+  "v2 之后不会再被当成旧标记" 1 条（`tests/integrity.test.ts`）。
+- `docs/_m36_audit.mjs` 扩到 **24/24 ALL PASS**（隔离 worktree 的 HEAD+修复 构建、线上各一遍），新增三项：
+  - **⑧A** 手动塞一个 `v1 + tampered:true`（内容指纹保持自洽）的冤枉标记 → 重载判 `ok`、`tampered=false`、
+    日志出现"清掉了旧版本留下的误判标记"；写档后该档 `__integrity.v === 2` 且不带 `tampered`。
+  - **⑧B** 把密文中间一个字符改掉（密钥不动）→ `status().keyOk=true`、`tamperSuspect=true`、判 `corrupt` + `tampered=true`，
+    `summary` =「⛔ 存档损坏：加密存档解不开，而本机密钥是好的 —— 密文被改过或写坏了」。
+  - **⑧C** 删掉密钥自检位（等价于换过浏览器 / 清过站点数据 / 密钥丢了）→ `keyOk=false`、判 `missing`、`tampered=false`、0 条告警。
+- 回归：`docs/_m8_integrity_probe.mjs` 依旧全绿（干净重载 `ok` / 改档 `mismatch` / 越界 `implausible` / 标记 `flagOnSave=true` /
+  外来档 `good=ok`、`bad=mismatch` 且 `confirm=false` 不覆盖本机）；`docs/_m36_probe.mjs` **9/9**。

@@ -246,6 +246,72 @@ const guard2 = J(await ev(`JSON.stringify({ tab: S.tab, val: (document.getElemen
 await ev(`(() => { const i = document.getElementById('audit-input'); if (i) i.remove(); return 1 })()`)
 ok('⑥ 输入框里打字不会触发页签快捷键', guard.tab === guard2.tab && guard2.val === 'ei', JSON.stringify({ guard, guard2 }))
 
+/* ═══ ⑧ M36.1 两个补修的取证：旧标记特赦 / 密文被改能判定 / 密钥丢了不冤人 ═══ */
+const KEYCHECK = 'zombie_survival_keycheck_v1'
+/* ⑧A 先造一份干净档，再手动盖一个"旧版本(v1) + tampered:true"的冤枉标记（内容指纹保持自洽） */
+await ev(`(() => { closeAllModals(); saveGame(true); return 1 })()`); await sleep(1600)
+const staged = J(await ev(`(async () => {
+  const raw = JSON.parse(V4Vault.read())
+  const sig = raw.__integrity || {}
+  raw.__integrity = { v: 1, at: new Date().toISOString(), d: sig.d, tampered: true }
+  localStorage.setItem('zombie_survival_save_v2', await V4Vault.encrypt(JSON.stringify(raw)))
+  return JSON.stringify({ stagedV: raw.__integrity.v, stagedTampered: raw.__integrity.tampered, hasDigest: !!sig.d })
+})()`))
+await boot('audit-amnesty')
+const amnesty = J(await ev(`JSON.stringify({
+  tampered: V4Integrity.tampered(), verdict: V4Integrity.verdict() && V4Integrity.verdict().state,
+  amnestyLog: (S.logBuf || []).filter(l => /误判标记|指纹校验通过/.test(String(l[1] || ''))).map(l => l[1]),
+})`))
+await ev(`(() => { saveGame(true); return 1 })()`); await sleep(1600)
+const afterAmnesty = J(await ev(`(() => { const raw = JSON.parse(V4Vault.read()); return JSON.stringify({ v: raw.__integrity && raw.__integrity.v, tampered: !!(raw.__integrity && raw.__integrity.tampered) }) })()`))
+ok('⑧A 旧版本(v1)误判标记被特赦：判 ok、不再算篡改，写档后换成 v2 且不带标记',
+  staged.stagedV === 1 && amnesty.tampered === false && amnesty.verdict === 'ok' &&
+  (amnesty.amnestyLog || []).some(l => /误判标记/.test(l)) && afterAmnesty.v === 2 && afterAmnesty.tampered === false,
+  JSON.stringify({ staged, amnesty, afterAmnesty }))
+
+/* ⑧B 密钥还在、密文被改一个字符 → 必须判"损坏 + 被改过"（GCM 带认证，这是可判定的篡改） */
+const flipped = J(await ev(`(() => {
+  const key = 'zombie_survival_save_v2'
+  const ct = localStorage.getItem(key)
+  const i = Math.floor(ct.length * 0.6)
+  const ch = ct[i] === 'A' ? 'B' : 'A'
+  localStorage.setItem(key, ct.slice(0, i) + ch + ct.slice(i + 1))
+  return JSON.stringify({ len: ct.length, flippedAt: i, keycheck: !!localStorage.getItem('${KEYCHECK}') })
+})()`))
+await boot('audit-tamper-cipher')
+const cipherTamper = J(await ev(`JSON.stringify({
+  keyOk: V4Vault.status().keyOk, suspect: V4Vault.status().tamperSuspect, failed: V4Vault.status().decryptFailed,
+  tampered: V4Integrity.tampered(), verdict: V4Integrity.verdict(), summary: V4Integrity.summary(),
+  log: (S.logBuf || []).filter(l => /存档检查|密钥是好的/.test(String(l[1] || ''))).map(l => l[0] + ': ' + l[1]),
+  visibleLog: [...document.querySelectorAll('#log .le')].slice(-10).map(e => (e.className || '').replace('le ', '') + ': ' + (e.textContent || '').slice(0, 90)),
+})`))
+await shot('audit_cipher_tamper')
+/* 说明：这一跑 legacy 读档会因主档解不开而**自动回退到 .bak**，那条回退路径会 clearLog()，
+   于是 reportAfterBoot 那行日志可能被随后到达的异步回退冲掉（判定本身没丢：tampered=true、
+   summary 也是"损坏"、账号面板那行 🔒 就是它）。所以判定以"状态 + summary"为准，日志只当参考。 */
+ok('⑧B 密文被改一个字符 → 判"损坏 + 被改过"（密钥自检通过 ⇒ 可判定）',
+  cipherTamper.keyOk === true && cipherTamper.suspect === true && cipherTamper.tampered === true &&
+  cipherTamper.verdict && cipherTamper.verdict.state === 'corrupt' && /损坏/.test(String(cipherTamper.summary)),
+  JSON.stringify(cipherTamper))
+
+/* ⑧C 密钥自检不可用（等价于换过浏览器 / 清过站点数据 / 密钥丢了）→ 只算读不出来，不冤人 */
+await ev(`(() => { localStorage.removeItem('${KEYCHECK}'); return 1 })()`)
+await boot('audit-keylost')
+const keyLost = J(await ev(`JSON.stringify({
+  keyOk: V4Vault.status().keyOk, suspect: V4Vault.status().tamperSuspect, failed: V4Vault.status().decryptFailed,
+  tampered: V4Integrity.tampered(), verdict: V4Integrity.verdict() && V4Integrity.verdict().state,
+  summary: V4Integrity.summary(),
+  dangerLogs: (S.logBuf || []).filter(l => /存档检查|被修改过/.test(String(l[1] || ''))).length,
+  toasts: [...document.querySelectorAll('#toasts .toast')].map(t => t.textContent),
+})`))
+ok('⑧C 密钥自检不可用 → 只算读不出来（tampered=false、无告警），不冤枉玩家',
+  keyLost.keyOk === false && keyLost.suspect === false && keyLost.tampered === false &&
+  keyLost.verdict === 'missing' && keyLost.dangerLogs === 0,
+  JSON.stringify(keyLost))
+
+/* 收尾：把探针自己弄脏的档清掉，让这套 profile 还能继续用 */
+await ev(`(() => { try { localStorage.clear() } catch {} ; return 1 })()`)
+
 /* ═══ ⑦ 收尾：异常/console ═══ */
 ok('⑦ 全程 0 个未捕获异常', exceptions.length === 0, JSON.stringify(exceptions.slice(0, 3)))
 ok('⑦ 全程 0 条 console.error（环境网络失败单独归类）', consoleErrors.length === 0, JSON.stringify(consoleErrors.slice(0, 3)))
