@@ -2,11 +2,13 @@
 // 不要在这个文件里加新功能：新东西写进 src/v4/，通过 window 上的名字与这里互操作。
 // M25 例外：辐射的分档/累积公式在 src/v4/rad-core.ts（纯逻辑、可单测），这里只 import 公式，不重复实现。
 import { radTier, radGain, radLevelAt, radProtect, RAD_SOURCES, geigerText } from '../v4/rad-core';
-import { CALIBERS, penMul, ammoTable, pickLoadedAmmo, ammoShortName, resolveAmmoId } from '../v4/ammo-core';
-import { MERCHANT_GOODS, badShopRows, shopPrice, ammoShopRows } from '../v4/shop-core';   // M32b：货架（弹药按口径卖）+ 坏货架兜底
+import { CALIBERS, penMul, ammoTable, pickLoadedAmmo, ammoShortName, resolveAmmoId, legacyAmmoFold } from '../v4/ammo-core';
+import { MERCHANT_GOODS, badShopRows, shopPrice, ammoShopRows, buyPlan } from '../v4/shop-core';   // M32b/M39：货架（弹药按口径卖）+ 坏货架兜底 + 批量购买
 import { apCapOf, fitnessApBonus, phaseOf, PHASE_LABEL } from '../v4/night-core';   // M25.2：行动力上限（睡眠债 + 体能）；M25.3：白昼曲线
 import { resumeFromOver, endDayLabel, endGoalChip, overHint } from '../v4/endless-core';   // M37：无尽模式（通关后继续）的纯逻辑
 import { filterTabs, filterInv, dropCount, depositCount, quickSlots, quickPick, BAG_FILTERS, type BagFilter } from '../v4/qol-core';   // M38：背包筛选/分批丢弃·存入 + 补给快捷键
+import { exportSaveText, importSaveText, parsePortText, portSummary, passphraseIssue, passphraseWeak, portSizeKb, portFileName, PORT_MAGIC } from '../v4/save-port-core';   // M39：口令加密导出/导入
+import { backupLabel, BACKUP_SLOTS } from '../v4/backup-core';   // M39：备份历史（标签与份数）
 
 
 /* ═══════════ legacy/00-data.js ═══════════ */
@@ -546,6 +548,8 @@ function writeSave(s){
     if(v){
       const prev = (v.status && v.status().cached) || null;   // 上一份明文（内存里的），当备份
       v.write(payload, { backup: !!prev, backupRaw: prev });
+      /* M39：顺手考虑存一份历史快照（节流规则在 backup-core：天数变了必存、同一天最多 2 份、间隔 ≥5 分钟） */
+      if(v.maybeSnapshot) void v.maybeSnapshot(payload);
       return true;                                            // 落盘是异步的，失败会写进 status().lastError
     }
     /* 保险箱没起来（极罕见）：退回老的 localStorage 直写，宁可明文也不能丢档 */
@@ -598,11 +602,13 @@ function sanitizeSave(d){
       const n = Math.floor(num(src[id], 0, 0, cap)); if(ITEMS[id] && n > 0) dst[id] = n; } return dst; };
   out.inv = bag(out.inv, 9999); out.store = bag(out.store, 9999);
   /* M25 存档迁移：老档只有一个笼统的 S.ammo（无口径）→ 折成 9mm 复装弹放进背包；
-     多出来的旧 "ammo" 物品也一并折算（它是"杂牌弹药"，按 1:1 变成 9mm FMJ）。 */
+     多出来的旧 "ammo" 物品也一并折算（它是"杂牌弹药"，按 1:1 变成 9mm FMJ）。
+     M39 修正：M32b 之后 S.ammo 是"装填镜像"（存档里天然是正数），无脑折算 = 每次读档白送一份弹药
+     （实测刷新页面 100 → 200 → 400）。判据搬进 ammo-core.legacyAmmoFold：只有"没有口径信息 **且**
+     背包里一件弹药都没有"的真老档才折。 */
   {
-    const old = Math.floor(num(out.ammo, 0, 0, 1e6));
-    const junk = out.inv.ammo || 0;
-    if(old > 0 || junk > 0){ out.inv.a9_fmj = (out.inv.a9_fmj || 0) + old + junk; }
+    const fold = legacyAmmoFold(out.ammo, out.load, out.inv, ITEMS);
+    if(fold > 0) out.inv.a9_fmj = (out.inv.a9_fmj || 0) + fold;
     delete out.inv.ammo;
     out.ammo = 0;
     /* load：每个口径记住玩家选的弹种（只认合法 id，坏档忽略） */
@@ -845,8 +851,162 @@ function restoreBackup(){
 }
 
 /* ───────────── 工具 ───────────── */
-const $ = s => document.querySelector(s);
-const $$ = s => Array.prototype.slice.call(document.querySelectorAll(s));
+/* ══════════ M39：存档的"搬得走 + 退得回" ══════════
+   ⑤ 口令加密的导出/导入：跨设备搬档不再需要明文（口令不入代码、不落盘）
+   ⑥ 备份历史：6 份轮转快照，能挑一份回滚（`.bak` 之外的"退好几步"） */
+
+/** 把导入/回滚出来的明文接上（migrate + sanitize 全过一遍，坏档一律拒绝） */
+function adoptPlainSave(plain, why){
+  const mig = migrateSave(JSON.parse(plain));
+  if(mig.error){ toast('读档被拒绝', mig.error, 'bad'); return false; }
+  const clean = sanitizeSave(mig.data);
+  if(!clean){ toast('读档失败','内容不完整。','bad'); return false; }
+  S = clean; battle = null; window.__renderErr = null; closeAllModals(); clearLog();
+  syncAmmo();                      // M39：导入/回滚走的是同一套清洗，镜像要跟着重算（否则 HUD 显示 0 发）
+  log(why + '：第 ' + S.day + ' 天。','info');
+  render(); autosave();
+  return true;
+}
+function copyText(text){
+  try{
+    if(navigator.clipboard && navigator.clipboard.writeText){ navigator.clipboard.writeText(text).then(() => toast('已复制','粘到新设备/聊天窗口都行（没有口令解不开）。','ok'), () => toast('复制失败','手动全选文本框复制吧。','bad')); return; }
+  }catch(e){ /* 忽略 */ }
+  toast('复制被拦','手动全选文本框复制吧。','info');
+}
+function downloadText(name, text){
+  try{
+    const url = URL.createObjectURL(new Blob([text], { type:'text/plain' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = name; document.body.appendChild(a); a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 500);
+    log('⬇️ 已导出文件：' + name,'info');
+  }catch(e){ toast('下载失败','可以手动复制文本框里的内容。','bad'); }
+}
+/** 导出/导入弹窗（prePlain 非空时导出的是"某一份历史快照"而不是当前进度） */
+function openSavePort(prePlain, title){
+  if(isLab()){ toast('沙盒里没有存档','这里是平行世界，不读也不写你的主档。','info'); return; }
+  const v = vault();
+  const src = prePlain || (v && v.currentPlain ? v.currentPlain() : null) || localStorage.getItem(SAVE_KEY) || '';
+  const sum = src ? portSummary(src) : null;
+  modal({ title: title || '🔐 导出 / 导入存档（口令加密）', sticky:true,
+    body:'<div class="hint" style="line-height:1.9">' +
+      '换设备、换浏览器搬档用这里。<b>口令不会存进游戏</b>（不落盘、不进代码）——但也意味着<b>忘了口令谁也解不开</b>。<br>' +
+      '导出的文本本身是密文（PBKDF2 15 万次 + AES-GCM-256），贴到聊天窗口也不怕。</div>' +
+      (sum ? '<div class="hint" style="margin-top:8px">当前导出的是：<b>第 ' + sum.day + ' 天</b> · 击杀 ' + sum.kills + ' · 背包 ' + sum.invKinds + ' 种</div>' : '') +
+      '<div class="sect-title" style="margin-top:12px">① 导出</div>' +
+      '<div class="row"><input id="port-pw" class="btn sm" style="flex:1 1 200px;min-width:0" type="password" placeholder="设一个口令（至少 6 位，别用生日）" />' +
+      '<button class="btn sm primary" id="port-gen">生成导出文本</button></div>' +
+      '<textarea id="port-out" readonly rows="4" style="width:100%;margin-top:8px;font-family:var(--mono);font-size:11px" placeholder="点上面的按钮生成…"></textarea>' +
+      '<div class="row" style="margin-top:6px"><button class="btn sm" id="port-copy">📋 复制文本</button>' +
+      '<button class="btn sm" id="port-dl">⬇️ 存成文件</button><span class="spacer"></span><span class="hint" id="port-size"></span></div>' +
+      '<div class="sect-title" style="margin-top:14px">② 导入（覆盖本机进度）</div>' +
+      '<textarea id="port-in" rows="4" style="width:100%;font-family:var(--mono);font-size:11px" placeholder="把导出的那一段（以 ' + PORT_MAGIC + ' 开头）粘到这里"></textarea>' +
+      '<div class="row" style="margin-top:6px"><input id="port-pw2" class="btn sm" style="flex:1 1 200px;min-width:0" type="password" placeholder="输入当时设的口令" />' +
+      '<button class="btn sm ok" id="port-import">导入并覆盖本机</button></div>' +
+      '<div class="hint" style="margin-top:8px" id="port-msg"></div>',
+    footer:'<button class="btn" data-close>关闭</button>',
+    onMount(){
+      $('#port-gen').onclick = () => {
+        const pw = $('#port-pw').value || '';
+        const bad = passphraseIssue(pw);
+        const msg = $('#port-msg');
+        if(bad){ msg.textContent = '⚠️ ' + bad; return; }
+        msg.textContent = passphraseWeak(pw) ? '提示：口令偏短，建议再长一点。' : '';
+        if(!src){ msg.textContent = '没有可导出的存档（先玩一局或保存一次）。'; return; }
+        exportSaveText(src, pw).then((txt) => {
+          $('#port-out').value = txt;
+          $('#port-size').textContent = '导出文本 ' + portSizeKb(txt);
+          log('🔐 已生成口令加密导出文本（' + portSizeKb(txt) + '）。','info');
+          sfx('ok');
+        }).catch((e) => { msg.textContent = '⚠️ 导出失败：' + (e && e.message ? e.message : e); });
+      };
+      $('#port-copy').onclick = () => { const t = $('#port-out').value; if(t) copyText(t); else $('#port-msg').textContent = '⚠️ 先生成导出文本。'; };
+      $('#port-dl').onclick = () => { const t = $('#port-out').value; if(t) downloadText(portFileName(sum ? sum.day : S.day), t); else $('#port-msg').textContent = '⚠️ 先生成导出文本。'; };
+      $('#port-import').onclick = () => {
+        const txt = ($('#port-in').value || '').trim();
+        const pw = $('#port-pw2').value || '';
+        const msg = $('#port-msg');
+        if(!parsePortText(txt)){ msg.textContent = '⚠️ 这段文本不是本游戏的导出备份。'; return; }
+        msg.textContent = '解密中…';
+        importSaveText(txt, pw).then((plain) => {
+          const sum2 = portSummary(plain);
+          if(!sum2){ msg.textContent = '⚠️ 解开了，但内容不是有效存档。'; return; }
+          msg.textContent = '';
+          modal({ title:'📥 导入确认', sticky:true,
+            body:'<p class="muted">这段备份是 <b>第 ' + sum2.day + ' 天</b>（击杀 ' + sum2.kills + ' · 生命 ' + sum2.hp + ' · 背包 ' + sum2.invKinds + ' 种）。</p>' +
+              '<p class="muted" style="margin-top:8px">导入会<b>覆盖当前进度</b>（当前进度会自动转存成本机备份，万一后悔还能回滚）。</p>',
+            footer:'<button class="btn danger" id="port-do">覆盖并载入</button><button class="btn" data-close>取消</button>',
+            onMount(){ $('#port-do').onclick = () => {
+              try{ if(adoptPlainSave(plain, '📥 已导入口令备份')) log('　 原进度已转存本机加密备份，可在「备份历史 / 回滚备份」里找回。','dim'); }
+              catch(e){ toast('导入失败','内容解析不了。','bad'); }
+            }; } });
+        }).catch((e) => { msg.textContent = '⚠️ ' + (e && e.message ? e.message : e); });
+      };
+    } });
+}
+/** 备份历史（6 份轮转快照 + `.bak` 那一步） */
+function openBackupHistory(){
+  if(isLab()){ toast('沙盒里没有存档','这里是平行世界，不读也不写你的主档。','info'); return; }
+  const v = vault();
+  if(!v || !v.listBackups){ toast('没有备份历史','这个构建读不到本机备份。','bad'); return; }
+  const list = v.listBackups();
+  const rows = list.length
+    ? list.map((e, i) => '<div class="lrow"><div><div class="nm">' + (i === 0 ? '🆕 ' : '') + backupLabel(e) + '</div>' +
+        '<div class="ds">键 ' + e.key + ' · ' + new Date(e.at).toLocaleString() + '</div></div>' +
+        '<div class="rt"><button class="btn xs" onclick="restoreHistory(\'' + e.key + '\')">回滚到这份</button>' +
+        '<button class="btn xs ghost" onclick="exportHistory(\'' + e.key + '\')">导出</button>' +
+        '<button class="btn xs danger" onclick="deleteHistory(\'' + e.key + '\')">删除</button></div></div>').join('')
+    : '<p class="muted">还没有历史快照。玩一会儿（过一天、或满 5 分钟做点事）就会自动存第一份。</p>';
+  modal({ title:'🗂️ 备份历史（最近 ' + BACKUP_SLOTS + ' 份）', sticky:true,
+    body:'<div class="hint" style="line-height:1.9">存档时自动存快照（<b>天数变化必存</b>；同一天最多 2 份、相隔至少 5 分钟），' +
+      '最多留 ' + BACKUP_SLOTS + ' 份，密文落盘（和主档同一把本机密钥）。<br>' +
+      '除了这份历史，另有「上一步」的 <b>.bak</b> 备份（菜单里的「回滚备份」）。</div>' +
+      '<div class="sect-title" style="margin-top:12px">快照</div>' + rows,
+    footer:'<button class="btn ok" id="bak-now">📸 立即存一份快照</button><button class="btn" data-close>关闭</button>',
+    onMount(){ $('#bak-now').onclick = () => {
+      v.maybeSnapshot(JSON.stringify(S), true).then((r) => {
+        toast(r.saved ? '已存快照' : '这次没存', r.why, r.saved ? 'ok' : 'info');
+        if(r.saved){ log('📸 手动快照：第 ' + S.day + ' 天。','info'); closeAllModals(); openBackupHistory(); }
+      });
+    }; } });
+}
+function restoreHistory(key){
+  const v = vault();
+  if(!v || !v.readBackupAt) return;
+  modal({ title:'🛟 回滚到这份快照', sticky:true,
+    body:'<p class="muted">回滚会把当前进度换成这份快照，当前进度仍会先转存成新的快照（后悔还能退回来）。</p>',
+    footer:'<button class="btn danger" id="hs-go">回滚并覆盖</button><button class="btn" data-close>取消</button>',
+    onMount(){ $('#hs-go').onclick = () => {
+      v.maybeSnapshot(JSON.stringify(S), true).then(() => v.readBackupAt(key)).then((txt) => {
+        if(!txt){ toast('这份快照读不出来','可能被清过站点数据。','bad'); return; }
+        try{ adoptPlainSave(txt, '🛟 已回滚到历史快照'); }catch(e){ toast('回滚失败','快照内容解析不了。','bad'); }
+      });
+    }; } });
+}
+function exportHistory(key){
+  const v = vault();
+  if(!v || !v.readBackupAt) return;
+  v.readBackupAt(key).then((txt) => {
+    if(!txt){ toast('这份快照读不出来','可能被清过站点数据。','bad'); return; }
+    openSavePort(txt, '🔐 导出这一份快照（口令加密）');
+  });
+}
+function deleteHistory(key){
+  const v = vault();
+  if(!v || !v.deleteBackupAt) return;
+  modal({ title:'🗑️ 删除这份快照', sticky:true,
+    body:'<p class="muted">删了就找不回来了（其余快照不受影响）。</p>',
+    footer:'<button class="btn danger" id="hs-del">删除</button><button class="btn" data-close>取消</button>',
+    onMount(){ $('#hs-del').onclick = () => {
+      v.deleteBackupAt(key).then((okDel) => {
+        toast(okDel ? '已删除' : '没删成', okDel ? '这份快照已经从本机移除。' : '找不到这份快照。', okDel ? 'info' : 'bad');
+        closeAllModals(); openBackupHistory();
+      });
+    }; } });
+}
+
+/* ───────────── 工具 ───────────── */
+const $ = s => document.querySelector(s);const $$ = s => Array.prototype.slice.call(document.querySelectorAll(s));
 const clamp = (v,a,b) => Math.max(a, Math.min(b, v));
 const rnd = (a,b) => a + Math.random() * (b - a);
 const ri = (a,b) => Math.floor(rnd(a, b + 1));
@@ -3474,9 +3634,17 @@ function openMerchant(){
     const cost = shopPrice(m, rate);
     const left = shopLeft(m);
     const can = S.mat >= cost && left > 0;
+    /* M39：批量购买 —— 份数按"材料 + 今日库存"实时算，不写死 ×5。
+       总是有一个「买满×N」（N 就是现在能买到的最大份数）；能买超过 5 份时再给一个「×5」。 */
+    const maxPlan = buyPlan(m, rate, S.mat, left, 'max');
+    const batch = (k, label) => k >= 2
+      ? '<button class="btn xs" onclick="buyMerchant(' + i + ',' + k + ')">' + label + '</button>' : '';
     return '<div class="lrow"><div><div class="nm">' + it.n + ' ×' + n + ' <span class="tag ' + (left > 0 ? '' : 'wpn') + '">剩余 ' + left + '/' + (m.stock || 99) + '</span></div><div class="ds">' + (it.desc || '') + '</div></div>' +
       '<div class="rt"><span class="tag ' + (can ? 'key' : '') + '">🔩 ' + cost + '</span>' +
-      '<button class="btn xs ' + (can ? 'ok' : '') + '" ' + (can ? '' : 'disabled') + ' onclick="buyMerchant(' + i + ')">' + (left <= 0 ? '今日售罄' : (can ? '购买' : '材料不足')) + '</button></div></div>';
+      '<button class="btn xs ' + (can ? 'ok' : '') + '" ' + (can ? '' : 'disabled') + ' onclick="buyMerchant(' + i + ')">' + (left <= 0 ? '今日售罄' : (can ? '购买' : '材料不足')) + '</button>' +
+      batch(maxPlan.max > 5 ? 5 : 0, '×5') +
+      batch(maxPlan.max, '买满×' + maxPlan.max) +
+      '</div></div>';
   };
   /* M32b：弹药单独一段（用户："没有各种不同的子弹卖"）——索引仍按 MERCHANT 原位置传，buyMerchant 不受影响 */
   const ammoRows = MERCHANT.map((m, i) => ({ m, i })).filter(x => x.m.sec === 'ammo');
@@ -3485,24 +3653,28 @@ function openMerchant(){
   modal({ title:'🏪 神秘商人', body:'<p class="muted" style="margin-bottom:10px">"末日里最贵的不是子弹，是还能说话的人。看看货？"</p>' +
     cut('🔩 弹药（按口径 · 穿透越高越贵）', ammoRows) + cut('🎒 物资与装备', gearRows) +
     '<div class="hint" style="margin-top:10px">今日汇率 <b class="mono">×' + rate.toFixed(2) + '</b>（每天 +2%：外面越乱，他越敢开价）· 每样货每天有量，卖完等明天 · 当前材料：<b class="mono">' + S.mat + '</b><br>' +
-    '买到的弹药直接进背包的对应弹种：打装甲目标记得先换<b>穿甲弹</b>（背包 → 弹药 里装填）。</div>',
+    '买到的弹药直接进背包的对应弹种：打装甲目标记得先换<b>穿甲弹</b>（背包 → 弹药 里装填）。<br>' +
+    /* M39：批量购买 */
+    '要补货就按 <b>×N / 买满</b>：份数按你现在的材料和今天的库存实时算，一次补完（不会再点十几下）。</div>',
     footer:'<button class="btn" data-close>离开</button>' });
 }
-function buyMerchant(i){
+function buyMerchant(i, times){
   const m = MERCHANT[i];
   /* M32b 兜底：坏货架（id 不在物品表里 / 价格数量不是正数）**不许成交**——
      旧版就是"先扣材料、再 grant 一个不存在的 id"，玩家看到的是材料花了子弹没进包。 */
   if(!m || badShopRows([m], ITEMS).length){ log('❌ 这件货有点问题（不在物品表里），这次先不成交。','danger'); return; }
   const n = Math.max(1, m.n || 1);
-  const cost = shopPrice(m, merchantRate());
-  if(shopLeft(m) <= 0){ log('❌ 这件货今天卖完了。','dim'); return; }
-  if(S.mat < cost){ log('❌ 材料不够。','dim'); return; }
-  S.mat -= cost;
-  S.shop.bought[m.id] = (S.shop.bought[m.id] || 0) + 1;
-  grant(m.id, n, true);
+  /* M39：批量购买。份数上限 = min(材料买得起的, 今日剩余, 99)，扣款与库存都按实际成交份数走 */
+  const plan = buyPlan(m, merchantRate(), S.mat, shopLeft(m), times === undefined ? 1 : times);
+  if(!plan.times){ log('❌ ' + plan.reason, 'dim'); return; }
+  S.mat -= plan.total;
+  S.shop.bought[m.id] = (S.shop.bought[m.id] || 0) + plan.times;
+  grant(m.id, n * plan.times, true);
   sfx('loot');
-  log('🛒 购买 ' + itemName(m.id) + ' ×' + n + '（-' + cost + ' 材料）', 'loot');
-  addXP('trade', 3);                            // M24 承诺过"和商人买卖涨交易技能"，这里补上
+  log('🛒 购买 ' + itemName(m.id) + ' ×' + (n * plan.times) +
+    (plan.times > 1 ? '（' + plan.times + ' 份 · -' + plan.total + ' 材料）' : '（-' + plan.total + ' 材料）'), 'loot');
+  if(plan.reason) log('　 ' + plan.reason, 'dim');
+  addXP('trade', 3 * plan.times);               // M24 承诺过"和商人买卖涨交易技能"，这里补上（按成交份数给）
   closeAllModals(); openMerchant(); render(); autosave();
 }
 
@@ -3525,8 +3697,13 @@ function openMenu(){
       /* M33：沙盒里把"会写盘"的入口全摘掉（存档/读取/回滚/重开/世界/账号）——用户拍板的"完全隔离" */
       ? '<b>🧪 这是教程沙盒</b>：所有进度都是临时的，<b>不会</b>写进你的主档、也不会不上传。<br>想接着玩自己的存档，点上面的「✕ 关闭沙盒」回到主页面。'
       : '存档是<b>自动</b>的（每日结束、搜刮、制作、建造、战斗结束时）。手动存档随时可用。<br>' +
-        'M29 起存档<b>全部加密</b>（AES-GCM-256，密钥只在本机 worker 里、不可导出）：本机读写的都是密文，' +
-        '不再提供「导出明文存档」；想多端同步请用下面的<b>云存档</b>（上传的也是密文）。') + '</div>' +
+        'M29 起存档<b>全部加密</b>（AES-GCM-256，密钥只在本机 worker 里、不可导出）：本机读写的都是密文。<br>' +
+        'M39 起搬档也不用明文了：<b>「导出 / 导入（口令）」</b>给你一段口令加密的文本（跨设备粘贴即可）；' +
+        '「备份历史」留最近 ' + BACKUP_SLOTS + ' 份快照，能挑一份回滚。想多端同步仍可用下面的<b>云存档</b>。') + '</div>' +
+    (lab ? '' : '<div class="sect-title" style="margin-top:14px">存档</div><div class="row">' +
+      '<button class="btn sm" onclick="closeAllModals();openSavePort()">🔐 导出 / 导入（口令）</button>' +
+      '<button class="btn sm" onclick="closeAllModals();openBackupHistory()">🗂️ 备份历史</button>' +
+      '</div>') +
     (v4tools ? '<div class="sect-title" style="margin-top:14px">世界与账号</div>' + v4tools : '') +
     (v4tut ? '<div class="sect-title" style="margin-top:14px">上手帮助</div>' + v4tut +
       '<div class="hint" style="margin-top:6px">第一次玩建议先看一遍：15 步，会直接把界面上的东西圈出来给你看（随时能退出，下次从这里继续）。</div>' : '') +
@@ -3715,8 +3892,10 @@ Object.assign(window, { VER, SAVE_KEY, V1_KEY, ITEMS, itemName, isWpn, ZOMBIES, 
   /* M25：口径/弹种/辐射这几个查询函数被验收探针与将来的 UI 直接用，一并挂出去 */
   CALIBERS, AMMO_OF, ammoCount, loadedAmmo, setLoaded, cycleLoaded, penMul, radTier, apCapOf, fitnessApBonus, phaseOf, PHASE_LABEL,
   syncAmmo, materializeAmmoPool, ammoShopRows,   // M32b：弹药镜像收口 + 货架弹药段（验收探针直接调）
+  shopPrice, buyPlan,                            // M39：货架报价与批量购买方案（验收探针直接调）
   isLab,                                        // M33：教程沙盒（写盘守卫 + 菜单分岔都用它）
   depositAll, setBagFilter, quickBarHtml,       // M38：背包批量存入/筛选切换 + 补给快捷条（内联 onclick）
+  openSavePort, openBackupHistory, restoreHistory, exportHistory, deleteHistory,   // M39：口令导出/导入 + 备份历史（内联 onclick）
   radLevelAt, radGain, radProtect, RAD_SOURCES, geigerText, boot });
 Object.defineProperty(window, "bagFilter", { get: function(){ return bagFilter; }, set: function(v){ bagFilter = v; }, configurable: true });
 Object.defineProperty(window, "S", { get: function(){ return S; }, set: function(v){ S = v; }, configurable: true });

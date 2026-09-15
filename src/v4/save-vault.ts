@@ -21,6 +21,7 @@
  */
 
 import { VAULT_WORKER_SRC } from './vault-worker-src';
+import { parseBackupList, rotateBackups, shouldSnapshot, snapshotMeta, backupKey, type BackupEntry } from './backup-core';   // M39：多份备份历史
 
 /** worker 源码：源仓库里 vault-worker-src.ts 是占位符，构建期被 tools/inline-worker.mjs 换成真源码 */
 const WORKER_SRC = VAULT_WORKER_SRC;
@@ -45,6 +46,8 @@ const st: VaultState = { mode: 'none', ready: false, cached: null };
    自检位都解不开 = 密钥不对 ⇒ 只是读不出来，不冤人。 */
 const KEYCHECK_KEY = 'zombie_survival_keycheck_v1';
 const KEYCHECK_PLAIN = 'zsv-keycheck-v1';
+/* M39：多份备份历史的存储键（密文数组；单份体量/份数由 backup-core 兜底） */
+const BAK_LIST_KEY = 'zombie_survival_backups_v1';
 
 /* ── 降级路径：主线程 CryptoKey，密钥存 IndexedDB ── */
 const DB = 'zsv-vault', STORE = 'keys', KEY_ID = 'save-key-v1', PARAMS_ID = 'save-key-v1:params';
@@ -312,6 +315,51 @@ export const SaveVault = {
   status(): VaultState { return { ...st }; },
   /** 探针/调试：当前是不是"存档已加密"状态 */
   isEncryptedSave(text: string): boolean { return text.startsWith(MAGIC); },
+
+  /* ───────── M39：多份备份历史（轮转快照，密文落盘） ─────────
+     `.bak` 只保留"上一步"；历史快照按天数/时间稀释后留 6 份，玩家能挑一份回滚。
+     该不该存由 backup-core.shouldSnapshot 决定（同一天最多 2 份、间隔 ≥5 分钟、天数变了必存）。 */
+  listBackups(): BackupEntry[] {
+    try { return parseBackupList(localStorage.getItem(BAK_LIST_KEY)); } catch { return []; }
+  },
+  /** 存档时顺手考虑存一份快照（节流规则在 backup-core；force=true 表示玩家手动点"立即快照"） */
+  async maybeSnapshot(plain: string, force = false): Promise<{ saved: boolean; why: string }> {
+    try {
+      const meta = snapshotMeta(plain, Date.now());
+      const list = this.listBackups();
+      const verdict = force ? { ok: true, why: '手动快照。' } : shouldSnapshot(list, meta);
+      if (!verdict.ok) return { saved: false, why: verdict.why };
+      const key = backupKey(meta.at, list.map(e => e.key));
+      const text = await encryptText(plain);
+      const { list: next, dropped } = rotateBackups(list, { ...meta, key, text });
+      localStorage.setItem(BAK_LIST_KEY, JSON.stringify(next));
+      /* 只在写成功之后才报"被挤掉"——写失败时列表没变，说"挤掉了"是假话 */
+      if (dropped.length) st.lastError = undefined;
+      return { saved: true, why: dropped.length ? verdict.why + '（最老的一份被挤掉了）' : verdict.why };
+    } catch (e) {
+      return { saved: false, why: '快照失败：' + (e instanceof Error ? e.message : String(e)) };
+    }
+  },
+  /** 取某一份快照的明文（回滚/导出用）；解不开返回 null */
+  async readBackupAt(key: string): Promise<string | null> {
+    const e = this.listBackups().find(x => x.key === key);
+    if (!e || !e.text) return null;
+    try { return e.text.startsWith(MAGIC) ? await decryptText(e.text) : e.text; } catch { return null; }
+  },
+  async deleteBackupAt(key: string): Promise<boolean> {
+    try {
+      const list = this.listBackups();
+      const next = list.filter(e => e.key !== key);
+      if (next.length === list.length) return false;
+      localStorage.setItem(BAK_LIST_KEY, JSON.stringify(next));
+      return true;
+    } catch { return false; }
+  },
+  /* M39：口令加密的导出/导入 —— 明文只在内存里过一手，落盘/复制的都是口令密文 */
+  /** 当前存档的明文（内存缓存；没有就回退 localStorage 里的明文老档） */
+  currentPlain(): string | null { return st.cached; },
+  /** 玩家点了"重新载入本机存档"这类操作后，把内存缓存换成新的明文 */
+  hydrate(plain: string | null): void { st.cached = plain; },
 };
 
 export const VAULT_MAGIC = MAGIC;

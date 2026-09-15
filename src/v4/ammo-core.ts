@@ -86,3 +86,30 @@ export function resolveAmmoId(
 export function ammoShortName(name: string): string {
   return name.split(' ').pop() || name;
 }
+
+/**
+ * M39：老档的"笼统弹药池"该不该折进背包？
+ *
+ * 为什么要有这条规则：`sanitizeSave` 一直把 `save.ammo > 0` 当成"旧版弹药池"折进 `inv.a9_fmj`，
+ * 但 M32b 之后 `S.ammo` 的含义变了 —— 它是"当前装填弹种发数"的**镜像**（`syncAmmo()` 每次背包变动重算），
+ * 存档里天然是正数。于是每读一次档就白送一份弹药：实测刷新页面 100 → 200 → 400，等于无限子弹。
+ *
+ * 判据（两条都要满足才算老档）：① 存档里没有口径信息（`load` 空）② 背包里一件弹药物品都没有。
+ * 真老档（M25 之前）只有 `S.ammo` 这个池子，这两条都成立；M32b 之后的档至少有一条不成立。
+ *
+ * @returns 要额外加进 `inv.a9_fmj` 的发数（0 = 不折算）
+ */
+export function legacyAmmoFold(
+  ammo: number,
+  load: Record<string, unknown> | undefined,
+  inv: Record<string, number> | undefined,
+  items: Record<string, { t?: string } | undefined>,
+): number {
+  const pool = Math.max(0, Math.floor(Number(ammo) || 0));
+  const junk = Math.max(0, Math.floor(Number((inv || {})['ammo']) || 0));
+  if (pool <= 0 && junk <= 0) return 0;
+  const hasCaliberInfo = !!load && Object.keys(load).length > 0;
+  const hasRealAmmo = !!inv && Object.keys(inv).some(id => items[id]?.t === 'ammo');
+  if (hasCaliberInfo || hasRealAmmo) return 0;
+  return pool + junk;
+}

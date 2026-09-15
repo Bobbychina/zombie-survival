@@ -62,3 +62,37 @@ export function badShopRows(
 export function shopPrice(row: ShopRow, rate: number): number {
   return Math.max(1, Math.round(row.cost * rate));
 }
+
+/* ── M39：批量购买 ──────────────────────────────────────────────
+   玩家一天要补几十发子弹，点十几次"购买"很烦。这里把"能买几次"算清楚：
+   同时受 材料 / 今日库存 / 单次上限（99，防手滑把材料全砸进去）三条约束，
+   并把"为什么买不到你要的次数"翻译成人话（材料只够 N 份 / 今天只剩 N 份）。 */
+export interface BuyPlan {
+  /** 实际成交份数 */
+  times: number;
+  /** 每份价格（已含汇率） */
+  each: number;
+  /** 总价 = each × times */
+  total: number;
+  /** 在当前材料/库存下最多能买几份（UI 用来写"买满×N"） */
+  max: number;
+  /** 买不满时的原因（买满时不填） */
+  reason: string;
+}
+
+export function buyPlan(row: ShopRow, rate: number, mat: number, left: number, want: number | 'max'): BuyPlan {
+  const each = shopPrice(row, rate);
+  const stock = Math.max(0, Math.floor(Number(left) || 0));
+  const money = Math.max(0, Math.floor(Number(mat) || 0));
+  const afford = Math.floor(money / each);
+  const max = Math.max(0, Math.min(stock, afford, 99));
+  const wantN = want === 'max' ? max : Math.max(0, Math.floor(Number(want) || 0));
+  const times = Math.min(wantN, max);
+  let reason = '';
+  if (stock <= 0) reason = '这件货今天卖完了。';
+  else if (afford <= 0) reason = '材料不够（一份要 ' + each + '）。';
+  else if (times < wantN) {
+    reason = '只能买 ' + times + ' 份：' + (times === stock ? '今天只剩 ' + stock + ' 份。' : '材料只够 ' + afford + ' 份。');
+  }
+  return { times, each, total: each * times, max, reason };
+}

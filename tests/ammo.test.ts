@@ -1,7 +1,7 @@
 /* M25 弹药口径/穿透单测（参考塔科夫）：
    这里的算法同时被 legacy 战斗和 v4 引擎使用，两边算不一样就是"面板说能打穿、实战却没伤害"的 bug 源头。 */
 import { describe, expect, it } from 'vitest';
-import { CALIBERS, ammoShortName, ammoTable, penMul, pickLoadedAmmo } from '../src/v4/ammo-core';
+import { CALIBERS, ammoShortName, ammoTable, penMul, pickLoadedAmmo, legacyAmmoFold } from '../src/v4/ammo-core';
 
 /** 假物品表：形状跟 legacy ITEMS 一致（t/cal/pen/dmgMul） */
 const ITEMS: Record<string, { t?: string; cal?: string; pen?: number; dmgMul?: number }> = {
@@ -93,5 +93,30 @@ describe('弹种短名', () => {
     expect(ammoShortName('9mm FMJ')).toBe('FMJ');
     expect(ammoShortName('7.62N 穿甲')).toBe('穿甲');
     expect(ammoShortName('单段')).toBe('单段');
+  });
+});
+
+/* M39：读档不再白送弹药。
+   背景：sanitizeSave 一直把 save.ammo > 0 当"旧版弹药池"折进背包，但 M32b 之后 S.ammo 是
+   "当前装填弹种发数"的镜像（存档里天然正数）→ 每读一次档弹药翻倍（实测刷新页面 100→200→400）。 */
+describe('旧版弹药池的折算判据（M39 修"刷新一次弹药翻倍"）', () => {
+  const withAmmo = { a9_fmj: { t: 'ammo' }, pistol: { t: 'wpn' }, can: { t: 'food' } };
+
+  it('真老档（没有口径信息、背包里没有任何弹药）→ 折算', () => {
+    expect(legacyAmmoFold(120, {}, { can: 2 }, withAmmo)).toBe(120);
+    expect(legacyAmmoFold(0, undefined, { ammo: 30 }, withAmmo)).toBe(30);
+    expect(legacyAmmoFold(50, {}, { ammo: 10, can: 1 }, withAmmo)).toBe(60);
+  });
+
+  it('M32b 之后的档（S.ammo 是装填镜像）→ 一点都不折（这就是那个 bug）', () => {
+    expect(legacyAmmoFold(100, {}, { a9_fmj: 100 }, withAmmo)).toBe(0);          // 镜像 + 背包里已有实弹
+    expect(legacyAmmoFold(100, { c9: 'a9_ap' }, { can: 1 }, withAmmo)).toBe(0);  // 有口径信息 = 不是老档
+    expect(legacyAmmoFold(100, { c9: 'a9_ap' }, { a9_fmj: 3 }, withAmmo)).toBe(0);
+  });
+
+  it('没有弹药池时恒为 0（不产生无中生有的弹药）', () => {
+    expect(legacyAmmoFold(0, {}, {}, withAmmo)).toBe(0);
+    expect(legacyAmmoFold(NaN as unknown as number, {}, {}, withAmmo)).toBe(0);
+    expect(legacyAmmoFold(-5, {}, {}, withAmmo)).toBe(0);
   });
 });
