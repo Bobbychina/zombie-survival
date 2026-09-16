@@ -11,8 +11,9 @@
 import { L } from '../main';
 import seedrandom from 'seedrandom';
 import {
-  CONDS, COND_IDS, condPenalty, condRisk, dryThirstMul, fireChance, forecastKind, FORECAST_INFO, humBand,
-  humLine, humidityOf, rotMulOf, tickCond, wetEffect, wetGain, type CondId, type CondState,
+  CONDS, COND_CURE, COND_IDS, COND_OF_ITEM, condPenalty, condPenaltyText, condRisk, dryThirstMul, fireChance,
+  forecastKind, FORECAST_INFO, humBand, humLabel, humLine, humidityOf, rotMulOf, tickCond, wetEffect, wetGain,
+  type CondId, type CondState,
 } from './survival-core';
 import { envOf, seasonNow, sheltered, weatherNow } from './env';
 import { rollWeather, seasonOf, SEASON_INFO, WEATHER } from './env-core';
@@ -120,7 +121,7 @@ export const staCapMul = (): number => condPenalty(st().conds).apMul;
 /** 干燥天喝水收益（喝水的地方乘它：0.7 = 只补七成） */
 export const drinkGain = (): number => (humBand(st().hum) === 'dry' ? 0.7 : 1);
 
-/** HUD chips（跟体温/季节并排） */
+/** HUD chips（跟体温/季节并排）——M50 起 HUD 不再显示它们，这一份留给探针与老入口 */
 export function survivalChips(): string {
   const e = st();
   const band = humBand(e.hum);
@@ -133,6 +134,67 @@ export function survivalChips(): string {
   }
   return h;
 }
+
+/* ── M50：主动治疗（人体页的按钮 + 背包里吃药都走这里） ── */
+export interface CondRow {
+  id: CondId; name: string; icon: string; color: string;
+  symptom: string; penalty: string; cure: string;
+  since: number; days: number;
+  /** 治病要用的东西 */
+  item: string; itemName: string; have: number; need: number; how: string;
+}
+
+/** 当前病症的结构化列表（人体页/图鉴/探针共用一份口径） */
+export function condRows(): CondRow[] {
+  const S = L.S as any;
+  return st().conds.map(c => {
+    const d = CONDS[c.id], cure = COND_CURE[c.id];
+    const item = cure.item;
+    return {
+      id: c.id, name: d.name, icon: d.icon, color: d.color,
+      symptom: d.symptom, penalty: condPenaltyText(c.id), cure: d.cure,
+      since: c.since, days: Math.max(1, (Number(S.day) || 1) - (Number(c.since) || 1) + 1),
+      item, itemName: L.itemName(item), have: L.itemCount(item), need: cure.n, how: cure.how,
+    };
+  });
+}
+
+/** 吃药治病：扣药 → 病症立刻消失（不用再等环境回落）。返回一句话结论。 */
+export function treatCond(id: CondId): { ok: boolean; msg: string } {
+  const S = L.S as any;
+  const e = st();
+  const d = CONDS[id];
+  if (!d) return { ok: false, msg: '没有这种病' };
+  if (!e.conds.some(c => c.id === id)) return { ok: false, msg: '现在没有' + d.name };
+  const cure = COND_CURE[id];
+  const have = L.itemCount(cure.item);
+  if (have < cure.n) return { ok: false, msg: '没有' + L.itemName(cure.item) + '（' + cure.how + '）' };
+  L.takeItem(cure.item, cure.n);
+  e.conds = e.conds.filter(c => c.id !== id);
+  /* 脱水/中暑这两条是"身体缺水"的账：吃药顺手补一口，别让玩家治完还渴死 */
+  if (id === 'dehydration' || id === 'heatstroke') S.thi = Math.min(100, (Number(S.thi) || 0) + 18);
+  L.log('💊 ' + d.icon + d.name + '：' + cure.how + '（' + L.itemName(cure.item) + '×' + cure.n + '）——症状压下去了。', 'success');
+  L.addXP('medic', 3);
+  L.sfx('ok');
+  L.autosave(); L.render();
+  return { ok: true, msg: '已处理' + d.name };
+}
+
+/** 背包里「使用」某件药时顺手治病（抗生素/抗真菌药）。治好了返回病名，否则 null。 */
+export function treatByItem(itemId: string): string | null {
+  const id = COND_OF_ITEM[itemId];
+  if (!id) return null;
+  if (!st().conds.some(c => c.id === id)) return null;
+  const r = treatCond(id);
+  return r.ok ? CONDS[id].name : null;
+}
+
+/** 探针/调试：一次拿到"有哪些病、各要什么药、手上有几份" */
+export const condStatus = () => condRows().map(r => ({ id: r.id, name: r.name, item: r.item, have: r.have, need: r.need, days: r.days }));
+export const humNow = (): { hum: number; band: string; label: string; wet: number } => {
+  const e = st();
+  return { hum: e.hum, band: humBand(e.hum), label: humLabel(e.hum), wet: e.wet };
+};
 
 /** 环境面板里那一行 */
 export function survivalLine(): string {

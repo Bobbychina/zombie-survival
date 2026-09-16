@@ -35,6 +35,7 @@ export const MERCHANT_GOODS: ShopRow[] = [
   { id: 'can',      n: 3, cost: 22, stock: 2 },
   { id: 'water',    n: 3, cost: 22, stock: 2 },
   { id: 'anti',     n: 2, cost: 30, stock: 1 },
+  { id: 'fungicide', n: 2, cost: 26, stock: 1 },   // M50：抗真菌药（闷湿季的续命药）
   { id: 'gasmask',  cost: 70,  stock: 1 },
   { id: 'hazmat',   cost: 120, stock: 1 },
   { id: 'kevlar',   cost: 110, stock: 1 },

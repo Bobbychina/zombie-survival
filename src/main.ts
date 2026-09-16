@@ -217,7 +217,9 @@ async function main() {
     try {
       const hud = document.getElementById('hud');
       if (!hud) return;
-      const chips = (() => { try { return env.envChips() + (L.S ? survival.survivalChips() : ''); } catch { return env.envChips(); } })();
+      /* M50：体温/湿度/淋湿/病症的 chips 搬进「人体」subpage 了（用户：「把所有的体温啊病情啊啥的
+         都移到人体 subpage 内」），HUD 不再插这一块。壳留着 —— 以后想在顶栏恢复只改这一行。 */
+      const chips = '';
       const inner = hud.querySelector<HTMLElement>('.hud-chips');
       const host: HTMLElement = inner ?? hud;
       let env0 = hud.querySelector<HTMLElement>('.v4-env');
@@ -237,7 +239,7 @@ async function main() {
     /* 关键：legacy 的 renderHud() 每次都是 `$('#hud').innerHTML = h` —— **整块重写**。
        所以"渲染完再 append"这种写法必然被下一次重写抹掉（实测：MutationObserver 版本在探针里
        反复 MISSING）。真正稳的做法是在赋值那一刻就把我们这段 HTML 拼进去（synchronous，不靠时序）。
-       副作用几乎为零：只拦 #hud 这一个元素的 innerHTML。 */
+       副作用几乎为零：只拦 #hud 这一个元素的 innerHTML。M50 起这段 chips 为空（见上）。 */
     const proto = Object.getOwnPropertyDescriptor(Element.prototype, 'innerHTML');
     if (proto && proto.set && proto.get) {
       Object.defineProperty(hudEl, 'innerHTML', {
@@ -246,7 +248,7 @@ async function main() {
         set(v: string) {
           let out = String(v);
           try {
-            const chips = env.envChips() + (L.S ? survival.survivalChips() : '');
+            const chips = '';
             if (chips) out = out.replace('</div>', '</div><span class="v4-env">' + chips + '</span>');
           } catch { /* HUD 少一条 chip 不该让整屏挂掉 */ }
           proto.set!.call(this, out);
@@ -286,6 +288,9 @@ async function main() {
     penaltyNow: survival.penaltyNow, staCapMul: survival.staCapMul, vitalsMul: survival.vitalsMul,
     condNames: survival.condNames, forecastLines: survival.forecastLines,
     drinkGain: survival.drinkGain, fireOk: survival.fireOk, rotMul: survival.rotMul, refreshHum: survival.refreshHum,
+    /* M50：病症的主动治疗（人体页按钮 / 背包吃药 / 探针都走这三个名字） */
+    condRows: survival.condRows, treat: survival.treatCond, treatByItem: survival.treatByItem,
+    condStatus: survival.condStatus, humNow: survival.humNow,
   };
   (V4 as any).survival = survival;
   /* M31：人体与伤病（分页 + 战斗钩子 + 走路成本 + 治疗）—— legacy 通过 window.V4Medical 调 */
@@ -294,7 +299,10 @@ async function main() {
     stepBody: medical.stepBody, nightBody: medical.nightBody, onPlayerHurt: medical.onPlayerHurt,
     status: medical.bodyStatus, penaltyNow: medical.bodyPenaltyNow, bodyPenaltyNow: medical.bodyPenaltyNow,
     travelExtra: medical.bodyTravelExtra, hudLine: medical.bodyHudLine, bodyNow: medical.bodyNow,
+    guideHtml: medical.guideHtml,                  // M50：治疗指南（图鉴 → 📘 治疗指南）
   };
+  /* M50：图鉴里的「治疗指南」由 v4 渲染（legacy 的 renderCodex 只留一个调用点） */
+  (window as any).__v4GuideHtml = medical.guideHtml;
   (V4 as any).medical = medical;
   /* M32：字号适配 + 地图悬浮窗（顶栏 🗺️、☰ 菜单里的 A−/A+、快捷键 Ctrl±/M 都走这里）
      M34：地图摆法（悬浮窗 / 嵌入页内）也在这一份里 —— ☰ → 显示 → 地图位置 */

@@ -42,7 +42,7 @@ const moved = await ev(`(() => { const b = DEV.gotoPoi({}); return b ? (b.biome 
 await ev(`(() => { try { if (typeof renderHud === 'function') renderHud(); if (typeof render === 'function') render(); } catch (e) {} return 1 })()`)
 await sleep(600)
 
-/* ── ① HUD 上有湿度条，且初始值跟当天天气一致 ── */
+/* ── ① 湿度是天气的导出量；M50 起体温/湿度/病症的 chips 搬进「人体」页（顶栏不再有） ── */
 const hud = JSON.parse(await ev(`(() => {
   window.V4Survival.refreshHum()
   if (typeof render === 'function') render()
@@ -53,10 +53,7 @@ const hud = JSON.parse(await ev(`(() => {
     visW: env0 ? Math.round(env0.getBoundingClientRect().width) : 0,
     hum: s.hum, weather: window.S.env.weather })
 })()`))
-/* innerText 在 headless 的嵌套 flex 里不可靠（实测屏幕上看得见、innerText 读不到），
-   所以这里按 DOM 里的 chip 元素 + 几何宽度判定"真的画出来了"。 */
-ok('HUD 里有湿度 chip（数值 + 天气）', hud.count >= 2 && hud.inHud === true && hud.visW > 0,
-  JSON.stringify({ chips: hud.chips, visW: hud.visW, hum: hud.hum, weather: hud.weather }))
+ok('顶栏不再挂体温/湿度/病症 chips（M50：搬进人体页 / 用户要求）', hud.count === 0, JSON.stringify(hud.chips))
 ok('湿度是天气的导出量（雨天闷湿 / 热浪干燥）', (() => {
   const w = hud.weather
   if (w === 'rain' || w === 'storm' || w === 'fog') return hud.hum > 70
@@ -65,7 +62,7 @@ ok('湿度是天气的导出量（雨天闷湿 / 热浪干燥）', (() => {
 })(), 'weather=' + hud.weather + ' hum=' + hud.hum)
 await shot('80_hud_humidity')
 
-/* ── ② 干燥 + 高温 → 中暑 / 脱水；HUD 出现病症 chip ── */
+/* ── ② 干燥 + 高温 → 中暑 / 脱水；这些病现在写在人体页的病症表里 ── */
 const dry = JSON.parse(await ev(`(() => {
   const S = DEV.state()
   S.env.weather = 'heat'; S.env.temp = 85; S.thi = 12
@@ -73,15 +70,15 @@ const dry = JSON.parse(await ev(`(() => {
   const before = window.V4Survival.status()
   const out = window.V4Survival.step(40)          // 40 步 ≈ 10 次病程结算
   window.V4Survival.refreshHum()
-  if (typeof render === 'function') render()      // 重画一次让 chip 跟上状态
-  const env0 = document.querySelector('.v4-env')
-  const chips = env0 ? env0.textContent.replace(/\\s+/g, ' ') : ''
+  if (typeof render === 'function') render()      // 重画一次让页面跟上状态
   return JSON.stringify({ before: before, after: window.V4Survival.status(), gained: out.gained, hp: out.hp,
-    chips: chips })
+    rows: window.V4Survival.condStatus() })
 })()`))
 ok('干燥 + 高温真的会得病（中暑/脱水）', dry.after.conds.length > 0,
   JSON.stringify({ conds: dry.after.conds, hum: dry.after.hum, loc: moved }))
-ok('中暑/脱水在 HUD 上有 chip', /中暑|脱水/.test(String(dry.chips)), String(dry.chips).replace(/\s+/g, ' ').slice(0, 80))
+ok('中暑/脱水在人体页的病症表里（带药名与需要份数）',
+  dry.rows.some(r => /中暑|脱水/.test(r.name)) && dry.rows.every(r => r.item && r.need > 0),
+  JSON.stringify(dry.rows))
 ok('病的代价真的落下（掉血或惩罚）', dry.hp < 0 || dry.gained.length > 0, JSON.stringify({ hp: dry.hp, gained: dry.gained }))
 
 /* ── ③ 环境回到舒适区 → 病程消退 ── */

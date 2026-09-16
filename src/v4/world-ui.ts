@@ -514,6 +514,9 @@ function envCard(): string {
   for (const c of conds) badges.push('🩺 ' + c);
   let b = '<div class="hint">' + esc(envLine()) + '</div>';
   if (svHud?.riskLine) b += '<div class="hint" style="color:#e0b06a">' + esc(svHud.riskLine()) + '</div>';
+  /* M50：病症的详细面板（症状/代价/吃什么药）搬进人体页了；这张卡只留"去处理"的入口 */
+  if (conds.length) b += '<div class="row" style="margin-top:6px"><button class="btn sm warn" onclick="setTab(\'body\')">🩺 身上的 ' +
+    conds.length + ' 项病症 → 人体页处理</button></div>';
   if (p.note) b += '<div class="hint" style="color:#e0b06a">' + esc(p.note) + '</div>';
   b += '<div class="hint">今日：采集 ×' + WEATHER[env.weather].forage + ' · 作物 ×' + WEATHER[env.weather].crop +
     ' · 腐坏 ×' + (SEASON_INFO[seasonNow()].rot * WEATHER[env.weather].rot).toFixed(2) +

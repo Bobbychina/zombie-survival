@@ -13,6 +13,10 @@ import {
   INJURIES, PARTS, PART_INFO, applyHit, bodyFromHp, bodyPenalty, bodySummary, hudLine, tickBody,
   travelExtra, treat, treatOptions, type BodyPart, type BodyState,
 } from './medical-core';
+import { envOf, seasonNow, tempPenalty, weatherNow } from './env';
+import { SEASON_INFO, TEMP_LOW, WEATHER } from './env-core';
+import { condRows, fireOk, humNow, riskLine, rotMul } from './survival';
+import { CONDS, COND_CURE, COND_IDS, condPenaltyText, humBand, humLine } from './survival-core';
 
 let steps = 0;
 const STEPS_PER_BODY_TICK = 4;                 // 与 survival 同一个节奏：每 4 步走一次病程
@@ -173,6 +177,77 @@ function treatmentHtml(b: BodyState): string {
   return h + '</div>';
 }
 
+/* ── M50：体温 / 湿度 / 病症 —— 用户要求「把所有的体温啊病情啊啥的都移到人体 subpage 内」。
+   这一块以前散在顶栏 chips 与探索页环境卡里，人体页反而只讲部位伤。现在人体页是身体与环境
+   的唯一主场：数值 + 档位 + 症状 + 治疗按钮都在这里（HUD 不再显示，见 main.ts 的 paintEnv）。 */
+function envCondHtml(): string {
+  const e = envOf();
+  const p = tempPenalty(e.temp);
+  const hum = humNow();
+  const season = seasonNow(), w = WEATHER[weatherNow()];
+  const band = humBand(hum.hum);
+  const tempTxt = e.temp < TEMP_LOW ? '偏低：行动力与命中被压' : e.temp > 80 ? '偏高：水分流失更快' : '正常';
+  const humNote = band === 'dry' ? '干燥：容易中暑/脱水' : band === 'muggy' ? '闷湿：容易呼吸道感染与真菌' : '适宜：没有额外影响';
+  return '<div class="card" style="padding:10px"><h3>🌡️ 体温与环境</h3>' +
+    '<div class="kv"><span>🌡️ 体温</span><b>' + Math.round(e.temp) + ' · ' + tempTxt + '</b></div>' +
+    '<div class="kv"><span>💧 湿度</span><b>' + Math.round(hum.hum) + '% · ' + hum.label + '</b></div>' +
+    '<div class="hint">' + esc(humNote) + (hum.wet >= 25 ? ' · 🌧️ 淋湿 ' + Math.round(hum.wet) + '%（体温掉得更快，回屋/火堆烘干）' : '') + '</div>' +
+    '<div class="kv"><span>🍂 季节天气</span><b>' + SEASON_INFO[season].icon + SEASON_INFO[season].name + '季 · ' + w.icon + w.name + '</b></div>' +
+    '<div class="hint">生火成功率 ' + Math.round(fireOk() * 100) + '% · 生鲜腐坏 ×' + rotMul().toFixed(2) +
+    ' · 明日 ' + WEATHER[envOf().tomorrow].icon + WEATHER[envOf().tomorrow].name + '</div>' +
+    (p.note ? '<div class="hint" style="color:#e0b06a">' + esc(p.note) + '</div>' : '') +
+    '</div>';
+}
+
+/** 病症卡：每条病给症状、代价、怎么好，手上有药就能当场点掉（M50 的核心） */
+function condsHtml(): string {
+  const rows = condRows();
+  let h = '<div class="card" style="padding:10px"><h3>🦠 病症 <span class="sub">' +
+    (rows.length ? rows.length + ' 项在身' : '无') + '</span></h3>';
+  if (!rows.length) {
+    h += '<div class="hint">身上没有病症。气候引起的病会先给一句风险提示：</div>';
+  } else {
+    h += '<div class="grid" style="gap:6px">';
+    for (const r of rows) {
+      const can = r.have >= r.need;
+      h += '<div class="lrow" style="flex-direction:column;align-items:stretch;gap:4px;border-left:3px solid ' + r.color + '">' +
+        '<div class="row"><span class="nm" style="color:' + r.color + '">' + r.icon + ' ' + r.name + '</span><span class="spacer"></span>' +
+        '<span class="hint mono">第 ' + r.since + ' 天起 · 已 ' + r.days + ' 天</span></div>' +
+        '<div class="hint">症状：' + esc(r.symptom) + '</div>' +
+        '<div class="hint">代价：' + esc(r.penalty) + '</div>' +
+        '<div class="hint">怎么好：' + esc(r.cure) + '</div>' +
+        '<div class="row"><button class="btn sm ' + (can ? 'ok' : '') + '"' + (can ? '' : ' disabled') +
+        ' onclick="V4Survival.treat(\'' + r.id + '\')" title="' + esc(r.how) + '">💊 ' + esc(r.how) +
+        ' · ' + esc(r.itemName) + '×' + r.need + '（有 ' + r.have + '）</button></div>' +
+        '</div>';
+    }
+    h += '</div>';
+  }
+  h += '<div class="hint" style="margin-top:6px">' + esc(riskLine()) + '</div>';
+  h += '<div class="hint">病症拖久了会留后遗症（体力上限回不满）；完整对照表在 <b>图鉴 → 📘 治疗指南</b>。</div>';
+  return h + '</div>';
+}
+
+/** M50：治疗指南（原来贴在人体页右下角，用户要求搬进图鉴）。
+ *  内容全部从 medical-core 的 INJURIES 与 survival-core 的 CONDS 生成，不手抄第二份。 */
+export function guideHtml(): string {
+  const inj = [...new Map(Object.values(INJURIES).map(d => [d.icon + d.name, d])).values()];
+  let h = '<div class="grid g2" style="gap:10px">';
+  h += '<div class="card"><h3>🩸 伤情怎么处理</h3><div class="hint">' +
+    inj.map(d => d.icon + ' <b>' + esc(d.name) + '</b>：' + esc(d.cure)).join('<br>') + '</div>' +
+    '<div class="hint" style="margin-top:6px">流血不会自己停：先绷带/急救包止血，再找机会动手术（手术要回据点，成功率与医疗技能挂钩）。</div></div>';
+  h += '<div class="card"><h3>🦠 病症怎么处理</h3><div class="hint">' +
+    COND_IDS.map(id => {
+      const d = CONDS[id], c = COND_CURE[id];
+      return d.icon + ' <b>' + esc(d.name) + '</b>：' + esc(d.cure) +
+        '　<span class="mono">（' + esc(c.item === 'water' ? '净水' : c.how) + ' · 代价 ' + condPenaltyText(id) + '）</span>';
+    }).join('<br>') +
+    '</div><div class="hint" style="margin-top:6px">气候病会自己消退（回到舒适区 + 撑过两段），但拖久了留后遗症；手上有药就在 <b>人体</b> 页点一下，当场压下去。</div>' +
+    '<div class="hint">湿度与体温的档位看 <b>人体 → 🌡️ 体温与环境</b>：干燥容易中暑/脱水，闷湿容易呼吸道感染与真菌。</div></div>';
+  h += '</div>';
+  return h;
+}
+
 /** 人体页整体（由 legacy 的 render() 调用） */
 export function renderBodyTab(): string {
   const S = L.S as any;
@@ -199,12 +274,12 @@ export function renderBodyTab(): string {
       PART_INFO[p].icon + PART_INFO[p].name + ' ' + Math.round(b.parts[p]) + '%' + (inj ? ' ' + INJURIES[inj.id].icon + INJURIES[inj.id].name : '') + '</span>';
   }
   h += '</div></div></div></div>';
+  /* M50：体温/湿度/病症搬到这一页 —— 左边是"你现在处在什么环境里"，右边是"身上有什么病、吃什么药" */
   h += '<div class="row" style="align-items:flex-start;gap:10px;flex-wrap:wrap;margin-top:10px">';
-  h += '<div style="flex:1;min-width:280px">' + treatmentHtml(b) + '</div>';
-  h += '<div style="flex:1;min-width:280px"><div class="card" style="padding:10px"><h3>📖 伤情图鉴</h3>' +
-    '<div class="hint">' + [...new Set(Object.values(INJURIES).map(d => d.icon + d.name + '：' + d.cure))].slice(0, 8).join('<br>') + '</div>' +
-    '<div class="hint" style="margin-top:6px">流血不会自己停：先绷带/急救包止血，再找机会动手术。</div></div></div>';
+  h += '<div style="flex:1;min-width:280px">' + envCondHtml() + '</div>';
+  h += '<div style="flex:1;min-width:280px">' + condsHtml() + '</div>';
   h += '</div>';
+  h += '<div style="margin-top:10px">' + treatmentHtml(b) + '</div>';
   return h;
 }
 

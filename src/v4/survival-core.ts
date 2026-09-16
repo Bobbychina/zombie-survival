@@ -92,33 +92,60 @@ export const CONDS: Record<CondId, CondDef> = {
   heatstroke: {
     id: 'heatstroke', name: '中暑', icon: '🥵', color: '#ef6f6f',
     apMul: 0.7, hitPenalty: 0.15, hpPerTick: 3, thirstMul: 1.6,
-    cure: '回室内/火堆旁降温，喝水、歇一会儿',
+    cure: '回室内/火堆旁降温，或浇一份净水',
     symptom: '太阳穴一跳一跳地疼，视野发白，衣服全黏在背上。',
     hud: '中暑：体力上限 −30%、命中 −15%，还在掉血',
   },
   dehydration: {
     id: 'dehydration', name: '脱水', icon: '💧', color: '#e0b45c',
     apMul: 0.85, hitPenalty: 0.06, hpPerTick: 1, thirstMul: 1.5,
-    cure: '喝够水（干燥天喝水收益只有七成）',
+    cure: '喝够水（净水×1；干燥天只补七成）',
     symptom: '嘴唇裂开，咽口水都疼，站起来眼前发黑。',
     hud: '脱水：水分消耗 ×1.5、喝水收益 −30%',
   },
   respiratory: {
     id: 'respiratory', name: '呼吸道感染', icon: '🤧', color: '#8ab4d8',
     apMul: 0.85, hitPenalty: 0.1, hpPerTick: 1, thirstMul: 1,
-    cure: '进屋/火堆取暖 + 抗生素（拖久了会变成肺炎）',
+    cure: '进屋/火堆取暖 + 抗生素×1（拖久了会变成肺炎）',
     symptom: '喉咙像塞了棉花，咳出来的东西带颜色。',
     hud: '呼吸道感染：体力上限 −15%、命中 −10%',
   },
   fungal: {
     id: 'fungal', name: '真菌感染', icon: '🍄', color: '#b98ad8',
     apMul: 0.9, hitPenalty: 0.04, hpPerTick: 2, thirstMul: 1,
-    cure: '抗真菌药（闷湿天最容易反复）',
+    cure: '抗真菌药×1（闷湿天最容易反复）',
     symptom: '指缝和腋下起了发痒的红斑，边缘一圈发白。',
     hud: '真菌感染：持续掉体力，伤口愈合变慢',
   },
 };
 export const COND_IDS = Object.keys(CONDS) as CondId[];
+
+/* ── 主动治疗（M50）：每种病症给一个**真的能用掉的东西** ──
+   用户报障：「真菌感染…也无法治疗」。M30 起 `cure` 只是一句文案，而"抗真菌药"这件东西
+   游戏里**根本不存在** —— 真菌感染只能等湿度/体温回到舒适区自己消退（还得撑过 2 段）。
+   现在把它做成真药：病症 → 药 → 人体页上的按钮（数值只写这一处，UI 读它）。 */
+export interface CondCure { item: string; n: number; how: string }
+
+export const COND_CURE: Record<CondId, CondCure> = {
+  heatstroke: { item: 'water', n: 1, how: '浇一份净水降温' },
+  dehydration: { item: 'water', n: 1, how: '一口气喝够水' },
+  respiratory: { item: 'anti', n: 1, how: '抗生素压住' },
+  fungal: { item: 'fungicide', n: 1, how: '抗真菌药' },
+};
+
+/** 反过来：这件药治哪个病（背包里点「使用」时顺手治病，不必回人体页） */
+export const COND_OF_ITEM: Record<string, CondId> = { fungicide: 'fungal', anti: 'respiratory' };
+
+/** 病症的数值惩罚写成一句话（人体页/图鉴共用） */
+export function condPenaltyText(id: CondId): string {
+  const d = CONDS[id];
+  const parts: string[] = [];
+  if (d.apMul < 1) parts.push('体力上限 −' + Math.round((1 - d.apMul) * 100) + '%');
+  if (d.hitPenalty > 0) parts.push('命中 −' + Math.round(d.hitPenalty * 100) + '%');
+  if (d.hpPerTick > 0) parts.push('每段 −' + d.hpPerTick + ' 生命');
+  if (d.thirstMul > 1) parts.push('水分消耗 ×' + d.thirstMul);
+  return parts.join(' · ') || '没有额外惩罚';
+}
 
 export interface CondInput {
   hum: number;
