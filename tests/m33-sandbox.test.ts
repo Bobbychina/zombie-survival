@@ -71,7 +71,8 @@ describe('章节表', () => {
   it('第 2 章的预设够打通这一章：穿甲弹 ≥16 发 + 各区都刷得到装甲丧尸', () => {
     expect(COMBAT_PRESET.inv.a9_ap).toBeGreaterThanOrEqual(24);   // 装甲丧尸 hp62/armor5：一下只有 3~9 点，8 发必然卡章（探针实测）
     expect(COMBAT_PRESET.extraEnemies).toContain('armored');
-    expect(COMBAT_PRESET.inv.medkit).toBeGreaterThan(0);          // 打装甲丧尸要挨几下
+    expect(COMBAT_PRESET.inv.medkit).toBeGreaterThanOrEqual(2);   // 这一场要边打边包扎（它一巴掌 17）
+    expect(COMBAT_PRESET.inv.kevlar).toBeGreaterThanOrEqual(1);   // 裸装玩家会先倒下（探针实测）
   });
 
   it('第 3 章「人体与伤病」：预设带两处伤，目标是"处理掉"而不是"受过伤"', () => {

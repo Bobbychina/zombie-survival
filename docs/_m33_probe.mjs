@@ -273,18 +273,33 @@ ok('第 2 章三条绿了但没通关（M48 的第④条还没做，3/4）', don
    拿着撬棍打死装甲丧尸只会记近战击杀（第一次跑就是这么红的）。 */
 await lab(`W.equipWeapon('pistol'); W.setLoaded('c9','a9_ap'); W.S.hp = W.S.hpMax; W.DEV.battle(['armored']); return 1;`)
 await sleep(1500)
-const armedBefore = await lab(`return JSON.stringify({ loaded: (W.S.load || {}).c9 || null, apKills: W.S.stats.apKills || 0, hp: W.S.hp });`)
-for (let i = 0; i < 40; i++) {
-  /* 用**威力最大的**那一招（第 2 格「连发」）：装甲丧尸 hp62，点射一下只有 3~9 点，20 发都不够打 */
+const armedBefore = await lab(`return JSON.stringify({ wpn: W.S.eq.wpn, loaded: (W.S.load || {}).c9 || null, ammo: W.S.ammo, apKills: W.S.stats.apKills || 0, hp: W.S.hp });`)
+/* 先等战斗界面真的开起来：慢一帧就判 'OVER' 会把整场战斗跳过（第一次跑就是这么"0 击杀"的） */
+let armedOpen = false
+for (let i = 0; i < 24 && !armedOpen; i++) {
+  armedOpen = (await lab(`return !!(W.V4UI && W.V4UI.isOpen())`)) === true
+  if (!armedOpen) await sleep(500)
+}
+ok('第 2 章：装甲丧尸遭遇真的开打了（战斗界面打开）', armedOpen, JSON.stringify(armedBefore))
+for (let i = 0; i < 40 && armedOpen; i++) {
+  /* 用**威力最大的**那一招（第 2 格「连发」），血低了点「包扎」—— 装甲丧尸 hp62/armor5：
+     点射一下只有 3~9 点，而它一巴掌 17，不回血硬打会先倒下（第一次跑就是这么红的）。 */
   const st = await lab(`if (!W.V4UI || !W.V4UI.isOpen()) return 'OVER';
-    W.S.hp = W.S.hpMax;                                     /* 探针只验"击杀记账"，不验"打不打得过"：每轮把血顶满 */
-    const done = [...D.querySelectorAll('#v4b-overlay button')].find(b => /继续/.test(b.textContent || ''));
-    if (done) { done.click(); return 'OVER'; }
-    const all = [...D.querySelectorAll('#v4b-overlay .mv-slot')];
-    const pick = (all[1] && !all[1].disabled) ? all[1] : all.filter(x => !x.disabled)[0];
+    const ov = D.getElementById('v4b-overlay');
+    const txt = ov ? ov.textContent.replace(/\\s+/g, ' ') : '';
+    const hp = (txt.match(/生命(\\d+)\\/(\\d+)/) || [0, '999', '999']);
+    const low = (+hp[1]) < 55;
+    const all = [...(ov ? ov.querySelectorAll('.mv-slot') : [])];
+    const heal = all.find(x => /包扎/.test(x.textContent || '') && !x.disabled);
+    const shot = (all[1] && !all[1].disabled) ? all[1] : all.find(x => !x.disabled);
+    const pick = (low && heal) ? heal : shot;
     if (!pick) return 'WAIT';
-    pick.click(); return 'HIT';`)
+    pick.click();
+    const ov2 = D.getElementById('v4b-overlay');
+    const t2 = ov2 ? ov2.textContent.replace(/\\s+/g, ' ') : '';
+    return JSON.stringify({ foe: (t2.match(/HP \\d+\\/\\d+/) || ['?'])[0], myHp: hp[1], healed: !!(low && heal), ammo: W.S.ammo, apKills: W.S.stats.apKills });`)
   if (st === 'OVER') break
+  if (i < 16) console.log('    装甲战第' + (i + 1) + '轮：' + st)
   await sleep(700)
 }
 await sleep(1000)

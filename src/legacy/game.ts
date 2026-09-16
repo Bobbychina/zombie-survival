@@ -4017,6 +4017,13 @@ function bootLab(){
   const inv = p.inv || {};
   for(const id in inv){ if(ITEMS[id] && inv[id] > 0) S.inv[id] = Math.floor(inv[id]); }
   if(!S.eq.wpn){ const firstWpn = Object.keys(S.inv).find(id => ITEMS[id] && ITEMS[id].t === 'wpn'); if(firstWpn) S.eq.wpn = firstWpn; }
+  /* M48：预设里给了护甲就顺手穿上 —— 第 2 章那只装甲丧尸一巴掌 17，教学章不该卡在"忘了穿甲衣"。 */
+  if(!S.eq.body){
+    const armorGear = Object.keys(S.inv)
+      .filter(id => ITEMS[id] && ITEMS[id].slot === 'body' && ITEMS[id].armor)
+      .sort((a, b) => (ITEMS[b].armor || 0) - (ITEMS[a].armor || 0))[0];
+    if(armorGear) S.eq.body = armorGear;
+  }
   /* M33 第三批：预设据点设施（第 4 章要"从零建"，就不给） */
   if(p.base && typeof p.base === 'object'){
     for(const k in p.base){ if(BASE_UP[k]) S.base[k] = Math.max(0, Math.floor(p.base[k] || 0)); }
