@@ -1,0 +1,160 @@
+{
+  "checks": [
+    [
+      "v4 病症治疗入口与图鉴指南都挂上了 window",
+      true
+    ],
+    [
+      "① 顶栏不再显示体温/湿度/病症 chips（用户要求搬进人体页）",
+      true
+    ],
+    [
+      "② 人体页有「🌡️ 体温与环境」与「🦠 病症」两块",
+      true
+    ],
+    [
+      "② 「伤情图鉴」已经从人体页搬走（去图鉴了）",
+      true
+    ],
+    [
+      "③ 真菌感染显示在人体页：症状 + 怎么好 + 药名",
+      true
+    ],
+    [
+      "③ 没药时治疗按钮是禁用的（写着\"有 0\"）",
+      true
+    ],
+    [
+      "④ 有药时按钮可点，点一下真菌感染当场消失",
+      true
+    ],
+    [
+      "④ 药真的被消耗（2 → 1）",
+      true
+    ],
+    [
+      "④ 惩罚回落（体力上限倍率 0.9 → 1）",
+      true
+    ],
+    [
+      "④ 日志写明了怎么治的",
+      true
+    ],
+    [
+      "⑤ 背包里「使用」抗真菌药同样能治病（不必回人体页）",
+      true
+    ],
+    [
+      "⑥ 图鉴多了「📘 治疗指南」分类按钮",
+      true
+    ],
+    [
+      "⑥ 点开后是治疗指南：伤情怎么处理 + 病症怎么处理",
+      true
+    ],
+    [
+      "⑥ 指南里真菌感染那条写着抗真菌药",
+      true
+    ],
+    [
+      "⑦ 医疗台能做出抗真菌药",
+      true
+    ],
+    [
+      "⑦ 商人货架上有抗真菌药，且收购价 < 售价（M44 那条不变量）",
+      true
+    ],
+    [
+      "⑦ 药房/医院/诊所的掉落表里都有它",
+      true
+    ],
+    [
+      "⑧ 全程无 console 报错 / 未捕获异常",
+      true
+    ]
+  ],
+  "errs": [],
+  "body": {
+    "hasEnv": true,
+    "hasCond": true,
+    "hasFungal": true,
+    "hasSymptom": true,
+    "hasCure": true,
+    "hasOldGuide": false,
+    "hasHum": true,
+    "hasTemp": true,
+    "btns": [
+      {
+        "t": "💊 抗真菌药 · 抗真菌药×1（有 0）",
+        "dis": true
+      }
+    ]
+  },
+  "cured": {
+    "before": {
+      "conds": [
+        "fungal"
+      ],
+      "item": 2,
+      "cap": 0.9,
+      "logs": 13
+    },
+    "after": {
+      "conds": [],
+      "item": 1,
+      "cap": 1
+    },
+    "enabled": true,
+    "logs": "dim,🔐 存档已加密（AES-GCM-256，密钥只在本机 worker 里，不可导出）。 | info,🧪 v4 引擎已接管战斗：4 招式槽 / 速度出手 / 属性克制。 | loot,📦 获得 抗真菌药 ×2 | success,💊 🍄真菌感染：抗真菌药（抗真菌药×1）——症状压下去了。"
+  },
+  "byBag": {
+    "before": {
+      "conds": [
+        "fungal"
+      ],
+      "item": 2
+    },
+    "after": {
+      "conds": [],
+      "item": 0,
+      "logs": "loot,📦 获得 抗真菌药 ×1 | success,💊 🍄真菌感染：抗真菌药（抗真菌药×1）——症状压下去了。 | success,💊 使用 抗真菌药：压住了真菌感染"
+    }
+  },
+  "guide": {
+    "cats": [
+      "🧟 丧尸",
+      "📦 物品",
+      "📜 秘闻",
+      "📘 治疗指南"
+    ],
+    "clicked": true,
+    "hasInjury": true,
+    "hasCond": true,
+    "hasFungal": true,
+    "hasDrug": true,
+    "hasBleed": true,
+    "apiLen": 1149,
+    "bodyStillHasGuide": false
+  },
+  "src": {
+    "recipes": 1,
+    "recipeAt": "medlab Lv1",
+    "rows": 1,
+    "price": 26,
+    "base": 13,
+    "loot": [
+      {
+        "id": "pharmacy",
+        "has": true
+      },
+      {
+        "id": "hospital",
+        "has": true
+      },
+      {
+        "id": "clinic",
+        "has": true
+      }
+    ]
+  }
+}
