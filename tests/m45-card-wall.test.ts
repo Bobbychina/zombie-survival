@@ -1,6 +1,7 @@
-/* M45：探索页 legacy 节点认领计划 —— 防「重复的卡片」（用户报障：日历整块出现两次） */
+/* M45：探索页 legacy 节点认领计划 —— 防「重复的卡片」（用户报障：日历整块出现两次）
+   M53：其它页签的分段逻辑（P3 视觉统一）也在这里测 —— 同属"legacy 节点 → v4 卡片"这套纯逻辑 */
 import { describe, expect, it } from 'vitest';
-import { claimPlan, fallbackTitle, type ClaimStep, type LegacyKind } from '../src/v4/card-wall-core';
+import { bodyIsEmpty, claimPlan, fallbackTitle, sectionGroups, type ClaimStep, type LegacyKind } from '../src/v4/card-wall-core';
 
 const acts = (kinds: LegacyKind[]) => claimPlan(kinds).map(s => s.act);
 const stepOf = (kinds: LegacyKind[], i: number): ClaimStep => claimPlan(kinds)[i];
@@ -74,4 +75,59 @@ describe('fallbackTitle', () => {
   });
   it('短文本原样加前缀', () => { expect(fallbackTitle('干净水')).toBe('📋 干净水'); });
   it('空文本给中性标题', () => { expect(fallbackTitle('   ')).toBe('📋 更多'); });
+});
+
+describe('sectionGroups（M53：其它页签按 .sect-title 分段包卡）', () => {
+  it('技能页真实形状：标题 / 提示 / 网格 → 一段，正文是后面两个', () => {
+    expect(sectionGroups(['title', 'other', 'body'])).toEqual([{ title: 0, body: [1, 2] }]);
+  });
+
+  it('多段：每段吃到下一个标题为止（制作页 = 标题/提示/网格 ×3）', () => {
+    const kinds: LegacyKind[] = ['title', 'other', 'body', 'title', 'other', 'body'];
+    expect(sectionGroups(kinds)).toEqual([
+      { title: 0, body: [1, 2] },
+      { title: 3, body: [4, 5] },
+    ]);
+  });
+
+  it('统计页形状：标题 / 网格 / 标题 / 网格（正文不是 .card 也得归到段里）', () => {
+    expect(sectionGroups(['title', 'body', 'title', 'body'])).toEqual([
+      { title: 0, body: [1] },
+      { title: 2, body: [3] },
+    ]);
+  });
+
+  it('宿主节点（地图卡 / 卡片墙）永不进正文', () => {
+    expect(sectionGroups(['title', 'skip', 'other', 'skip'])).toEqual([{ title: 0, body: [2] }]);
+  });
+
+  it('标题之前的内容不归任何段（人体页那张 v4 卡、图鉴的标签行原地不动）', () => {
+    expect(sectionGroups(['body', 'other', 'title', 'body'])).toEqual([{ title: 2, body: [3] }]);
+  });
+
+  it('没有标题的页（人体 / 图鉴）→ 零段，等于什么都不做', () => {
+    expect(sectionGroups(['body', 'other'])).toEqual([]);
+    expect(sectionGroups([])).toEqual([]);
+  });
+
+  it('光杆标题 → 空正文（调用方会跳过它，不包空卡）', () => {
+    const g = sectionGroups(['title', 'title']);
+    expect(g).toEqual([{ title: 0, body: [] }, { title: 1, body: [] }]);
+    expect(bodyIsEmpty([])).toBe(true);
+  });
+
+  it('不变量：每段正文互不重叠，且没有标题被当成别人的正文', () => {
+    const kinds: LegacyKind[] = ['title', 'other', 'body', 'title', 'skip', 'other', 'title', 'body'];
+    const gs = sectionGroups(kinds);
+    const used = gs.flatMap(g => g.body);
+    expect(new Set(used).size).toBe(used.length);
+    for (const g of gs) expect(kinds[g.title]).toBe('title');
+  });
+});
+
+describe('bodyIsEmpty', () => {
+  it('只有空白 / 空节点就算空（不包空卡）', () => {
+    expect(bodyIsEmpty(['', '  ', '\n'])).toBe(true);
+    expect(bodyIsEmpty([' 一 '])).toBe(false);
+  });
 });

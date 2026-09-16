@@ -111,7 +111,7 @@ ok('切到制作页', /制作/.test(String(await tab('制作'))), '')
 await sleep(900)
 const craft = JSON.parse(await ev(`(() => {
   const t = document.getElementById('view').innerText
-  const heads = [...document.querySelectorAll('#view .sect-title')].map(e => e.textContent.trim()).filter(s => /工作台|弹药台|医疗台|灶台/.test(s))
+  const heads = [...document.querySelectorAll('#view .sect-title, #view .v4card > .card-hd > .card-tt')].map(e => e.textContent.trim()).filter(s => /工作台|弹药台|医疗台|灶台/.test(s))   /* M53：分区标题被包进 v4 卡头了，两处一起找 */
   const btns = [...document.querySelectorAll('#view button')].filter(b => /制作|材料不足|需要先建|等级不够/.test(b.textContent || ''))
   return JSON.stringify({ heads, n: btns.length, txt: t.slice(0, 60) })
 })()`))

@@ -38,3 +38,41 @@ export function fallbackTitle(text: string): string {
   const t = (text || '').replace(/\s+/g, ' ').trim().slice(0, 12)
   return t ? '📋 ' + t : '📋 更多'
 }
+
+/* ── M53：其它页签的「分段」逻辑（P3 视觉统一：技能/制作/任务/统计… 也走卡片语言） ── */
+
+export interface SectionGroup {
+  /** `.sect-title` 的下标 */
+  title: number;
+  /** 这一段的正文（标题之后、下一个标题之前的散件；跳过 skip 宿主节点，如地图卡/卡片墙） */
+  body: number[];
+}
+
+/** 按 `.sect-title` 把一页切段：标题 + 它后面的所有散件（到下个标题为止）。
+ *
+ *  为什么不是"标题 + 紧随的那一个 .card"：各页签的分段形状并不统一 ——
+ *  背包是「标题 / 提示 p / 弹药 .card」，制作页是「标题 / 提示 p / 配方 .grid」，统计页是「标题 / .grid / …」。
+ *  按"下一个标题"切段才不挑页面：一段 = 一张卡，正文是那一坨。
+ *  标题之前的内容（人体页那张 v4 卡、图鉴的标签行…）不归任何段，原地不动。 */
+export function sectionGroups(kinds: LegacyKind[]): SectionGroup[] {
+  const out: SectionGroup[] = []
+  let cur: SectionGroup | null = null
+  for (let i = 0; i < kinds.length; i++) {
+    const k = kinds[i]
+    if (k === 'title') {
+      if (cur) out.push(cur)
+      cur = { title: i, body: [] }
+      continue
+    }
+    if (k === 'skip') continue;              // 宿主节点（#v4world / #v4tools / 卡片墙）永远不搬
+    if (cur) cur.body.push(i);               // 标题之后的散件都算这一段的正文
+  }
+  if (cur) out.push(cur)
+  return out
+}
+
+/** 一段正文里"没有任何内容"（只有空白/空节点）＝ 不值得包一张空卡 */
+export function bodyIsEmpty(texts: string[]): boolean {
+  return texts.join('').replace(/\s+/g, '').length === 0
+}
+

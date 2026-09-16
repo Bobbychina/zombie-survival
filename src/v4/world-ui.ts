@@ -19,7 +19,7 @@ import { ghostAt, placeGhosts, raidGhost } from './ghosts';
 import { ghostFoes } from './ghosts-core';
 import { pendingFragKeys, takeFragment } from './fragments';
 import { apCapOf, isBloodMoonDay, rest, restOptions, tierAt, syncApMax } from './night';
-import { claimPlan, fallbackTitle, type LegacyKind } from './card-wall-core';   // M45：legacy 节点认领计划（防重复卡）
+import { claimPlan, fallbackTitle, sectionGroups, bodyIsEmpty, type LegacyKind } from './card-wall-core';   // M45：legacy 节点认领计划（防重复卡）；M50：其它页签的分段包卡
 /** M32.1：当前字号倍率（#v4world / #v4cards 上的 zoom）。这里不 import ui-scale（会和 main 形成
     循环），走 main.ts 挂在 window 上的那份；拿不到就按 1 算。fitMap/fitRegion 用它把"像素下限"
     换算成**渲染后**的尺寸 —— zoom 之后本地 24px 在 160% 下是 38px，窗口宽度却不会跟着变。 */
@@ -794,6 +794,33 @@ function legacyKindOf(e: HTMLElement): LegacyKind {
   return 'other';
 }
 
+/** M53（P3 视觉统一）：把**非探索页**按 `.sect-title` 分段，每段原地包成一张 v4 卡片。
+ *
+ *  以前只有探索页走卡片语言，技能/制作/任务/统计/背包/据点几页还是"裸标题 + 裸卡片"的老样子：
+ *  标题没有卡头、卡片宽度和探索页对不上、badge 也不在标题行上。这里复用同一套卡头/卡身结构。
+ *  与探索页的区别：**原地包**（不搬进 #v4cards、不动地图卡），所以地图悬浮窗/内嵌逻辑完全不受影响。
+ *  幂等：包完页面顶层就不剩 `.sect-title` 了，MutationObserver 再进来一次会直接跳过。 */
+function unifyTab(view: HTMLElement) {
+  const kids = Array.from(view.children) as HTMLElement[];
+  if (!kids.some(e => e.classList.contains('sect-title'))) return;    // 已经包过（或这页本来没有分段结构）
+  const groups = sectionGroups(kids.map(legacyKindOf));
+  for (const g of groups) {
+    const head = kids[g.title];
+    const body = g.body.map(i => kids[i]).filter(e => e && e.parentElement === view);
+    if (bodyIsEmpty(body.map(e => e.textContent || ''))) continue;    // 空段不包（省一张空卡）
+    const wrap = document.createElement('div');
+    wrap.className = 'v4card';
+    wrap.dataset.card = 'legacy';
+    const badges = Array.from(head.querySelectorAll('.badge')).map(b => (b.textContent || '').trim());
+    wrap.innerHTML = '<div class="card-hd"><span class="card-tt">' + (head.textContent || '').trim() + '</span>' +
+      badges.map(b => '<span class="badge">' + b + '</span>').join('') + '</div><div class="card-bd"></div>';
+    const bd = wrap.querySelector('.card-bd') as HTMLElement;
+    view.insertBefore(wrap, head);
+    for (const b of body) bd.appendChild(b);                          // 顺序 = 原来的 DOM 顺序
+    head.remove();                                                    // 标题换成卡头，原件清掉
+  }
+}
+
 /** 裸 legacy 节点的标题：能认出来的给专名，认不出就给个中性标题（总比没有强） */
 function legacyTitleOf(e: HTMLElement): string {
   if (e.classList.contains('v4teaser')) return '📜 委托板';
@@ -878,8 +905,10 @@ export function mountWorldPanel() {
   paintMapWindow();
 
   if (S.tab !== 'explore') {
-    /* 别的页签：只要地图窗还在就行，卡片墙不参与（那些页由 legacy/人体页渲染） */
+    /* 别的页签：地图窗还在就行，卡片墙不参与（那些页由 legacy/人体页渲染）——
+       M53：但**卡片语言要统一**：把这些页的 `.sect-title` 分段包成 v4 卡片（原地包，不搬家、不动地图卡）。 */
     view.classList.remove('v4-board');
+    unifyTab(view);
     return;
   }
   let board = view.querySelector(':scope > .v4board') as HTMLElement | null;
