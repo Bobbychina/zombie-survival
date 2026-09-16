@@ -39,7 +39,10 @@ const ITEMS = {
   bandage:  {n:'绷带',      t:'med',   w:0.2, heal:15, cure:'bleed', cureWound:'bleed', desc:'止血、包扎，一次性。'},
   medkit:   {n:'急救包',    t:'med',   w:1.0, heal:50, cure:'bleed', cureWound:'bleed', desc:'缝合针、酒精、止痛药。'},
   painkiller:{n:'止痛药',   t:'med',   w:0.1, sta:45, heal:5, desc:'压住疼痛，让你还能跑。'},
-  anti:     {n:'抗生素',    t:'med',   w:0.1, infect:-25, cureWound:'sick', desc:'压制体内病毒的增殖。'},
+  anti:     {n:'抗生素',    t:'med',   w:0.1, infect:-25, cureWound:'sick', clearCond:'respiratory', desc:'压制体内病毒的增殖；呼吸道感染也靠它。'},
+  /* M50：真菌感染以前**没有药**（cure 文案里写着"抗真菌药"，可这件东西游戏里不存在，
+     玩家只能等湿度回落自己消退）。用户报障：「真菌感染…也无法治疗」。 */
+  fungicide:{n:'抗真菌药',  t:'med',   w:0.15, clearCond:'fungal', desc:'压制真菌感染——闷湿季里最值钱的一小盒。'},
   serum:    {n:'抗病毒血清',t:'med',   w:0.3, infect:-60, desc:'实验室级别的抑制剂，极稀有。'},
   antitoxin:{n:'解毒剂',    t:'med',   w:0.2, cure:'poison', desc:'中和毒素，别等到咳血。'},
   /* M31：人体伤病治疗链的新东西（急救 → 手术 → 康复）。
@@ -279,6 +282,8 @@ const RECIPES = [
   {out:'antitoxin', n:1, need:{chem:2, water:1},         st:'medlab', lv:1, desc:'用化学药剂中和毒素。'},
   {out:'iodine',   n:3, need:{chem:1, water:1},          st:'medlab', lv:1, desc:'碘片 ×3：进辐射区之前先吃。'},
   {out:'anti',     n:1, need:{chem:2, chip:1},           st:'medlab', lv:2, desc:'抗生素。'},
+  /* M50：抗真菌药 —— 闷湿季的续命药（原来只在文案里存在） */
+  {out:'fungicide',n:1, need:{chem:2, water:1},          st:'medlab', lv:1, desc:'抗真菌药：压住真菌感染，别让它拖成后遗症。'},
   {out:'radaway',  n:1, need:{chem:3, anti:1, water:1},  st:'medlab', lv:2, desc:'抗辐射药：把已经吃进去的放射核素排出去。'},
   {out:'serum',    n:1, need:{chem:3, anti:1, chip:1},   st:'medlab', lv:3, desc:'低配版病毒抑制剂。'},
   /* M31：人体伤病的手术器械（三件都在医疗台做） */
@@ -1890,6 +1895,10 @@ function render(){
     v.innerHTML = (v4tab !== null && v4tab !== undefined) ? v4tab : f();
     v.dataset.tab = S.tab;
     restoreScroll(keepOffsets(snap, { resetView: tabChanged }), { skip: tabChanged ? ['#v4cards', '.v4world .wmapwrap'] : [] });
+    /* M49：这一步会把 #log 还原成快照里的旧偏移（内容比快照时更长 → 相对当前位置是"往上跳"），
+       而日志跟随把"往上"当成玩家在翻历史 —— 实战表现就是"打着打着现场日志就不跟了"。
+       所以这一下明确标成"我们自己滚的"，不参与意图判定。 */
+    if(typeof performance === 'object' && performance.now) logPinUntil = performance.now() + 200;   // 这一下是我们自己滚的
     window.__renderErr = null;
   }catch(e){
     // C01 护栏：渲染崩了也不能白屏，更不能让 autosave 把坏状态写进唯一键位
@@ -2746,6 +2755,12 @@ function useConsumable(id, inCombat){
   }
   if(it.cure && battle && battle.pSt[it.cure]){ battle.pSt[it.cure] = 0; notes.push('已解除' + (it.cure === 'bleed' ? '流血' : '中毒')); }
   if(it.cureWound && cureWound(it.cureWound)) notes.push('已处理' + WOUND_DEF[it.cureWound].n);
+  /* M50：抗生素 / 抗真菌药这类"治病的药"：顺手把对应的病症压下去（人体页那个按钮走的是同一条路） */
+  if(it.clearCond){
+    const sv5 = (typeof window.V4Survival === 'object' && window.V4Survival) ? window.V4Survival : null;
+    const cured = sv5 && sv5.treatByItem ? sv5.treatByItem(id) : null;
+    if(cured) notes.push('压住了' + cured);
+  }
   /* M30：湿度计 —— 看一眼未来三天的湿度走势（确定性：由种子+天数决定，和 env.ts 的翻日同一套） */
   if(it.forecast){
     const sv4 = (typeof window.V4Survival === 'object' && window.V4Survival) ? window.V4Survival : null;
