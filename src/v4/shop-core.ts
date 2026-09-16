@@ -207,6 +207,14 @@ export function sellPlan(
   return { times, each, total: sellValue(id, times, ctx.rate ?? 1, items), max: block ? 0 : have, reason };
 }
 
+export interface SellBatchLine {
+  id: string;
+  /** 这一样卖几件 */
+  times: number;
+  /** 这一样换多少材料（按报价时的汇率算死） */
+  total: number;
+}
+
 export interface SellBatch {
   /** 能卖的物品 id（已按"能卖"过滤） */
   ids: string[];
@@ -214,19 +222,39 @@ export interface SellBatch {
   items: number;
   /** 一共能换多少材料 */
   total: number;
+  /** 逐样明细 —— 确认单与结算都照它执行（见下面的"报价锁定"） */
+  lines: SellBatchLine[];
 }
 
-/** 批量出售（"把这一类全卖"）的合计：给二次确认弹窗与结算共用，省得两处算法不一致 */
+/** 批量出售（"把这一类全卖"）的合计：给二次确认弹窗与结算共用，省得两处算法不一致。
+ *  **汇率随参数锁定**：确认单上写多少，到账就得是多少 —— 批量结算里每样都会涨交易技能，
+ *  要是每样都用"当下的"汇率重算，玩家会看到"说好 +43、到手 +42"（探针当场抓到过一次）。 */
 export function sellBatchPlan(
   ids: string[],
   inv: Record<string, number | undefined>,
   ctx: { rate?: number; items?: Record<string, SellItem | undefined>; equipped?: string[] } = {},
 ): SellBatch {
-  const out: SellBatch = { ids: [], items: 0, total: 0 };
+  const out: SellBatch = { ids: [], items: 0, total: 0, lines: [] };
   for (const id of ids || []) {
     const p = sellPlan(id, 'max', { have: inv?.[id] || 0, rate: ctx.rate, items: ctx.items, equipped: ctx.equipped });
     if (!p.times) continue;
     out.ids.push(id); out.items += p.times; out.total += p.total;
+    out.lines.push({ id, times: p.times, total: p.total });
+  }
+  return out;
+}
+
+/** 按**报价单**结算：只把"卖几件"夹到背包里真有的数量，价钱一律照单子给（汇率不许在结算途中变） */
+export function sellBatchQuote(
+  plan: SellBatch,
+  have: Record<string, number | undefined>,
+): SellBatchLine[] {
+  const out: SellBatchLine[] = [];
+  for (const l of plan?.lines || []) {
+    const h = Math.max(0, Math.floor(Number(have?.[l.id]) || 0));
+    const times = Math.min(l.times, h);
+    if (times <= 0) continue;
+    out.push({ id: l.id, times, total: l.total });
   }
   return out;
 }

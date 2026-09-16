@@ -183,17 +183,18 @@ ok('点「再想想」= 不成交，弹窗回到商人页', cancel.mat === 100 &
 
 const confirmGo = JSON.parse(await ev(`(async () => {
   const batchBtn = [...document.querySelectorAll('#overlay-root .modal button')].find(b => /卖掉所有能卖的|把这一类全卖/.test(b.textContent) && /材料/.test(b.textContent));
+  const quote = batchBtn.textContent.match(/\\+(\\d+) 材料/);
   batchBtn.click();
   await new Promise(r => setTimeout(r, 500));
-  const expected = sellBatchPlan(Object.keys(S.inv), S.inv, { rate: merchantRate(), items: ITEMS, equipped: [] }).total;
+  const quoted = Number(([...document.querySelectorAll('#overlay-root .modal button')].map(b => b.textContent.trim()).find(t => /确认全卖/.test(t)) || '').match(/\\+(\\d+)/)?.[1] || -1);
   const mat0 = S.mat;
   ${clickText('.modal button', '/确认全卖/')};
   await new Promise(r => setTimeout(r, 600));
-  return JSON.stringify({ expected, mat0, mat: S.mat, inv: JSON.parse(JSON.stringify(S.inv)), log: (S.logBuf || []).slice(-1).map(p => p[1]).join(''),
-    rows: [...document.querySelectorAll('#overlay-root .lrow')].length });
+  return JSON.stringify({ quoted, quotedBtn: quote ? Number(quote[1]) : -1, mat0, mat: S.mat, inv: JSON.parse(JSON.stringify(S.inv)),
+    log: (S.logBuf || []).slice(-1).map(p => p[1]).join(''), rows: [...document.querySelectorAll('#overlay-root .lrow')].length });
 })()`))
 await sleep(500)
-ok('点「确认全卖」：按整批总额成交（材料 = 起始 + 清单合计）', confirmGo.mat === confirmGo.mat0 + confirmGo.expected && confirmGo.expected > 0, JSON.stringify(confirmGo))
+ok('点「确认全卖」：到账 = 确认单上写的数（报价锁定，不在结算途中改价）', confirmGo.quoted === confirmGo.quotedBtn && confirmGo.mat === confirmGo.mat0 + confirmGo.quoted && confirmGo.quoted > 0, JSON.stringify(confirmGo))
 ok('批量卖掉的东西从背包里清了（剧情道具原封不动）', !confirmGo.inv.metal && !confirmGo.inv.bandage && !confirmGo.inv.medkit && confirmGo.inv.keycard === 1, JSON.stringify(confirmGo.inv))
 ok('日志写明"一次卖掉 N 种 · M 件"', /一次卖掉 \d+ 种 · \d+ 件/.test(confirmGo.log), confirmGo.log)
 await shot('03_batch_done')

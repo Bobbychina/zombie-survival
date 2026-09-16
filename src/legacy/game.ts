@@ -4,7 +4,7 @@
 import { radTier, radGain, radLevelAt, radProtect, RAD_SOURCES, geigerText } from '../v4/rad-core';
 import { CALIBERS, penMul, ammoTable, pickLoadedAmmo, ammoShortName, resolveAmmoId, legacyAmmoFold } from '../v4/ammo-core';
 import { MERCHANT_GOODS, badShopRows, shopPrice, ammoShopRows, buyPlan,
-  sellPlan, sellValue, sellBatchPlan, sellBlockReason, canSell, ITEM_BASE, SELL_RATE } from '../v4/shop-core';   // M32b/M39：货架（弹药按口径卖）+ 坏货架兜底 + 批量购买；M44：收购（把多余的东西卖回去）
+  sellPlan, sellValue, sellBatchPlan, sellBatchQuote, sellBlockReason, canSell, ITEM_BASE, SELL_RATE } from '../v4/shop-core';   // M32b/M39：货架（弹药按口径卖）+ 坏货架兜底 + 批量购买；M44：收购（把多余的东西卖回去）
 import { apCapOf, fitnessApBonus, phaseOf, PHASE_LABEL } from '../v4/night-core';   // M25.2：行动力上限（睡眠债 + 体能）；M25.3：白昼曲线
 import { resumeFromOver, endDayLabel, endGoalChip, overHint } from '../v4/endless-core';   // M37：无尽模式（通关后继续）的纯逻辑
 import { filterTabs, filterInv, dropCount, depositCount, quickSlots, quickPick, BAG_FILTERS, type BagFilter } from '../v4/qol-core';   // M38：背包筛选/分批丢弃·存入 + 补给快捷键
@@ -3692,9 +3692,11 @@ function refreshMerchant(){
   const back = () => { const m = box(); if(m) m.scrollTop = top; };
   back(); try{ requestAnimationFrame(back); }catch(_){}
 }
-/** 一单成交的**唯一**入口：校验全过 sellPlan，UI 与批量都走它 */
-function sellItemCore(id, times){
-  const p = sellPlan(id, times, { have: itemCount(id), rate: merchantRate(), items: ITEMS, equipped: merchantEquipped() });
+/** 一单成交的**唯一**入口：校验全过 sellPlan，UI 与批量都走它。
+ *  rate 由调用方给（批量出售要**锁定确认框上的那个汇率**），缺省才是"当下汇率"。 */
+function sellItemCore(id, times, rate){
+  const r = rate > 0 ? rate : merchantRate();
+  const p = sellPlan(id, times, { have: itemCount(id), rate: r, items: ITEMS, equipped: merchantEquipped() });
   if(!p.times) return null;
   if(!takeItem(id, p.times)) return null;        // 兜底：背包对不上账就整笔不成交，别白给材料
   S.mat += p.total;
@@ -3708,10 +3710,15 @@ function sellMerchant(id, times){
   log('💰 卖掉 ' + itemName(id) + ' ×' + p.times + '，换回 ' + p.total + ' 材料。', 'loot');
   autosave(); refreshMerchant();
 }
-/** 批量出售：先弹确认框（这一批是什么、几件、换多少），确认了才真卖 */
+/** 批量出售：先弹确认框（这一批是什么、几件、换多少），确认了才真卖。
+ *  确认框上的报价（含汇率）**存进 pendingSell**：结算时照单执行，绝不按"结算途中的汇率"重算 —— 
+ *  批量里每样都会涨交易技能，重算会让"说好 +43、到手 +42"（本地探针当场抓到过一次）。 */
+let pendingSell = null;
 function sellMerchantCat(){
-  const plan = sellBatchPlan(sellPool(), S.inv, { rate: merchantRate(), items: ITEMS, equipped: merchantEquipped() });
+  const rate = merchantRate();
+  const plan = sellBatchPlan(sellPool(), S.inv, { rate, items: ITEMS, equipped: merchantEquipped() });
   if(!plan.items){ log('❌ 这一类里没有能卖的东西。', 'dim'); return; }
+  pendingSell = { plan, rate };
   const label = bagFilter === 'all' ? '全部能卖的' : '「' + ((BAG_FILTERS.find(f => f.id === bagFilter) || {}).label || bagFilter) + '」这一类';
   const list = plan.ids.slice(0, 8).map(id => itemName(id) + '×' + (S.inv[id] || 0)).join('、') + (plan.ids.length > 8 ? ' 等' : '');
   modal({ title:'💰 确认出售', sticky:true,
@@ -3722,10 +3729,17 @@ function sellMerchantCat(){
       '<button class="btn" data-close>再想想</button>' });
 }
 function sellMerchantCatGo(){
-  const plan = sellBatchPlan(sellPool(), S.inv, { rate: merchantRate(), items: ITEMS, equipped: merchantEquipped() });
-  if(!plan.items){ closeAllModals(); openMerchant(); return; }
+  /* 照确认框上的报价单结算（没有单子就临场算一份，等价于"直接用当下汇率"） */
+  const quote = pendingSell || { plan: sellBatchPlan(sellPool(), S.inv, { rate: merchantRate(), items: ITEMS, equipped: merchantEquipped() }), rate: merchantRate() };
+  pendingSell = null;
+  const lines = sellBatchQuote(quote.plan, S.inv);
+  if(!lines.length){ closeAllModals(); openMerchant(); return; }
   let gain = 0, kinds = 0, cnt = 0;
-  plan.ids.forEach(id => { const p = sellItemCore(id, 'max'); if(!p) return; gain += p.total; cnt += p.times; kinds++; });
+  lines.forEach(l => {
+    const p = sellItemCore(l.id, l.times, quote.rate);
+    if(!p) return;
+    gain += p.total; cnt += p.times; kinds++;
+  });
   sfx('loot');
   log('💰 一次卖掉 ' + kinds + ' 种 · ' + cnt + ' 件，换回 ' + gain + ' 材料。', 'loot');
   autosave(); refreshMerchant();
@@ -4034,7 +4048,7 @@ Object.assign(window, { VER, SAVE_KEY, V1_KEY, ITEMS, itemName, isWpn, ZOMBIES, 
   syncAmmo, materializeAmmoPool, ammoShopRows,   // M32b：弹药镜像收口 + 货架弹药段（验收探针直接调）
   shopPrice, buyPlan,                            // M39：货架报价与批量购买方案（验收探针直接调）
   setMerchantTab, sellMerchant, sellMerchantCat, sellMerchantCatGo, merchantEquipped,   // M44：商人页签 + 卖东西（内联 onclick）
-  sellPlan, sellValue, sellBatchPlan, sellBlockReason, canSell, ITEM_BASE, SELL_RATE,   // M44：收购的纯逻辑（验收探针直接调）
+  sellPlan, sellValue, sellBatchPlan, sellBatchQuote, sellBlockReason, canSell, ITEM_BASE, SELL_RATE,   // M44：收购的纯逻辑（验收探针直接调）
   isLab,                                        // M33：教程沙盒（写盘守卫 + 菜单分岔都用它）
   depositAll, setBagFilter, quickBarHtml,       // M38：背包批量存入/筛选切换 + 补给快捷条（内联 onclick）
   openSavePort, openBackupHistory, restoreHistory, exportHistory, deleteHistory,   // M39：口令导出/导入 + 备份历史（内联 onclick）

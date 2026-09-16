@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
   MERCHANT_GOODS, SELL_RATE, NO_SELL, ITEM_BASE, baseValueOf, canSell, sellBlockReason,
-  sellValue, sellPlan, sellBatchPlan, shopPrice, badShopRows,
+  sellValue, sellPlan, sellBatchPlan, sellBatchQuote, shopPrice, badShopRows,
 } from '../src/v4/shop-core';
 import { itemTable } from './legacy-tables';
 
@@ -211,8 +211,36 @@ describe('M44 批量出售：只算账，成交靠 UI 的二次确认', () => {
   });
 
   it('空背包 / 空列表 = 0 种 0 件 0 材料（UI 靠这个把按钮藏起来）', () => {
-    expect(sellBatchPlan([], inv, { items: ITEMS })).toEqual({ ids: [], items: 0, total: 0 });
+    expect(sellBatchPlan([], inv, { items: ITEMS })).toEqual({ ids: [], items: 0, total: 0, lines: [] });
     expect(sellBatchPlan(['keycard'], inv, { items: ITEMS }).items).toBe(0);
+  });
+
+  /* 报价锁定：确认单上写多少，到账就得是多少。批量结算里每样都会涨交易技能（addXP），
+     要是结算时按"当下的汇率"重算，玩家会看到"说好 +43、到手 +42"（本地探针当场抓到过一次）。 */
+  it('报价单逐样明细的合计 = 总额（确认框与结算不会两套算法）', () => {
+    const plan = sellBatchPlan(['cloth', 'metal', 'bandage'], inv, { rate: 1.4, items: ITEMS });
+    expect(plan.lines.map(l => l.id)).toEqual(plan.ids);
+    expect(plan.lines.reduce((a, l) => a + l.times, 0)).toBe(plan.items);
+    expect(plan.lines.reduce((a, l) => a + l.total, 0)).toBe(plan.total);
+    for (const l of plan.lines) expect(l.total).toBe(sellValue(l.id, l.times, 1.4, ITEMS));
+  });
+
+  it('照单结算：汇率一路上涨也按单子上的价付（明细与总额都不变）', () => {
+    const plan = sellBatchPlan(['cloth', 'metal', 'bandage'], inv, { rate: 1.2, items: ITEMS });
+    const lines = sellBatchQuote(plan, inv);
+    expect(lines.reduce((a, l) => a + l.total, 0)).toBe(plan.total);
+    /* 就算结算途中交易技能涨了（汇率掉了），照单付的钱也不会缩水 */
+    const repriced = sellBatchPlan(['cloth', 'metal', 'bandage'], inv, { rate: 1.1, items: ITEMS });
+    expect(repriced.total).toBeLessThan(plan.total);
+    expect(lines.reduce((a, l) => a + l.total, 0)).toBe(plan.total);
+  });
+
+  it('结算前背包少了几件 → 押到实际数量，其余的整单不动', () => {
+    const plan = sellBatchPlan(['cloth', 'metal'], inv, { rate: 1, items: ITEMS });
+    const lines = sellBatchQuote(plan, { cloth: 2, metal: 2 });
+    expect(lines.map(l => l.times)).toEqual([2, 2]);
+    expect(lines.map(l => l.id)).toEqual(['cloth', 'metal']);
+    expect(sellBatchQuote(plan, { cloth: 0 })).toEqual([]);              // 卖光了就整单不结算
   });
 
   it('整批卖的钱一定少于整批买回来（批量也不能变成套利）', () => {
@@ -253,8 +281,18 @@ describe('M44 接线：货架与商人都没被这次改动弄坏', () => {
   });
 
   it('批量出售必须二次确认（先弹确认框，成交按钮在确认框里）', () => {
-    expect(src).toMatch(/function sellMerchantCat\(\)[\s\S]{0,900}?确认全卖/);
+    const cat = /function sellMerchantCat\(\)([\s\S]*?)\n\}/.exec(src);
+    expect(cat, 'sellMerchantCat 不见了').toBeTruthy();
+    expect(cat![1]).toContain('确认出售');        // 弹的是确认框
+    expect(cat![1]).toMatch(/确认全卖/);           // 成交按钮长在确认框上（不在卖页上）
+    expect(cat![1]).toMatch(/pendingSell = /);     // 报价单先存下来
     expect(src).toMatch(/function sellMerchantCatGo\(\)/);
+  });
+
+  it('批量结算照"确认框上的报价单"付钱（不按结算途中的汇率重算）', () => {
+    expect(src).toMatch(/pendingSell/);
+    expect(src).toMatch(/sellBatchQuote\(/);
+    expect(src).toMatch(/function sellItemCore\(id, times, rate\)/);   // 汇率由调用方传进来才能锁
   });
 
   it('货架本身没有坏行（M32b 的兜底校验仍然全绿）', () => {
