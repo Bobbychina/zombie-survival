@@ -45,7 +45,11 @@ const ok = (n, c, extra = '') => { checks.push([n, !!c]); console.log((c ? 'PASS
 await send('Runtime.enable'); await send('Page.enable')
 await send('Network.enable'); await send('Network.setCacheDisabled', { cacheDisabled: true })
 await send('Emulation.setDeviceMetricsOverride', { width: 2048, height: 1105, deviceScaleFactor: 1, mobile: false })
-await send('Page.navigate', { url: url + '?dev=ready' }); await sleep(4200)
+/* M48 修：URL 已经带查询串时（线上常用 ?v=xxx 破缓存）必须用 & 接 dev —— 老写法是硬拼 '?'，
+   结果变成 `?v=xxx?dev=ready`，dev 参数直接丢掉：父页面 DEV 没了、沙盒 iframe 也拿不到 DEV，
+   于是"站到 POI / 搜刮 / 开打"整片假红（线上跑过一次才发现的）。 */
+const BOOT = url + (url.indexOf('?') >= 0 ? '&' : '?') + 'dev=ready'
+await send('Page.navigate', { url: BOOT }); await sleep(4200)
 await ev(`(() => { if (typeof setTab === 'function') setTab('explore'); if (typeof render === 'function') render(); return 1 })()`); await sleep(800)
 
 /* ── 0) 主档留证（隔离验证的基准）：密文长度 + 指纹 + 主页面进度 ──
@@ -297,8 +301,11 @@ for (let i = 0; i < 40 && armedOpen; i++) {
     pick.click();
     const ov2 = D.getElementById('v4b-overlay');
     const t2 = ov2 ? ov2.textContent.replace(/\\s+/g, ' ') : '';
+    /* 打死了：结算面板上点「继续」收工（不然下一轮又变成没招可点的 WAIT，空转十几秒） */
+    const doneBtn = ov2 ? [...ov2.querySelectorAll('button')].find(b => /继续/.test(b.textContent || '')) : null;
+    if (doneBtn) { doneBtn.click(); return 'END'; }
     return JSON.stringify({ foe: (t2.match(/HP \\d+\\/\\d+/) || ['?'])[0], myHp: hp[1], healed: !!(low && heal), ammo: W.S.ammo, apKills: W.S.stats.apKills });`)
-  if (st === 'OVER') break
+  if (st === 'OVER' || st === 'END') break
   if (i < 16) console.log('    装甲战第' + (i + 1) + '轮：' + st)
   await sleep(700)
 }
@@ -441,7 +448,8 @@ await ev(`document.querySelector('#v4lab button[onclick*="V4Lab.reset"]').click(
 let fresh = null
 let freshErr = ''
 for (let i = 0; i < 34; i++) {
-  const r = await lab(`if (!W.S || !W.S.stats) return 'WAIT'; return JSON.stringify({ day: W.S.day, scav: W.S.stats.scav, seed: W.S.seed, kills: W.S.stats.kills, ammoUsed: W.S.stats.ammoUsed });`)
+  /* 等 iframe 重载完再读：线上比本地慢，早期会读到"seed 还没写进去"的半截状态（线下跑过一次假红） */
+  const r = await lab(`if (!W.S || !W.S.stats || !W.S.seed) return 'WAIT'; return JSON.stringify({ day: W.S.day, scav: W.S.stats.scav, seed: W.S.seed, kills: W.S.stats.kills, ammoUsed: W.S.stats.ammoUsed });`)
   if (r && r !== 'WAIT' && r !== 'NO-FRAME' && !String(r).startsWith('EXC')) { fresh = JSON.parse(r); break }
   freshErr = String(r)
   await sleep(500)
