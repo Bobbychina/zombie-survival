@@ -16,6 +16,8 @@ export interface LabSnap {
   day: number; hp: number; hun: number; thi: number; ap: number;
   /** stats 里的计数器（都是老字段） */
   scav: number; deep: number; crafted: number; kills: number; meleeKills: number; ammoUsed: number;
+  /** M48：用"打得动装甲的弹种"完成的击杀数（教学第 2 章那条硬验证用它判定） */
+  apKills: number;
   loc: string;
   /** 生命归零（沙盒里不惩罚，只是提示重来） */
   over: boolean;
@@ -68,6 +70,10 @@ export interface LabPreset {
   parts?: Record<string, number>;
   /** 预设技能等级（第 5 章给体能 9 级 → 行动力上限 +3；教学章不该被行动力卡住） */
   skills?: Record<string, number>;
+  /** M48：教学保证 —— 把这些敌人塞进沙盒里**所有**区的敌人表。
+      第 2 章要"用穿甲弹打死装甲丧尸"，而装甲丧尸平时只在地铁/军方/实验室那几区刷，
+      靠运气走进去太玄学；只在沙盒生效，主档不受影响。 */
+  extraEnemies?: string[];
 }
 
 /** 沙盒快照 → 通用读取（缺字段一律给安全默认，坏快照不许把父页面判绿/判崩） */
@@ -100,7 +106,7 @@ export function snapOf(S: any): LabSnap {
   return {
     day: n(S && S.day, 1), hp: n(S && S.hp), hun: n(S && S.hun), thi: n(S && S.thi), ap: n(S && S.ap),
     scav: n(st.scav), deep: n(st.deep), crafted: n(st.crafted), kills: n(st.kills), meleeKills: n(st.meleeKills),
-    ammoUsed: n(st.ammoUsed),
+    ammoUsed: n(st.ammoUsed), apKills: n(st.apKills),
     loc: String((S && S.loc) || 'base'), over: !!(S && S.over), inv, load,
     injuries, base, steps: n(sw.steps), visited, regions, invKinds: kinds,
     veh: !!sw.veh,
@@ -120,12 +126,15 @@ export const SURVIVAL_PRESET: LabPreset = {
 const DEFAULT_PRESET: LabPreset = { seed: 'lab-basic-01', day: 1, ap: 14, mat: 12, hp: 100, hun: 80, thi: 80, sta: 100, inv: { crowbar: 1, can: 1, water: 1 } };
 
 /** 第 2 章「战斗与枪械」的沙盒开局：一把手枪 + 两种 9mm（普通弹与穿甲弹打装甲目标的手感不一样）
-    + 撬棍（近战不耗弹但会挨咬）。饱食水分给足 —— 这一章不该被饿肚子打断。 */
+    + 撬棍（近战不耗弹但会挨咬）。饱食水分给足 —— 这一章不该被饿肚子打断。
+    M48：穿甲弹从 8 发加到 16 发（装甲丧尸 hp 62 / armor 5，8 发打不穿很容易卡住这一章），
+    并把装甲丧尸塞进所有区的敌人表（extraEnemies），让"用穿甲弹打死装甲目标"这条目标真的做得到。 */
 export const COMBAT_PRESET: LabPreset = {
   seed: 'lab-combat-01',
   day: 1, ap: 14, mat: 12,
   hp: 100, hun: 85, thi: 85, sta: 100,
-  inv: { pistol: 1, crowbar: 1, a9_fmj: 24, a9_ap: 8, bandage: 2, medkit: 1, can: 2, water: 2 },
+  inv: { pistol: 1, crowbar: 1, a9_fmj: 24, a9_ap: 16, bandage: 2, medkit: 1, can: 2, water: 2 },
+  extraEnemies: ['armored'],
 };
 
 /** 第 3 章「人体与伤病」：用户拍板的"预设伤情"落在这里 —— 开局就带一处小出血 + 一处骨折，
@@ -181,13 +190,16 @@ export const LAB_CHAPTERS: LabChapter[] = [
   },
   {
     id: 'combat', icon: '🔫', name: '第 2 章 · 战斗与枪械',
-    desc: '把子弹打出去、也把撬棍用起来：招式槽（1~4 出招 / 5 逃跑 / 6 换武器）、噪音、装甲丧尸与穿甲弹。三条目标全绿才算通关。',
+    desc: '把子弹打出去、也把撬棍用起来：招式槽（1~4 出招 / 5 逃跑 / 6 换武器）、噪音、装甲丧尸与穿甲弹。四条目标全绿才算通关。',
     ready: true,
     preset: COMBAT_PRESET,
     objectives: [
       { id: 'gunKill', text: '🔫 用枪打死 1 只（战斗里点招式槽；枪声会拉高噪音）', need: s => s.kills >= 1 && s.ammoUsed >= 1 },
       { id: 'meleeKill', text: '🗡️ 用近战打死 1 只（换上撬棍再打：近战不耗弹、但会挨咬）', need: s => s.meleeKills >= 1 },
       { id: 'loadSwap', text: '🔩 在背包「弹药」区手动装填一次弹种（9mm 普通弹 ↔ 穿甲弹）', need: s => Object.keys(s.load).length > 0 },
+      /* M48：光"点过换弹"证明不了会用 —— 这条要真拿打得动装甲的弹种杀掉一只装甲目标。
+         判定口径 pen ≥ armor（装甲丧尸 armor 5）：普通弹 pen 2 打出来不算，近战也不算。 */
+      { id: 'apKill', text: '🛡️ 用穿甲弹打死 1 只装甲丧尸（这一章的沙盒里各区都会刷；普通弹打它伤害不到一半）', need: s => s.apKills >= 1 },
     ],
   },
   {

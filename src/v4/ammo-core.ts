@@ -61,6 +61,20 @@ export function penMul(pen: number, armor: number): number {
   return Math.max(0.15, 1 - (armor - pen) * 0.18);
 }
 
+/** M48：穿甲弹种的门槛（pen ≥ 4：9mm AP 4 / 5.56 AP 5 / 7.62 AP 5 / 7.62N 穿甲 6）；
+    普通弹都在 3 以下（9mm FMJ 2 / 12号鹿弹 1 / 5.56 FMJ 3）—— 这条线正好把两类弹分开。 */
+export const AP_PEN_FLOOR = 4;
+/** "装甲目标"的门槛（装甲丧尸 armor 5、暴君 4；巨型 2 / 拾荒者 2 这种不算"要换弹"的目标） */
+export const ARMOR_FLOOR = 4;
+
+/** M48：教学沙盒第 2 章「用穿甲弹打死装甲目标」的判定口径 —— 击杀那一刻装填的是**穿甲弹种**，
+    而且这只确实是装甲目标。故意**不要求 pen ≥ armor**：9mm AP（4）打装甲丧尸（5）仍然只有 82% 伤害，
+    但比普通弹的 46% 好近一倍，"打装甲要换穿甲弹"这个习惯正是这一章要教的；
+    真要满穿透得上 5.56/7.62 AP，那是后面章节的装备。 */
+export function apKillOnArmored(pen: number, armor: number): boolean {
+  return armor >= ARMOR_FLOOR && pen >= AP_PEN_FLOOR;
+}
+
 /** 杂牌弹药（旧版伪 id "ammo"）的兜底弹种：9mm FMJ —— 与 M25 存档迁移同一个折算口径 */
 export const GENERIC_AMMO = 'a9_fmj';
 

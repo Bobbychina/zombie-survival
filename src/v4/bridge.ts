@@ -4,6 +4,7 @@ import { L } from '../main';
 import type { Foe } from '../types';
 import type { PlayerProfile } from './combat';
 import { FOE_TRAITS, FOE_TYPES, foeMoves } from './foe-data';
+import { apKillOnArmored } from './ammo-core';   // M48：穿甲击杀计数（教学第 2 章）
 
 /* 属性表 / 机制表 / 招式偏好都在 foe-data.ts（纯数据，单测能直接 import）。
    这里再导出一次，保持老引用路径可用。 */
@@ -103,6 +104,14 @@ export function onFoeFaint(src: any, foe: Foe) {
   if (foe.elite) S.stats.elites++;
   const w = L.ITEMS[S.eq.wpn];
   if (!w || !w.ammo) S.stats.meleeKills++;
+  /* M48：教学沙盒第 2 章「用穿甲弹打死装甲目标」的计数器（与 legacy killFoe 同一口径：
+     击杀那一刻装填的是穿甲弹种 pen ≥ 4，且这只 armor ≥ 4）。 */
+  const cal2: string = (w && (w as any).cal) || '';
+  if (w && (w as any).ammo && cal2) {
+    const aid = L.loadedAmmo(cal2);
+    const ad: any = aid ? (L.ITEMS as any)[aid] : null;
+    if (ad && apKillOnArmored(ad.pen, (foe as any).armor || 0)) S.stats.apKills = (S.stats.apKills || 0) + 1;
+  }
   L.log('✅ 击杀 ' + foe.name + '。', 'success');
   if (w && w.ammo) L.addXP('shoot', foe.xp || 4); else L.addXP('melee', foe.xp || 4);
   const t = src?.t ?? {};

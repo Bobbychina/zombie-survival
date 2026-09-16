@@ -2,7 +2,7 @@
 // 不要在这个文件里加新功能：新东西写进 src/v4/，通过 window 上的名字与这里互操作。
 // M25 例外：辐射的分档/累积公式在 src/v4/rad-core.ts（纯逻辑、可单测），这里只 import 公式，不重复实现。
 import { radTier, radGain, radLevelAt, radProtect, RAD_SOURCES, geigerText } from '../v4/rad-core';
-import { CALIBERS, penMul, ammoTable, pickLoadedAmmo, ammoShortName, resolveAmmoId, legacyAmmoFold } from '../v4/ammo-core';
+import { CALIBERS, penMul, apKillOnArmored, ammoTable, pickLoadedAmmo, ammoShortName, resolveAmmoId, legacyAmmoFold } from '../v4/ammo-core';
 import { MERCHANT_GOODS, badShopRows, shopPrice, ammoShopRows, buyPlan,
   sellPlan, sellValue, sellBatchPlan, sellBatchQuote, sellBlockReason, canSell, ITEM_BASE, SELL_RATE } from '../v4/shop-core';   // M32b/M39：货架（弹药按口径卖）+ 坏货架兜底 + 批量购买；M44：收购（把多余的东西卖回去）
 import { apCapOf, fitnessApBonus, phaseOf, PHASE_LABEL } from '../v4/night-core';   // M25.2：行动力上限（睡眠债 + 体能）；M25.3：白昼曲线
@@ -491,7 +491,7 @@ function newState(){
     quest:{ stage:0, keycards:0, data:0 },
     lore:[], comp:null, compHp:0, compMax:0,
     ach:[], stats:{ kills:0, meleeKills:0, scav:0, crafted:0, hordes:0, nights:0, dmgDealt:0, dmgTaken:0, multiKill:0,
-                    deep:0, ammoUsed:0, cleanWins:0, elites:0, bounties:0, zoneCnt:{}, killBy:{} },   // v2.2：悬赏板与精英统计要用的计数器
+                    deep:0, ammoUsed:0, cleanWins:0, elites:0, bounties:0, apKills:0, zoneCnt:{}, killBy:{} },   // v2.2：悬赏板与精英统计要用的计数器；apKills=M48 穿甲击杀
     flags:{ gotGun:false, labOpen:false, won:false, endless:false, cured:false,
             tips:{},                                // C04/C06 触发式提示去重
             rescueUsed:false, everDied:false },      // C05 濒死救援：整档唯一、落盘不可重置
@@ -2145,6 +2145,12 @@ function killFoe(foe){
   if(foe.elite) S.stats.elites++;                              // C16 精英击杀
   const w = ITEMS[S.eq.wpn];
   if(!w || !w.ammo) S.stats.meleeKills++;
+  /* M48：教学沙盒第 2 章「用穿甲弹打死装甲目标」的真计数器（原来的"换弹"目标只证明玩家点过切换）。
+     口径 = 击杀那一刻装填的是穿甲弹种（pen ≥ 4）且这只确实是装甲目标（armor ≥ 4）；近战、普通弹都不算。 */
+  if(w && w.ammo && w.cal){
+    const ad = ITEMS[loadedAmmo(w.cal)];
+    if(ad && apKillOnArmored(ad.pen, (t.armor || 0))) S.stats.apKills = (S.stats.apKills || 0) + 1;
+  }
   cbLog('☠️ ' + foe.n + ' 倒下了。', 'good');
   log('✅ 击杀 ' + foe.n + '。', 'success');
   if(t.burst){                                                 // C16 爆裂词条：死亡时炸开
@@ -4031,6 +4037,19 @@ function bootLab(){
   S.tab = 'explore';
   syncAmmo();
   initGame(true);
+  /* M48：教学保证（第 2 章"用穿甲弹打死装甲丧尸"）—— 装甲丧尸平时只在地铁/军方/实验室那几区刷，
+     靠运气走进去太玄学，所以预设要了就把它塞进**所有**区的敌人表。只动沙盒这一份内存里的表，
+     主档的区表不受影响（沙盒是独立 iframe + 独立页面实例）。 */
+  if(Array.isArray(p.extraEnemies)){
+    for(const eid of p.extraEnemies){
+      if(!ZOMBIES[eid]) continue;
+      for(const zid in ZONES){
+        const z = ZONES[zid];
+        if(!z || !Array.isArray(z.enemies) || z.enemies.indexOf(eid) >= 0) continue;
+        z.enemies.push(eid);
+      }
+    }
+  }
   hr();
   log('🧪 教程沙盒 · ' + (lab.ch || 'survival') + '（固定种子 ' + S.seed + '）','system');
   log('这里怎么玩都**不会**写进你的主档：不存档、不上传、死了不惩罚。照着右侧目标清单练就行。','info');

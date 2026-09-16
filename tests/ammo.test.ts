@@ -1,7 +1,7 @@
 /* M25 弹药口径/穿透单测（参考塔科夫）：
    这里的算法同时被 legacy 战斗和 v4 引擎使用，两边算不一样就是"面板说能打穿、实战却没伤害"的 bug 源头。 */
 import { describe, expect, it } from 'vitest';
-import { CALIBERS, ammoShortName, ammoTable, penMul, pickLoadedAmmo, legacyAmmoFold } from '../src/v4/ammo-core';
+import { AP_PEN_FLOOR, ARMOR_FLOOR, CALIBERS, ammoShortName, ammoTable, apKillOnArmored, penMul, pickLoadedAmmo, legacyAmmoFold } from '../src/v4/ammo-core';
 
 /** 假物品表：形状跟 legacy ITEMS 一致（t/cal/pen/dmgMul） */
 const ITEMS: Record<string, { t?: string; cal?: string; pen?: number; dmgMul?: number }> = {
@@ -85,6 +85,27 @@ describe('穿透 vs 装甲', () => {
     const soft = penMul(2, 0);
     const hard = penMul(2, 5);
     expect(soft / hard).toBeGreaterThan(1.5);
+  });
+
+  /* M48：教学沙盒第 2 章「用穿甲弹打死装甲丧尸」的判定口径 */
+  it('apKillOnArmored：穿甲弹种（pen ≥ 4）打装甲目标（armor ≥ 4）才算数', () => {
+    expect(apKillOnArmored(4, 5)).toBe(true);      // 9mm AP vs 装甲丧尸：这一章要教的就是这个动作
+    expect(apKillOnArmored(5, 5)).toBe(true);      // 5.56 AP
+    expect(apKillOnArmored(6, 4)).toBe(true);      // 7.62N 穿甲 vs 暴君
+    expect(apKillOnArmored(2, 5)).toBe(false);     // 普通弹打装甲：不算
+    expect(apKillOnArmored(3, 5)).toBe(false);     // 5.56 FMJ 也还是普通弹
+  });
+
+  it('apKillOnArmored：打软目标一律不算（那不叫"会用穿甲弹"）', () => {
+    expect(apKillOnArmored(6, 0)).toBe(false);
+    expect(apKillOnArmored(6, 2)).toBe(false);     // 巨型丧尸 armor 2 / 拾荒者 2：不必换弹
+  });
+
+  it('门槛常量与实物表对得上（9mm AP 是穿甲、9mm FMJ 不是）', () => {
+    expect((ITEMS.a9_ap.pen || 0) >= AP_PEN_FLOOR).toBe(true);
+    expect((ITEMS.a9_fmj.pen || 0) >= AP_PEN_FLOOR).toBe(false);
+    expect(AP_PEN_FLOOR).toBe(4);
+    expect(ARMOR_FLOOR).toBe(4);
   });
 });
 

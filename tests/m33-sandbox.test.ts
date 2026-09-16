@@ -10,7 +10,7 @@ import {
 const CHAPTER_NAMES = LAB_CHAPTERS.map(c => c.name);
 
 const snap = (over: Partial<LabSnap> = {}): LabSnap => ({
-  day: 1, hp: 100, hun: 62, thi: 58, ap: 14, scav: 0, deep: 0, crafted: 0, kills: 0, meleeKills: 0, ammoUsed: 0,
+  day: 1, hp: 100, hun: 62, thi: 58, ap: 14, scav: 0, deep: 0, crafted: 0, kills: 0, meleeKills: 0, ammoUsed: 0, apKills: 0,
   loc: 'base', over: false, inv: {}, load: {}, injuries: [], base: {}, steps: 0, visited: 1, regions: 1, invKinds: 1,
   veh: false,
   ...over,
@@ -50,7 +50,7 @@ describe('章节表', () => {
     expect(labStateOf('combat').seed).toBe(COMBAT_PRESET.seed);
   });
 
-  it('第 2 章的三条目标：枪杀（要真的开过枪）/ 近战杀 / 手动换弹', () => {
+  it('第 2 章的四条目标：枪杀（要真的开过枪）/ 近战杀 / 手动换弹 / 穿甲弹打装甲目标', () => {
     const g = (s: LabSnap) => evalChapter(CH2, s).items.find(i => i.id === 'gunKill')!.done;
     expect(g(snap({ kills: 1, ammoUsed: 0 }))).toBe(false);     // 近战杀的不能被算成"用枪打死"
     expect(g(snap({ kills: 1, ammoUsed: 2 }))).toBe(true);
@@ -59,7 +59,19 @@ describe('章节表', () => {
     const l = (ld: Record<string, string>) => evalChapter(CH2, snap({ load: ld })).items.find(i => i.id === 'loadSwap')!.done;
     expect(l({})).toBe(false);
     expect(l({ c9: 'a9_ap' })).toBe(true);
-    expect(evalChapter(CH2, snap({ kills: 1, ammoUsed: 3, meleeKills: 1, load: { c9: 'a9_fmj' } })).passed).toBe(true);
+    /* M48：换弹那条只证明"点过切换"，所以另加一条真击杀判定（apKills 由 killFoe/bridge 计数） */
+    const a = (n: number) => evalChapter(CH2, snap({ apKills: n })).items.find(i => i.id === 'apKill')!.done;
+    expect(a(0)).toBe(false);
+    expect(a(1)).toBe(true);
+    expect(evalChapter(CH2, snap({ kills: 1, ammoUsed: 3, meleeKills: 1, load: { c9: 'a9_fmj' } })).passed).toBe(false);   // 少一条不算通关
+    expect(evalChapter(CH2, snap({ kills: 1, ammoUsed: 3, meleeKills: 1, load: { c9: 'a9_ap' }, apKills: 1 })).passed).toBe(true);
+    expect(CH2.objectives.length).toBe(4);
+  });
+
+  it('第 2 章的预设够打通这一章：穿甲弹 ≥16 发 + 各区都刷得到装甲丧尸', () => {
+    expect(COMBAT_PRESET.inv.a9_ap).toBeGreaterThanOrEqual(16);   // 装甲丧尸 hp62/armor5：8 发打不穿，很容易卡住
+    expect(COMBAT_PRESET.extraEnemies).toContain('armored');
+    expect(COMBAT_PRESET.inv.medkit).toBeGreaterThan(0);          // 打装甲丧尸要挨几下
   });
 
   it('第 3 章「人体与伤病」：预设带两处伤，目标是"处理掉"而不是"受过伤"', () => {

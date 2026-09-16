@@ -226,14 +226,14 @@ const shell2 = JSON.parse(await ev(`(() => {
   return JSON.stringify({ src: f ? f.getAttribute('src') : null, objs, title });
 })()`))
 ok('点章节卡能切到第 2 章（iframe 换成 ch=combat，标题跟着换）', /[?&]ch=combat/.test(shell2.src || '') && /战斗/.test(shell2.title), JSON.stringify({ src: shell2.src, title: shell2.title }))
-ok('第 2 章的目标清单是 3 条（枪杀 / 近战杀 / 换弹）', shell2.objs.length === 3 && shell2.objs.includes('gunKill') && shell2.objs.includes('meleeKill') && shell2.objs.includes('loadSwap'), JSON.stringify(shell2.objs))
+ok('第 2 章的目标清单是 4 条（枪杀 / 近战杀 / 换弹 / 穿甲弹打装甲——M48）', shell2.objs.length === 4 && ['gunKill', 'meleeKill', 'loadSwap', 'apKill'].every(id => shell2.objs.includes(id)), JSON.stringify(shell2.objs))
 let boot2 = null
 for (let i = 0; i < 20; i++) {
   const r = await lab(`if (!W.S || W.S.seed !== 'lab-combat-01') return 'WAIT'; return JSON.stringify({ day: W.S.day, seed: W.S.seed, pistol: W.S.inv.pistol || 0, ap: W.S.inv.a9_ap || 0, wpn: W.S.eq.wpn, kills: W.S.stats.kills });`)
   if (r && r !== 'WAIT' && r !== 'NO-FRAME' && !String(r).startsWith('EXC')) { boot2 = JSON.parse(r); break }
   await sleep(500)
 }
-ok('第 2 章沙盒按自己的预设开局（固定种子 lab-combat-01 + 手枪 + 两种 9mm + 计数清零）', boot2 && boot2.day === 1 && boot2.pistol === 1 && boot2.ap === 8 && boot2.wpn === 'pistol' && boot2.kills === 0, JSON.stringify(boot2))
+ok('第 2 章沙盒按自己的预设开局（固定种子 lab-combat-01 + 手枪 + 两种 9mm + 计数清零）', boot2 && boot2.day === 1 && boot2.pistol === 1 && boot2.ap === 16 && boot2.wpn === 'pistol' && boot2.kills === 0, JSON.stringify(boot2))
 
 /** 打一场：点招式槽（真按钮）直到战斗结束；结束面板上的「继续」也要点（战斗界面不会自己关） */
 const fight = async (rounds = 30) => {
@@ -266,7 +266,29 @@ const swap2 = await clickBtn('button[onclick*="setLoaded"]', 5)
 await sleep(900)
 const done2 = JSON.parse(await ev(`JSON.stringify(window.V4Lab.status())`))
 ok('第 2 章：背包「弹药」区手动装填一次（目标③绿）', swap2 && Object.keys(done2.snap.load || {}).length > 0 && done2.eval.items.find(i => i.id === 'loadSwap').done === true, JSON.stringify({ load: done2.snap.load, click: swap2 }))
-ok('第 2 章三条全绿 → 判定通关（3/3）', done2.eval.passed === true && done2.eval.green === 3, JSON.stringify({ green: done2.eval.green, total: done2.eval.total }))
+ok('第 2 章三条绿了但没通关（M48 的第④条还没做，3/4）', done2.eval.passed === false && done2.eval.green === 3, JSON.stringify({ green: done2.eval.green, total: done2.eval.total }))
+
+/* ── 6a) M48：目标④要真拿穿甲弹打死一只装甲丧尸（换弹那一步只证明"点过切换"） ── */
+await lab(`W.setLoaded('c9','a9_ap'); W.S.hp = W.S.hpMax; W.DEV.battle(['armored']); return 1;`)
+await sleep(1500)
+const armedBefore = await lab(`return JSON.stringify({ loaded: (W.S.load || {}).c9 || null, apKills: W.S.stats.apKills || 0, hp: W.S.hp });`)
+for (let i = 0; i < 40; i++) {
+  const st = await lab(`if (!W.V4UI || !W.V4UI.isOpen()) return 'OVER';
+    W.S.hp = W.S.hpMax;                                     /* 探针只验"击杀记账"，不验"打不打得过"：每轮把血顶满 */
+    const done = [...D.querySelectorAll('#v4b-overlay button')].find(b => /继续/.test(b.textContent || ''));
+    if (done) { done.click(); return 'OVER'; }
+    const b = [...D.querySelectorAll('#v4b-overlay .mv-slot')].filter(x => !x.disabled);
+    if (!b.length) return 'WAIT';
+    b[0].click(); return 'HIT';`)
+  if (st === 'OVER') break
+  await sleep(650)
+}
+await sleep(1000)
+const done3 = JSON.parse(await ev(`JSON.stringify(window.V4Lab.status())`))
+ok('第 2 章：换上穿甲弹真的打死一只装甲丧尸（apKills 记账 → 目标④绿）',
+  done3.snap.apKills >= 1 && done3.eval.items.find(i => i.id === 'apKill').done === true,
+  JSON.stringify({ before: armedBefore, apKills: done3.snap.apKills }))
+ok('第 2 章四条全绿 → 判定通关（4/4）', done3.eval.passed === true && done3.eval.green === 4, JSON.stringify({ green: done3.eval.green, total: done3.eval.total }))
 const prog2 = JSON.parse(await ev(`JSON.stringify({ raw: localStorage.getItem('zsv-lab-v1') || '', badges: [...document.querySelectorAll('#v4lab-chapters .lab-ch')].map(c => c.textContent.replace(/\\s+/g, ' ').slice(0, 46)) })`))
 ok('两章的通关都记在本机进度里', /"combat":\d+/.test(prog2.raw) && /"survival":\d+/.test(prog2.raw), prog2.raw)
 ok('章节列表里两章都挂上「已通关」徽章', (prog2.badges.join('|').match(/已通关/g) || []).length >= 2, JSON.stringify(prog2.badges))
