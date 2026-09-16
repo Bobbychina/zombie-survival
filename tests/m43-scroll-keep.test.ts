@@ -61,10 +61,14 @@ describe('M43 · 接线（render 不许再无条件回顶）', () => {
     expect(fn).toContain('restoreScroll(keepOffsets(snap, { resetView: tabChanged })')
     expect(fn).toContain("v.dataset.tab = S.tab")
   })
-  it('日志只在"本来就在底部"时才自动跟到底部', () => {
+  it('日志只在"玩家还在跟"时才自动跟到底部（M49 起改判"玩家意图"，不再量此刻的距离）', () => {
+    /* M49 改了这里的判据：`#log` 是 scroll-behavior:smooth，量"此刻离底多远"会被补底动画骗到
+       （动画还在路上 → 量到离底两千多像素 → 判成"玩家翻上去了" → 现场日志再也不跟）。
+       现在守卫是 logFollow（由轮子/手指/键盘这些**玩家动作**驱动），距离只在"玩家自己滚"时才用来更新它。 */
     const body = legacy.slice(legacy.indexOf('function log(msg, type){'))
     const fn = body.slice(0, body.indexOf('function clearLog'))
-    expect(fn).toContain('const stick = shouldStickToBottom(box)')
-    expect(fn).toContain('if(stick){')
+    expect(fn).toContain('if(logFollow){')
+    expect(legacy).toContain('logFollowBy({ userScrollingUp')
+    expect(legacy).toMatch(/function logAtBottom\(slack\)\{[^}]*shouldStickToBottom/)
   })
 })
