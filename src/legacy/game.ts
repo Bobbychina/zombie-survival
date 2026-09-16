@@ -2436,7 +2436,7 @@ function renderExplore(){
 function quickBarHtml(){
   const slots = quickSlots(S.inv, ITEMS);
   if(!slots.length) return '';
-  return '<div class="card" style="margin-bottom:12px"><div class="row" style="flex-wrap:wrap;gap:6px">' +
+  return '<div class="card v4quick" style="margin-bottom:12px"><div class="row" style="flex-wrap:wrap;gap:6px">' +   // M45：给个类名，卡片墙才能认出它是「补给快捷」而不是退化成「📋 ⌨️ 补给快捷（键盘数字」
     '<span class="hint">⌨️ 补给快捷（键盘数字键 / 点一下就用）</span>' +
     slots.map(s => '<button class="btn sm" onclick="useConsumable(\'' + s.id + '\')" title="' + s.hint + '">' +
       '<span class="mono" style="color:var(--warn)">' + s.key + '</span> ' + ITEMS[s.id].n + ' <span class="mono" style="color:var(--dim)">×' + s.n + '</span></button>').join('') +

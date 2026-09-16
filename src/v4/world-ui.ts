@@ -19,6 +19,7 @@ import { ghostAt, placeGhosts, raidGhost } from './ghosts';
 import { ghostFoes } from './ghosts-core';
 import { pendingFragKeys, takeFragment } from './fragments';
 import { apCapOf, isBloodMoonDay, rest, restOptions, tierAt, syncApMax } from './night';
+import { claimPlan, fallbackTitle, type LegacyKind } from './card-wall-core';   // M45：legacy 节点认领计划（防重复卡）
 /** M32.1：当前字号倍率（#v4world / #v4cards 上的 zoom）。这里不 import ui-scale（会和 main 形成
     循环），走 main.ts 挂在 window 上的那份；拿不到就按 1 算。fitMap/fitRegion 用它把"像素下限"
     换算成**渲染后**的尺寸 —— zoom 之后本地 24px 在 160% 下是 38px，窗口宽度却不会跟着变。 */
@@ -749,49 +750,55 @@ function pruneLegacy(view: HTMLElement) {
 /** 把 legacy 自己的内容统一包成 v4 卡片：探索页只剩一种卡片语言。
     M24 修：以前只有"标题 + 紧随的 .card/.grid"会被包成卡片，裸的 .card（委托板 teaser、结局说明…）
     会原样塞进卡片墙 → 界面里出现没有标题、宽度和别的卡不一样的"诡异空白块"（用户报障）。
-    现在**任何**没被认领的节点都会被包成一张有标题的卡片。 */
+    现在**任何**没被认领的节点都会被包成一张有标题的卡片。
+    M45 修：`.sect-title` 连带认领的正文块当时也在待认领名单里 → 被包装第二遍，整个日历出现两次
+    （用户报「有重复的」）。认领计划（card-wall-core.claimPlan）保证每个节点只被认领一次。 */
 function adoptLegacy(view: HTMLElement, board: HTMLElement) {
-  const keep: Element[] = [];
-  for (const child of Array.from(view.children)) {
-    if (child === board || child.id === 'v4world' || child.id === 'v4tools') continue;
-    if ((child as HTMLElement).classList.contains('v4board')) continue;
-    keep.push(child);
-  }
-  for (const el of keep) {
-    const e = el as HTMLElement;
-    if (e.classList.contains('v4card')) { board.appendChild(e); continue; }
-    let title = '', badges: string[] = [], bodyEl: HTMLElement | null = null;
-    if (e.classList.contains('sect-title')) {
-      // sect-title + 紧随其后的 .card/.grid = 一段完整的 legacy 区块
+  const kids = Array.from(view.children) as HTMLElement[];
+  const plan = claimPlan(kids.map(legacyKindOf));
+  for (const step of plan) {
+    if (step.act === 'skip') continue;                 // 宿主节点 / 已被上一张卡当正文领走
+    const e = kids[step.i];
+    if (e.classList.contains('v4card')) { board.appendChild(e); continue; }   // 已经是 v4 卡：直接搬进墙里
+    let title: string, badges: string[], bodyEl: HTMLElement | null;
+    if (step.act === 'title') {
       title = (e.textContent || '').trim();
       badges = Array.from(e.querySelectorAll('.badge')).map(b => (b.textContent || '').trim());
-      const next = e.nextElementSibling as HTMLElement | null;
-      bodyEl = next && (next.classList.contains('card') || next.classList.contains('grid')) ? next : null;
-      e.remove();
+      bodyEl = step.body === null ? null : kids[step.body];
     } else {
-      bodyEl = e;                              // 裸卡片/散件：它自己就是内容
+      bodyEl = e;                                      // 裸卡片/散件：它自己就是内容
       title = legacyTitleOf(e);
+      badges = [];
     }
     const wrap = document.createElement('div');
     wrap.className = 'v4card';
     wrap.dataset.card = 'legacy';
     wrap.innerHTML = '<div class="card-hd"><span class="card-tt">' + title + '</span>' +
       badges.map(b => '<span class="badge">' + b + '</span>').join('') + '</div>' +
-      '<div class="card-bd">' + (bodyEl ? bodyEl.outerHTML : '') + '</div>';
+      '<div class="card-bd">' + (bodyEl ? bodyEl.outerHTML : '') + '</div>';   // outerHTML：正文原件的类名/行内样式一并带走（保持修复前的外观）
     board.appendChild(wrap);
-    if (bodyEl) bodyEl.remove();               // 原件（无论是原节点还是被移出来的那个）都清掉
+    e.remove()                                         // 原件（无论它自己就是正文，还是光杆标题）都清掉
+    if (bodyEl && bodyEl !== e) bodyEl.remove();       // 正文原件同理 —— 上面已经搬进卡片里了
   }
+}
+
+/** 节点类型（供 claimPlan 用）：跳过的宿主节点 / 标题 / 正文候选 / 裸内容 */
+function legacyKindOf(e: HTMLElement): LegacyKind {
+  if (e.id === 'v4world' || e.id === 'v4tools' || e.classList.contains('v4board')) return 'skip';
+  if (e.classList.contains('sect-title')) return 'title';
+  if (e.classList.contains('card') || e.classList.contains('grid')) return 'body';
+  return 'other';
 }
 
 /** 裸 legacy 节点的标题：能认出来的给专名，认不出就给个中性标题（总比没有强） */
 function legacyTitleOf(e: HTMLElement): string {
   if (e.classList.contains('v4teaser')) return '📜 委托板';
+  if (e.classList.contains('v4quick')) return '⌨️ 补给快捷';      // M45：别再退化成「📋 ⌨️ 补给快捷（键盘数字」
   const inner = e.querySelector('.sect-title') as HTMLElement | null;
   if (inner) return (inner.textContent || '').trim();
   const h3 = e.querySelector('h3') as HTMLElement | null;
   if (h3) return (h3.textContent || '').trim();
-  const txt = (e.textContent || '').trim().slice(0, 12);
-  return txt ? '📋 ' + txt : '📋 更多';
+  return fallbackTitle(e.textContent || '');
 }
 
 export function mountWorldPanel() {
