@@ -233,7 +233,7 @@ for (let i = 0; i < 20; i++) {
   if (r && r !== 'WAIT' && r !== 'NO-FRAME' && !String(r).startsWith('EXC')) { boot2 = JSON.parse(r); break }
   await sleep(500)
 }
-ok('第 2 章沙盒按自己的预设开局（固定种子 lab-combat-01 + 手枪 + 两种 9mm + 计数清零）', boot2 && boot2.day === 1 && boot2.pistol === 1 && boot2.ap === 16 && boot2.wpn === 'pistol' && boot2.kills === 0, JSON.stringify(boot2))
+ok('第 2 章沙盒按自己的预设开局（固定种子 lab-combat-01 + 手枪 + 两种 9mm + 计数清零）', boot2 && boot2.day === 1 && boot2.pistol === 1 && boot2.ap === 24 && boot2.wpn === 'pistol' && boot2.kills === 0, JSON.stringify(boot2))
 
 /** 打一场：点招式槽（真按钮）直到战斗结束；结束面板上的「继续」也要点（战斗界面不会自己关） */
 const fight = async (rounds = 30) => {
@@ -268,27 +268,31 @@ const done2 = JSON.parse(await ev(`JSON.stringify(window.V4Lab.status())`))
 ok('第 2 章：背包「弹药」区手动装填一次（目标③绿）', swap2 && Object.keys(done2.snap.load || {}).length > 0 && done2.eval.items.find(i => i.id === 'loadSwap').done === true, JSON.stringify({ load: done2.snap.load, click: swap2 }))
 ok('第 2 章三条绿了但没通关（M48 的第④条还没做，3/4）', done2.eval.passed === false && done2.eval.green === 3, JSON.stringify({ green: done2.eval.green, total: done2.eval.total }))
 
-/* ── 6a) M48：目标④要真拿穿甲弹打死一只装甲丧尸（换弹那一步只证明"点过切换"） ── */
-await lab(`W.setLoaded('c9','a9_ap'); W.S.hp = W.S.hpMax; W.DEV.battle(['armored']); return 1;`)
+/* ── 6a) M48：目标④要真拿穿甲弹打死一只装甲丧尸（换弹那一步只证明"点过切换"） ──
+   注意：上一步为了验证"近战击杀"把武器换成了撬棍，这里必须**换回手枪**再打 ——
+   拿着撬棍打死装甲丧尸只会记近战击杀（第一次跑就是这么红的）。 */
+await lab(`W.equipWeapon('pistol'); W.setLoaded('c9','a9_ap'); W.S.hp = W.S.hpMax; W.DEV.battle(['armored']); return 1;`)
 await sleep(1500)
 const armedBefore = await lab(`return JSON.stringify({ loaded: (W.S.load || {}).c9 || null, apKills: W.S.stats.apKills || 0, hp: W.S.hp });`)
 for (let i = 0; i < 40; i++) {
+  /* 用**威力最大的**那一招（第 2 格「连发」）：装甲丧尸 hp62，点射一下只有 3~9 点，20 发都不够打 */
   const st = await lab(`if (!W.V4UI || !W.V4UI.isOpen()) return 'OVER';
     W.S.hp = W.S.hpMax;                                     /* 探针只验"击杀记账"，不验"打不打得过"：每轮把血顶满 */
     const done = [...D.querySelectorAll('#v4b-overlay button')].find(b => /继续/.test(b.textContent || ''));
     if (done) { done.click(); return 'OVER'; }
-    const b = [...D.querySelectorAll('#v4b-overlay .mv-slot')].filter(x => !x.disabled);
-    if (!b.length) return 'WAIT';
-    b[0].click(); return 'HIT';`)
+    const all = [...D.querySelectorAll('#v4b-overlay .mv-slot')];
+    const pick = (all[1] && !all[1].disabled) ? all[1] : all.filter(x => !x.disabled)[0];
+    if (!pick) return 'WAIT';
+    pick.click(); return 'HIT';`)
   if (st === 'OVER') break
-  await sleep(650)
+  await sleep(700)
 }
 await sleep(1000)
-const done3 = JSON.parse(await ev(`JSON.stringify(window.V4Lab.status())`))
+const doneAp = JSON.parse(await ev(`JSON.stringify(window.V4Lab.status())`))
 ok('第 2 章：换上穿甲弹真的打死一只装甲丧尸（apKills 记账 → 目标④绿）',
-  done3.snap.apKills >= 1 && done3.eval.items.find(i => i.id === 'apKill').done === true,
-  JSON.stringify({ before: armedBefore, apKills: done3.snap.apKills }))
-ok('第 2 章四条全绿 → 判定通关（4/4）', done3.eval.passed === true && done3.eval.green === 4, JSON.stringify({ green: done3.eval.green, total: done3.eval.total }))
+  doneAp.snap.apKills >= 1 && doneAp.eval.items.find(i => i.id === 'apKill').done === true,
+  JSON.stringify({ before: armedBefore, apKills: doneAp.snap.apKills }))
+ok('第 2 章四条全绿 → 判定通关（4/4）', doneAp.eval.passed === true && doneAp.eval.green === 4, JSON.stringify({ green: doneAp.eval.green, total: doneAp.eval.total }))
 const prog2 = JSON.parse(await ev(`JSON.stringify({ raw: localStorage.getItem('zsv-lab-v1') || '', badges: [...document.querySelectorAll('#v4lab-chapters .lab-ch')].map(c => c.textContent.replace(/\\s+/g, ' ').slice(0, 46)) })`))
 ok('两章的通关都记在本机进度里', /"combat":\d+/.test(prog2.raw) && /"survival":\d+/.test(prog2.raw), prog2.raw)
 ok('章节列表里两章都挂上「已通关」徽章', (prog2.badges.join('|').match(/已通关/g) || []).length >= 2, JSON.stringify(prog2.badges))

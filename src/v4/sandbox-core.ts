@@ -127,13 +127,14 @@ const DEFAULT_PRESET: LabPreset = { seed: 'lab-basic-01', day: 1, ap: 14, mat: 1
 
 /** 第 2 章「战斗与枪械」的沙盒开局：一把手枪 + 两种 9mm（普通弹与穿甲弹打装甲目标的手感不一样）
     + 撬棍（近战不耗弹但会挨咬）。饱食水分给足 —— 这一章不该被饿肚子打断。
-    M48：穿甲弹从 8 发加到 16 发（装甲丧尸 hp 62 / armor 5，8 发打不穿很容易卡住这一章），
-    并把装甲丧尸塞进所有区的敌人表（extraEnemies），让"用穿甲弹打死装甲目标"这条目标真的做得到。 */
+    M48：穿甲弹从 8 发加到 24 发（探针实测：装甲丧尸 hp62/armor5，打上去一下只有 3~9 点，
+    用「连发」也要 6 次命中才倒 —— 8 发必然卡章），并把装甲丧尸塞进所有区的敌人表（extraEnemies），
+    让"用穿甲弹打死装甲目标"这条目标真的做得到。 */
 export const COMBAT_PRESET: LabPreset = {
   seed: 'lab-combat-01',
   day: 1, ap: 14, mat: 12,
   hp: 100, hun: 85, thi: 85, sta: 100,
-  inv: { pistol: 1, crowbar: 1, a9_fmj: 24, a9_ap: 16, bandage: 2, medkit: 1, can: 2, water: 2 },
+  inv: { pistol: 1, crowbar: 1, a9_fmj: 24, a9_ap: 24, bandage: 2, medkit: 1, can: 2, water: 2 },
   extraEnemies: ['armored'],
 };
 
@@ -199,7 +200,7 @@ export const LAB_CHAPTERS: LabChapter[] = [
       { id: 'loadSwap', text: '🔩 在背包「弹药」区手动装填一次弹种（9mm 普通弹 ↔ 穿甲弹）', need: s => Object.keys(s.load).length > 0 },
       /* M48：光"点过换弹"证明不了会用 —— 这条要真拿打得动装甲的弹种杀掉一只装甲目标。
          判定口径 pen ≥ armor（装甲丧尸 armor 5）：普通弹 pen 2 打出来不算，近战也不算。 */
-      { id: 'apKill', text: '🛡️ 用穿甲弹打死 1 只装甲丧尸（这一章的沙盒里各区都会刷；普通弹打它伤害不到一半）', need: s => s.apKills >= 1 },
+      { id: 'apKill', text: '🛡️ 用穿甲弹打死 1 只装甲丧尸（这一章的沙盒里各区都会刷；它很硬，用「连发」+ 带够穿甲弹）', need: s => s.apKills >= 1 },
     ],
   },
   {
