@@ -2852,3 +2852,47 @@ M28 确实加了柏林噪声，但它把噪声**加在一个没被撼动的径�
   构建走 `git worktree` 干净树 + **按标记整段拼接**（只搬日志区那一块 + 两处 window 导出 + import 行），
   产物里不含别人未提交的代码（build 时 `tsc` 能过也印证了这一点）；提交只挑自己的文件。
 - 发布后线上复跑同一套探针 21/21（见 `docs/_m49_shots_live/`）。
+
+
+## 五十八、M51 无尽延续：通关之后不许再退回旧版界面
+
+> 用户两张截图 + 两句话：「zombie-game 通关后的这个玩意是老版本的，不应该存在，完全删除这个」
+> （图里是旧版「城市地图」卡：`已在安全屋` / `安全屋` / `📅 本局已通关` 三枚标签），
+> 紧接着「不仅如此，通关之后**整个**游戏的界面都会回退到老版本，这也要删除」。
+
+### 根因
+通关（`rescueEnding()` 第 100 天救援 / `finalVictory()` 取回解药）会把 `S.over` 置 true（"本局已结束"），
+而 v4 的世界面板、区域移动、夜间结算**全以 `over` 为总闸**（`world-ui` 的 `if (!S || S.over)` 整块退出渲染），
+于是整屏交回 legacy 探索页 —— 露出来的正好是旧版城市地图那道卡和它的「本局已通关」图例；
+玩家还得再点一次「进入无尽模式」才回得来。M37 只修了"点了按钮之后回得来"，中间态本身就是旧版，
+那才是用户真正看到的一屏。
+
+### 改法（旧版残留整块删除，不留兼容分支）
+- **通关不再置 `over`**：`rescueEnding()/finalVictory()` 当场走 `winContinue()`
+  （`endless-core.winContinuePatch`：清 over + 开 endless + 血/AP 兜底），顶栏立刻变「第 N 天 · 无尽」。
+- **删除**：legacy 的 `renderMap / mapClick / goHome`（旧版城市地图整块）、`nextEventText()` 的
+  「本局已通关」分支、三个「进入无尽模式」按钮（HUD / 统计页 / 结局弹窗）、`endless-core.overHint`
+  以及 `nextStep()` 里那条"通关还活着"的分支（`over=true` 从此只剩"真死了"一种情形）。
+- **死亡改由 v4 自己收尾**：`world-ui.mountOverCard()` 画一张「💀 本局结束」卡（重新开始 / 读取存档），
+  `#view.v4-over` 用一条 CSS 把旧版探索页整块隐藏 —— 旧版界面从此没有露脸的机会。
+- 老档归一：`sanitizeSave` 里 `won=true → endless=true`（旧档停在"已通关但没过无尽"会让顶栏显示 "101 / 100"）。
+
+### 实测证据
+- 单测 `tests/m37-endless.test.ts` **19 例**（`winContinuePatch` 三种输入 + 源码级断言：`rescueEnding`
+  不再出现 `S.over = true`、`renderMap/mapClick/goHome` 与「本局已通关」「进入无尽模式」全库找不到、
+  `world-ui` 必须有 `mountOverCard` + `#view.v4-over` 那条 CSS）；全库 **635 条**全绿，`tsc --noEmit` 干净。
+- 探针 `docs/_m37_probe.mjs` **16/16 ALL PASS（本地产物 + 线上各一遍）**：两条通关线 over 都保持 false、
+  endless 打开；通关后卡片墙 576 格地图照旧；页面上找不到那三样旧版残留；关掉结局弹窗后地图能点着走
+  （AP 14→13）；死亡才画 v4 结束卡且旧版内容不可见；`restart()` 后结束态撤掉；0 未捕获异常。
+- 截图 `docs/_m51_shots/`（本地）与 `docs/_m51_shots_live/`（线上）：`01_rescue_ending`、`02_after_win_move`、
+  `03_death_endcard`、`04_after_restart`，逐张 OCR 复查（通关后是 v4 行动卡片 + 悬浮地图；死亡是「本局结束」卡）。
+
+### 上线与并发说明（一次需要记住的取舍）
+- 发布记录：游戏仓 `a92fb72`（源码）+ `e5afd2b`（产物 667424 字节）→ 站点仓 `3d04033`
+  （667470 字节，含 auth-config 注入）；线上复跑 16/16。
+- **本次没有从"干净 HEAD"构建**：同仓 M49/M50 会话有 4 处 `legacy/game.ts` hunk 还没提交，而 HEAD 上的
+  `pois.ts / shop-core.ts / survival-core.ts` 已经在引用 `fungicide` 与 `clearCond` —— 只按 HEAD 构建会发出
+  "有药名、没那件药"的半成品（M50 修掉的正是这个）。所以这次按工作区整棵（含那 4 个 hunk）构建，
+  并在提交信息里写明；那 4 个 hunk 由 M49/M50 会话补提交后，HEAD 才与线上产物对齐。
+- 提交只用 hunk 级暂存（`pick-hunks.mjs`）挑自己的 15 个 hunk（另 4 个属于 M49/M50），
+  未动别人的文件、产物与截图。
