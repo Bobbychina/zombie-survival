@@ -4,7 +4,7 @@ import { L } from '../main';
 import { POIS } from './pois';
 import { bkey, blockAt } from './worldgen';
 import { ensureSaveWorld, markVisited, worldOf, type SaveWorld } from './worldstate';
-import { WEATHER, seasonOf, tempPenalty } from './env-core';
+import { WEATHER, seasonOf, tempDeltaText, tempPenalty } from './env-core';
 import { envOf, seasonNow, tempTick } from './env';
 import { buildCostText } from './farm';
 import {
@@ -101,7 +101,7 @@ export function swimStep(dir: { x: number; y: number }): boolean {
   const risk = swimRisk(Math.random, season, weather, gear);
   const tempLoss = SWIM_TEMP * (gear ? 0.5 : 1) - 1;      // 装备好一点就少掉一点
   applyTemp(tempLoss);
-  const lines: string[] = ['🌊 你下水了（' + SWIM_AP_PER_STEP() + ' 行动力/格，体温 ' + tempLoss + '）'];
+  const lines: string[] = ['🌊 你下水了（' + SWIM_AP_PER_STEP() + ' 行动力/格，体温 ' + tempDeltaText(tempLoss) + '）'];
   if (risk.text) lines.push(risk.text);
   if (risk.infect) S.infect = Math.min(100, S.infect + risk.infect);
   if (risk.cramp) {

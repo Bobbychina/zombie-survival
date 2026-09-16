@@ -14,7 +14,7 @@ import {
   travelExtra, treat, treatOptions, type BodyPart, type BodyState,
 } from './medical-core';
 import { envOf, seasonNow, tempPenalty, weatherNow } from './env';
-import { SEASON_INFO, TEMP_LOW, WEATHER } from './env-core';
+import { SEASON_INFO, WEATHER, tempStateText, tempText } from './env-core';
 import { condRows, fireOk, humNow, riskLine, rotMul } from './survival';
 import { CONDS, COND_CURE, COND_IDS, condPenaltyText, humBand, humLine } from './survival-core';
 
@@ -186,10 +186,10 @@ function envCondHtml(): string {
   const hum = humNow();
   const season = seasonNow(), w = WEATHER[weatherNow()];
   const band = humBand(hum.hum);
-  const tempTxt = e.temp < TEMP_LOW ? '偏低：行动力与命中被压' : e.temp > 80 ? '偏高：水分流失更快' : '正常';
+  const tempTxt = tempStateText(e.temp, true);      // M52：体温对外一律摄氏度
   const humNote = band === 'dry' ? '干燥：容易中暑/脱水' : band === 'muggy' ? '闷湿：容易呼吸道感染与真菌' : '适宜：没有额外影响';
   return '<div class="card" style="padding:10px"><h3>🌡️ 体温与环境</h3>' +
-    '<div class="kv"><span>🌡️ 体温</span><b>' + Math.round(e.temp) + ' · ' + tempTxt + '</b></div>' +
+    '<div class="kv"><span>🌡️ 体温</span><b>' + tempText(e.temp) + ' · ' + tempTxt + '</b></div>' +
     '<div class="kv"><span>💧 湿度</span><b>' + Math.round(hum.hum) + '% · ' + hum.label + '</b></div>' +
     '<div class="hint">' + esc(humNote) + (hum.wet >= 25 ? ' · 🌧️ 淋湿 ' + Math.round(hum.wet) + '%（体温掉得更快，回屋/火堆烘干）' : '') + '</div>' +
     '<div class="kv"><span>🍂 季节天气</span><b>' + SEASON_INFO[season].icon + SEASON_INFO[season].name + '季 · ' + w.icon + w.name + '</b></div>' +

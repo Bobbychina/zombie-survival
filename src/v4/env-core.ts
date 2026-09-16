@@ -5,7 +5,8 @@
    - 每 30 天一个季节：春 1-30 / 夏 31-60 / 秋 61-90 / 冬 91+
    - 作物系数 春 1.0 / 夏 0.8 / 秋 1.3 / 冬 0（户外停摆）
    - 腐坏 夏 ×1.5 / 冬 ×0.6
-   - 体温 0~100（50 = 舒适），单阈值 + 一档惩罚，火堆/室内可对抗，不做持续掉血
+   - 体温 0~100 的"体温点"（50 = 舒适）作为**内部刻度**，对外一律摄氏度（M52，见下面「体温」一节），
+     单阈值 + 一档惩罚，火堆/室内可对抗，不做持续掉血
    - 天气每天掷一次、可预报明天，影响采集/作物/腐坏/火堆/移动/体温/取水
 */
 
@@ -71,11 +72,47 @@ export function forecastWeather(rng: () => number, day: number): WeatherId {
   return rollWeather(rng, seasonOf(day + 1));
 }
 
-/* ── 体温 ── */
-export const TEMP_COMFORT = 50;          // 0~100，50 = 舒服
-export const TEMP_LOW = 30;              // 低于此值触发一档惩罚
-export const TEMP_HIGH = 80;             // 高于此值水分流失加快
+/* ── 体温 ──
+   M52（用户：「体温改成摄氏度（50-100 的体温好诡异）」）：
+   **内部刻度仍是 0~100 的"体温点"**（50 = 舒适）—— 天气/季节/下水/淋湿的漂移量、两条惩罚阈值、
+   病症入口阈值和 100 天模拟脚本全是按它标定的，换内部单位等于把整套生存数值重调一遍、还要迁存档。
+   但对玩家一律说摄氏度：50 点 = 37.0℃（正常体温），1 点 = 0.06℃ → 0 点 34.0℃ / 100 点 40.0℃。
+   换算是全局唯一一处（tempC / tempText / tempDeltaText），**UI 里不许再自己乘**：
+   直接在界面打 50 会让人以为体温 50℃。 */
+export const TEMP_COMFORT = 50;          // 0~100 内部的"舒适点"，= 37.0℃
+export const TEMP_LOW = 30;              // 低于此值触发一档惩罚（= 35.8℃）
+export const TEMP_HIGH = 80;             // 高于此值水分流失加快（= 38.8℃）
 export const TEMP_MIN = 0, TEMP_MAX = 100;
+/** 摄氏刻度：0 点 = 34.0℃、50 点 = 37.0℃、100 点 = 40.0℃ */
+export const TEMP_C_BASE = 34, TEMP_C_PER_UNIT = 0.06;
+/** 体温点 → 摄氏度（保留一位小数；坏值按"舒适"处理，别让坏档把界面变成 NaN℃） */
+export function tempC(points: number): number {
+  const p = Number.isFinite(points) ? points : TEMP_COMFORT;
+  return Math.round((TEMP_C_BASE + Math.max(TEMP_MIN, Math.min(TEMP_MAX, p)) * TEMP_C_PER_UNIT) * 10) / 10;
+}
+/** 界面统一口径：`36.8℃` */
+export const tempText = (points: number): string => tempC(points).toFixed(1) + '℃';
+/** 体温**变化量**的界面口径：`-0.4℃` / `+0.5℃`（漂移量内部也是体温点） */
+export function tempDeltaText(delta: number): string {
+  const c = Math.round((Number.isFinite(delta) ? delta : 0) * TEMP_C_PER_UNIT * 10) / 10;
+  return (c > 0 ? '+' : '') + c.toFixed(1) + '℃';
+}
+export const TEMP_COMFORT_C = tempC(TEMP_COMFORT);   // 37.0
+export const TEMP_LOW_C = tempC(TEMP_LOW);           // 35.8
+export const TEMP_HIGH_C = tempC(TEMP_HIGH);         // 38.8
+/** 体温档位（界面文案 + chip 配色共用一份判定，别在两处各写一遍） */
+export function tempState(points: number): 'low' | 'high' | 'ok' {
+  if (points < TEMP_LOW) return 'low';
+  if (points > TEMP_HIGH) return 'high';
+  return 'ok';
+}
+/** 档位文案：短词给 chip/徽章，长句给人体页与环境卡 */
+export function tempStateText(points: number, long = false): string {
+  const st = tempState(points);
+  if (st === 'low') return long ? '偏低：行动力与命中被压' : '偏低';
+  if (st === 'high') return long ? '偏高：水分流失更快' : '偏高';
+  return '正常';
+}
 
 export interface TempInput {
   season: Season;
@@ -96,10 +133,11 @@ export function tempDrift(inp: TempInput): number {
   return Math.max(-14, Math.min(6, d));
 }
 
-/** 体温落到阈值以下的惩罚：一档（AP 上限 −1、命中 −10%），不做持续掉血（会议口径） */
+/** 体温落到阈值以下的惩罚：一档（AP 上限 −1、命中 −10%），不做持续掉血（会议口径）
+ *  文案里带上摄氏度（M52）：玩家看到的是温度计读数，不是内部刻度。 */
 export function tempPenalty(temp: number): { ap: number; hit: number; note: string | null } {
-  if (temp < TEMP_LOW) return { ap: -1, hit: -0.1, note: '❄️ 体温过低：行动力上限 −1、命中 −10%（去火堆或室内缓一缓）' };
-  if (temp > TEMP_HIGH) return { ap: 0, hit: 0, note: '🔥 体温偏高：水分流失加快' };
+  if (temp < TEMP_LOW) return { ap: -1, hit: -0.1, note: `❄️ 体温 ${tempText(temp)}（低于 ${TEMP_LOW_C.toFixed(1)}℃）：行动力上限 −1、命中 −10%（去火堆或室内缓一缓）` };
+  if (temp > TEMP_HIGH) return { ap: 0, hit: 0, note: `🔥 体温 ${tempText(temp)}（高于 ${TEMP_HIGH_C.toFixed(1)}℃）：水分流失加快` };
   return { ap: 0, hit: 0, note: null };
 }
 

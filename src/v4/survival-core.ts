@@ -22,8 +22,8 @@ import type { Season, WeatherId } from './env-core';
 /* ── 湿度 ── */
 export const DRY_AT = 20;             // 低于它 = 干燥（中暑 / 脱水）
 export const MUGGY_AT = 85;           // 高于它 = 闷湿（呼吸道 / 真菌）
-export const HEAT_AT = 68;            // 体温高于它算"热"（与 env-core 的 TEMP_HIGH=80 分工：这里管"难受"）
-export const CHILL_AT = 38;           // 体温低于它算"凉"（呼吸道入口）
+export const HEAT_AT = 68;            // 体温高于它算"热"（= 38.1℃；与 env-core 的 TEMP_HIGH=80/38.8℃ 分工：这里管"难受"）
+export const CHILL_AT = 38;           // 体温低于它算"凉"（= 36.3℃，呼吸道入口）
 export const HUMIDITY_DEFAULT = 55;
 
 /** 天气对湿度的**基础值**：湿度是天气的导出量，所以玩家能靠"看天"预判（M30 决策）。 */
@@ -149,7 +149,7 @@ export function condPenaltyText(id: CondId): string {
 
 export interface CondInput {
   hum: number;
-  temp: number;             // 体温 0~100
+  temp: number;             // 内部体温点 0~100（对外摄氏度：env-core.tempText，M52）
   /** 是否在室内/火堆旁（庇护） */
   shelter: boolean;
   /** 水分（thi）—— 低于 25 会加速脱水 */
