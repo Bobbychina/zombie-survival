@@ -20,6 +20,17 @@ describe('M42 · 账号库副本解不开时的策略', () => {
     expect(unreadableHint(true)).toContain('重建')
     expect(unreadableHint(true)).toContain('本地进度')
   })
+  it('模拟 15 秒 × 10 轮预热循环：警告总数仍然是 1 条（原来 10 条）', () => {
+    let warned = false
+    let total = 0
+    for (let tick = 0; tick < 10; tick++) {
+      const p = unreadablePolicy({ warned, hasFallback: true })
+      if (p.warn) { total++; warned = true }
+      /* retry 永远是 false：解不开的槽不会再被反复解（省 CPU、也省日志） */
+      expect(p.retry).toBe(false)
+    }
+    expect(total).toBe(1)
+  })
 })
 
 describe('M42 · 接线（别再回到"每轮预热都喊一次"）', () => {
