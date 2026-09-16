@@ -114,7 +114,16 @@ tests/*.test.ts          vitest 单测（385 条）
 
 ### 下一批
 
-0. **M48 已完成并上线**（教程遗留项）：教学第 2 章新增「用穿甲弹打死装甲丧尸」硬验证。
+0. **M53 已完成并上线**（P3 视觉统一）：探索页之外的页签也走卡片语言。
+   `card-wall-core.sectionGroups()` 按 `.sect-title` 切段（标题 + 后面所有散件，到下一个标题为止 ——
+   不按"标题 + 紧随的一个 .card"，因为各页形状不统一），`world-ui.unifyTab()` 在非探索页**原地**包 `.v4card`
+   （不搬家、不动地图卡、幂等、空段不包）。人体页/图鉴页没有 `.sect-title` → no-op。
+   实测：`tests/m45-card-wall.test.ts` 20 例、`docs/_m53_probe.mjs` **26/26**（本地 + 线上）、
+   回归 m21/m25/m33/m37/m38/m39/m43/m45/m46 全绿，**别的会话的 m50（病症进人体页）也 18/18**。
+   ⚠️ 包卡会把标题从 `.sect-title` 挪到 `.v4card > .card-hd > .card-tt` —— 老探针按 `.sect-title` 找标题的断言要两处一起找
+   （`_m25_probe` 的制作页那条已改）。
+
+1. **M48 已完成并上线**（教程遗留项）：教学第 2 章新增「用穿甲弹打死装甲丧尸」硬验证。
    原来那条"手动换弹"只证明点过切换 → 新计数器 `S.stats.apKills`（击杀时装填的是穿甲弹种 pen ≥ 4
    **且**目标 armor ≥ 4；legacy `killFoe` 与 v4 `bridge.onFoeFaint` 同一口径，判定在 `ammo-core.apKillOnArmored`）。
    第 2 章 **3 条目标 → 4 条**；沙盒预设调平：穿甲弹 8 → 24 发、新增防弹衣 + 急救加倍、
@@ -203,8 +212,8 @@ _m32_probe 17/17 · _m32b_probe 19/19 · _m33_probe 56/56
 _m37_probe 24/24（无尽修复） · _m38_probe 18/18（QoL 第一批）
 _m39_probe 24/24（商人批量/口令导出/备份历史） · _m40_probe 14/14（地图窗/字号/手机触控）
 _m43_probe 8/8（行动后滚动不跳顶） · _m45_probe 7/7（探索页不再重复卡片）
-_m46_probe 32/32（全站重复内容扫查：9 页签 + 商人弹窗）
-单测 597/597（42 文件）
+_m46_probe 32/32（全站重复内容扫查：9 页签 + 商人弹窗） · _m53_probe 26/26（其它页签卡片语言统一）
+单测 601/601（42 文件）
 ```
 
 > ⚠️ **基线要在干净 origin 上量**（新端口 = 空 localStorage）。对着线上跑会因"共用长命 profile + 真实存档"
@@ -327,6 +336,6 @@ cd E:\Files\bobbychina-pages; git add -A; git commit -m "[AI] M3x 同步：…";
 2. **M33 第三批**：第 3~6 章（章节表已留好 `ready:false` 的位置，补 objectives + preset 即可）。
 3. **构建产物/上线**：`npm run build` + `node tools/sync-site.mjs` 要在**工作区没有别人未提交的源码**时做
    （或用 `git worktree` + junction `node_modules` 从 HEAD 干净构建再拷产物回来）——否则会把别人的半成品一起发上线。
-4. 之后可选：P3 视觉统一（技能页/弹药台还是 legacy 皮）、M32 遗留的"145%/160% 地图区内部滚动"。
+4. 之后可选：M32 遗留的"145%/160% 地图区内部滚动"、死亡结算细节、辐射白天症状。
 5. 收尾时按 §7 写日记（2026-09-15 那条已经写到 M33，跨天再新开），并可顺手 `update_user_profile`
    （用户偏好：先给结果、要证据、别客套）。
