@@ -3,12 +3,14 @@
 // M25 例外：辐射的分档/累积公式在 src/v4/rad-core.ts（纯逻辑、可单测），这里只 import 公式，不重复实现。
 import { radTier, radGain, radLevelAt, radProtect, RAD_SOURCES, geigerText } from '../v4/rad-core';
 import { CALIBERS, penMul, ammoTable, pickLoadedAmmo, ammoShortName, resolveAmmoId, legacyAmmoFold } from '../v4/ammo-core';
-import { MERCHANT_GOODS, badShopRows, shopPrice, ammoShopRows, buyPlan } from '../v4/shop-core';   // M32b/M39：货架（弹药按口径卖）+ 坏货架兜底 + 批量购买
+import { MERCHANT_GOODS, badShopRows, shopPrice, ammoShopRows, buyPlan,
+  sellPlan, sellValue, sellBatchPlan, sellBlockReason, canSell, ITEM_BASE, SELL_RATE } from '../v4/shop-core';   // M32b/M39：货架（弹药按口径卖）+ 坏货架兜底 + 批量购买；M44：收购（把多余的东西卖回去）
 import { apCapOf, fitnessApBonus, phaseOf, PHASE_LABEL } from '../v4/night-core';   // M25.2：行动力上限（睡眠债 + 体能）；M25.3：白昼曲线
 import { resumeFromOver, endDayLabel, endGoalChip, overHint } from '../v4/endless-core';   // M37：无尽模式（通关后继续）的纯逻辑
 import { filterTabs, filterInv, dropCount, depositCount, quickSlots, quickPick, BAG_FILTERS, type BagFilter } from '../v4/qol-core';   // M38：背包筛选/分批丢弃·存入 + 补给快捷键
 import { exportSaveText, importSaveText, parsePortText, portSummary, passphraseIssue, passphraseWeak, portSizeKb, portFileName, PORT_MAGIC } from '../v4/save-port-core';   // M39：口令加密导出/导入
 import { backupLabel, BACKUP_SLOTS } from '../v4/backup-core';   // M39：备份历史（标签与份数）
+import { snapshotScroll, restoreScroll, keepOffsets, shouldStickToBottom } from '../v4/scroll-keep';   // M43：刷新时保住滚动位置
 
 
 /* ═══════════ legacy/00-data.js ═══════════ */
@@ -1315,17 +1317,47 @@ function addXP(sk, amt){
 }
 
 /* ───────────── 日志 ───────────── */
+/** M43：上一次写日志时面板是不是贴着底部（挂 MutationObserver 用；玩家往上翻就置 false，绝不再动他） */
+let logSticky = true;
 function log(msg, type){
   type = type || 'narrative';
   const el = document.createElement('div');
   el.className = 'le ' + type;
   el.textContent = msg;
   const box = $('#log');
+  /* M43：只有**本来就在底部**时才自动跟着最新一行往下滚。玩家手动往上翻看剧情的时候，
+     每来一行新日志都把他拽回底部，和"主区域跳回顶部"是同一类烦人（一起修了）。 */
+  const stick = shouldStickToBottom(box);
+  logSticky = stick;                                   // 供 MutationObserver 判断"能不能跟着滚"
   box.appendChild(el);
   while(box.children.length > 260) box.removeChild(box.firstChild);
-  box.scrollTop = box.scrollHeight;
+  if(stick){
+    box.scrollTop = box.scrollHeight;
+    /* 刚 append 的那一行要等布局才算进 scrollHeight（上面那句其实还差一行），而且字号/换行可能再晚一点才定 ——
+       下一帧、80ms、300ms 各补一次。**守卫是"还贴着底部"（差 ≤60px）**：玩家一旦往上翻就彻底不碰他。 */
+    const pin = (tries = 0) => { try{
+      const b = $('#log'); if(!b) return;
+      if(b.scrollHeight - b.scrollTop - b.clientHeight > 60) return;   // 玩家往上翻了：立刻停手
+      b.scrollTop = b.scrollHeight;
+      if(tries < 12) requestAnimationFrame(() => pin(tries + 1));      // 内容晚一点长高也补得上（约 200ms 内）
+    }catch(_){} };
+    try{ requestAnimationFrame(pin); setTimeout(pin, 80); setTimeout(pin, 300); attachLogStick(); }catch(_){}
+  }
   S.logBuf.push([type, msg]);
   if(S.logBuf.length > 90) S.logBuf.shift();
+}
+/* M43：日志内容可能在补底之后才真正长高（换行、字体度量），所以除了那三次定时补底，
+   再挂一个 MutationObserver：只要**玩家还贴着底部**（logSticky）就把面板补到最新一行。
+   玩家一旦往上翻，logSticky=false，这里就彻底不动他。 */
+let logStickObs = null;
+function attachLogStick(){
+  const box = $('#log');
+  if(!box || logStickObs || typeof MutationObserver === "undefined") return;
+  logStickObs = new MutationObserver(() => {
+    if(!logSticky) return;
+    requestAnimationFrame(() => { const b = $('#log'); if(b && b.scrollHeight - b.scrollTop - b.clientHeight <= 60) b.scrollTop = b.scrollHeight; });
+  });
+  logStickObs.observe(box, { childList: true });
 }
 function clearLog(){ $('#log').innerHTML = ''; }
 function replayLog(){
@@ -1776,13 +1808,20 @@ function render(){
   try{
     renderTop(); renderHud(); renderTabs();
     const v = $('#view');
+    /* M43：同页签的自动刷新（每次搜刮/休整/制作都会走这里）不该把滚动条拽回顶上 ——
+       玩家滚到「采集 / 水体 / 菜园 / 今夜」点一下，屏幕一跳回顶部，等于每一步都要重新滚
+       （用户报障：「为啥每次行动后滚动会自动回到顶上，这不方便」）。
+       规则：**换页签**才回顶部；同一页签刷新则还原原来的偏移（内容变短由浏览器自己夹住）。 */
+    const tabChanged = v.dataset.tab !== S.tab;
+    const snap = snapshotScroll();
     /* M31：人体状态页是 v4 那边渲染的（分页 + SVG 方块人形）。挂载失败不能让整屏挂掉，
        所以单独 try/catch，失败就退回探索页。 */
     let v4tab = null;
     try{ v4tab = (window.V4Medical && window.V4Medical.renderTab) ? window.V4Medical.renderTab(S.tab) : null; }catch(e){ console.warn('[v4] 人体页渲染失败', e); v4tab = null; }
     const f = { explore:renderExplore, base:renderBase, inv:renderInv, craft:renderCraft, skills:renderSkills, quest:renderQuest, codex:renderCodex, stats:renderStats }[S.tab] || renderExplore;
     v.innerHTML = (v4tab !== null && v4tab !== undefined) ? v4tab : f();
-    v.scrollTop = 0;
+    v.dataset.tab = S.tab;
+    restoreScroll(keepOffsets(snap, { resetView: tabChanged }), { skip: tabChanged ? ['#v4cards', '.v4world .wmapwrap'] : [] });
     window.__renderErr = null;
   }catch(e){
     // C01 护栏：渲染崩了也不能白屏，更不能让 autosave 把坏状态写进唯一键位
