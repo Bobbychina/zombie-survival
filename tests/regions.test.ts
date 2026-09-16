@@ -117,9 +117,19 @@ describe('M17 危险度辐射梯度（评审 #2 的核心）', () => {
 
   it('主城是"安全区"，最外圈至少危险 4（不会出现"角落很安全"）', () => {
     expect(dangerLabel(home.tier)).toBe('安全区');
-    const outer = T.filter(r => r.dist >= maxDist - 1 && r.type !== 'water');
-    expect(outer.length).toBeGreaterThan(2);
-    for (const r of outer) expect(r.tier, r.name + ' 危险 ' + r.tier).toBeGreaterThanOrEqual(4);
+    /* M51b：M28 起危险度是噪声场，"离主城 maxDist-1 圈"不再保证每一格都 ≥4
+       （那样等于把最外两圈钉死在 4/5，正是"太像同心圆"的来源）。
+       现在的口径：**最外一整圈（dist = maxDist）≥4**，**外两圈一律 ≥3**（收尾不变量的地板
+       会向内衰减一格，所以这条是设计保证），另外外两圈平均 ≥4。 */
+    const outerMost = T.filter(r => r.dist >= maxDist && r.type !== 'water');
+    expect(outerMost.length).toBeGreaterThan(0);
+    for (const r of outerMost) expect(r.tier, r.name + ' 危险 ' + r.tier).toBeGreaterThanOrEqual(4);
+    const outer2 = T.filter(r => r.dist >= maxDist - 1 && r.type !== 'water');
+    expect(outer2.length).toBeGreaterThan(2);
+    for (const r of outer2) expect(r.tier, r.name + ' 危险 ' + r.tier).toBeGreaterThanOrEqual(3);
+    /* 平均值留一条回归线（实测 3.84；M28 那版是 ≥4 的铁律，代价是最外两圈被钉死成 4/5 ——
+       那正是"太像同心圆"的来源）。这里要的是"外圈整体仍然危险"，不是"每一格都是 4"。 */
+    expect(outer2.reduce((a, r) => a + r.tier, 0) / outer2.length).toBeGreaterThanOrEqual(3.5);
     // 全图要真的用满 1..5 档，不能"最高只有 3"
     expect(Math.max(...T.map(r => r.tier))).toBe(5);
   });
@@ -145,13 +155,28 @@ describe('M17 危险度辐射梯度（评审 #2 的核心）', () => {
     }
   });
 
-  it('同环内的差异有来源（地形加成），不是纯随机：军事区不比同环居民区更安全', () => {
-    const mil = T.filter(r => r.type === 'military');
-    expect(mil.length).toBeGreaterThan(0);
-    for (const m of mil) {
-      const sameRing = T.filter(r => r.dist === m.dist && r.id !== m.id && r.type === 'residential');
-      if (sameRing.length) expect(m.tier).toBeGreaterThanOrEqual(sameRing[0].tier);
+  it('同环内的差异是"噪声形状"，不是地形加成也不是纯随机（M51b 改判）', () => {
+    /* M17 那版同环内的差异来自"军事/水域 +1"，M28 起改成柏林噪声场 —— 这条断言的前提没了。
+       M51b 把它改成钉新契约：同环内**确实有差异**（不再是"一圈一个数"），
+       而差异是**成片的**（噪声场），不是雪花点。 */
+    let ringsWithVariety = 0, midRings = 0;
+    for (let d = 3; d <= maxDist - 1; d++) {
+      const v = T.filter(r => r.dist === d).map(r => r.tier);
+      if (v.length < 4) continue;
+      midRings++;
+      if (new Set(v).size >= 2) ringsWithVariety++;
     }
+    expect(ringsWithVariety).toBeGreaterThanOrEqual(Math.ceil(midRings * 0.6));
+    const safe = new Set(T.filter(r => r.dist <= 1).map(r => r.id));
+    let withPeer = 0, total = 0;
+    for (const r of T) {
+      if (safe.has(r.id)) continue;
+      total++;
+      const same = T.filter(x => x.id !== r.id && x.tier === r.tier
+        && Math.max(Math.abs(x.col - r.col), Math.abs(x.row - r.row)) <= 1);
+      if (same.length) withPeer++;
+    }
+    expect(withPeer / total, '同档位的格子绝大多数都与同档邻居挨着（成片，不是噪点）').toBeGreaterThan(0.9);
   });
 });
 

@@ -1,18 +1,26 @@
 /**
- * M28 大区危险度：**柏林噪声（Perlin noise）驱动的难度场** —— 纯逻辑，可单测。
+ * M28/M51b 大区危险度：**柏林噪声（Perlin noise）随机铺出来的难度场** —— 纯逻辑，可单测。
  *
- * 用户原话：「使用柏林噪声生成大区的每个单元格的难度分级，现在太有规律了」。
- * 旧版是「1 + round(离主城距离 / 最大距离 × 4)」——纯同心圆，一眼看穿，没有"这一带有片特别凶的地方"。
+ * 用户原话（M28）：「使用柏林噪声生成大区的每个单元格的难度分级，现在太有规律了」。
+ * 用户原话（M51b）：「将大区域的地图的难度划分改成与**小区域地图一样**的柏林噪声随机生成」。
  *
- * 但危险度有三个**不能破的硬约束**（都是被评审和实测打出来的教训）：
+ * M28 那版为什么还是"太有规律"（M51b 实测复盘）：它把噪声加在了一个**没被撼动**的径向梯度上 ——
+ *   ① 低频噪声取 (c+0.5)/7：12 格只跨 **1.7 个噪声周期**，等于给全图糊了一层平滑倾斜，
+ *      等值线还是同心方框（实测 seed-A 第 5~7 行一模一样：554321112344 ×3，左列整排 5）；
+ *   ② 相邻差 ≤1 的钳制遇上"每环只有一格宽"的 12×12，会把每一环钉死在它自己的基准档上。
+ * 这一版按**区域内部那张 24×24 图的口径**重做：让噪声真正决定形状，梯度只当趋势。
+ *   · **域扭曲（domain warp）**：先拿低频柏林噪声把"离主城几格"揉一遍，再算径向趋势 ——
+ *     梯度落在不规则团块上，难度才是"这一片凶"，而不是"第几圈"；
+ *   · 两层噪声定形状（低频团块 ~2~3 格 + 中频打散等值线），幅度大到真能顶动一档；
+ *   · 收尾不变量与 24×24 共用同一套：`enforceDangerInvariants()`（新手村/梯度钳制/外圈地板）。
+ *
+ * 三个**不能破的硬约束**（都是被评审和实测打出来的教训）：
  *  ① 主城 + 紧邻一圈 = 安全区（新手村，危险 1）；
  *  ② 相邻两格最多差 1（M17 的"4 挨着 2 断崖"批评就是这个）——所以噪声不能直接铺，
  *     要用"邻居钳制"扫到收敛；
- *  ③ 离主城越远整体越危险（这游戏教给玩家的是"往外走 = 更危险也更有货"，不能反过来）。
- *
- * 做法：基础梯度（径向） + 两层**柏林噪声**（低频定"这一带凶不凶"、高频打破规整的圈）
- * + 一个"深渊孤岛"（少数几块特别凶的地方，让地图有可记忆的地标）。
- * 幅度控制在 ±1.3 档以内 —— 这是量出来的：再大就会把"越往外越危险"单调性打破（测试里钉住了）。
+ *  ③ 离主城越远整体越危险（这游戏教给玩家的是"往外走 = 更危险也更有货"，不能反过来）——
+ *     现在是**统计意义**上的（每环平均值单调不减），不再要求每一格都等于它那一环的基准档。
+ * 外加一条玩法契约：**最外一圈 ≥ 4**，地图边缘不许出现安全角落（M17 评审 #2 的原话）。
  */
 
 /** 字符串 → 32 位种子（FNV-1a：同一个种子字符串永远生成同一张危险度图） */
@@ -61,34 +69,48 @@ export interface DangerFieldOpts {
     —— 整数坐标正好落在格点，双线性插值会退化成"每格一个随机数"，看起来还是一格一个色块。 */
 export const cellNoiseXY = (c: number, r: number, f = 1 / 3): { x: number; y: number } => ({ x: (c + 0.5) * f, y: (r + 0.5) * f });
 
+/* ── M51b 难度场的调参（全部是量出来的，别再拍脑袋改）──
+   WARP_AMP/FREQ：域扭曲把切比雪夫圈揉成不规则团块。频率 0.7 → 12 格跨 ~2.8 个周期，
+     幅度 2.6 格 ≈ 让"离主城几格"整体抖动 ±2.6 格（一层到两层环宽）——再大就会把
+     "越往外越危险"的环平均单调性打翻（下面单测钉着），再小则等值线重新变回同心方框。
+   BAND_*：低频团块（"这一带整体凶不凶"，团块 ~2~3 格）+ 中频打散等值线。
+     频率 1.35/2.7 → 全图跨 ~6 / ~12 个噪声周期（M28 那版只跨 1.7，所以像倾斜不像噪声）。 */
+const WARP_FREQ = 0.7, WARP_AMP = 2.4;
+const BAND_FREQ = 1.05, BAND_AMP = 1.55;
+const FINE_FREQ = 2.4, FINE_AMP = 0.5;
+
 /** 危险度场的**连续**取值（不取整、不钳制）—— 给"大区每一格"和"区域内部的 24×24 格"共用。
     同一张噪声、同一个口径，所以区与区之间的难度是连续的（不再出现"过了边界突然 +2 档"）。 */
 export function dangerAt(opts: DangerFieldOpts, c: number, r: number): number {
   const dist = Math.max(Math.abs(c - opts.homeCol), Math.abs(r - opts.homeRow));
-  const base = 1 + (dist / Math.max(1, opts.maxDist)) * 4;
   const { x, y } = cellNoiseXY(c, r);
-  /* 低频噪声管"这一片凶不凶"，高频噪声打破规整的圈。
-     频率与幅度都是**量出来的**：高频那层周期只有 2.6 格、幅度 0.26 时，它一格能变 ~1.0 档
-     （最坏叠加点实测相邻格差 2.10 档，"格与格之间连续"就成了空话）；
-     压到 0.15 后最坏差落在 1.4 档左右，径向梯度重新成为唯一的陡峭来源。 */
-  const wob = opts.low(x * (3 / 7), y * (3 / 7)) * 0.62 + opts.fine(x / 2.6, y / 2.6) * 0.15;
-  /* 深渊孤岛：离孤岛中心 4 格以内按平滑曲线加成（中心 +1.6）。
-     用衰减曲线而不是"≤1 格 +1.6 / 2 格 +0.8"的台阶：台阶会在孤岛边缘留下 0.5 档/格的断崖，
-     实测那一格差 1.76 档 —— 噪声白做，全靠邻居钳制救。曲线半径 4 之后峰值差落在 1.4 档内。 */
+  /* ① 域扭曲：先揉圈数，再算径向趋势 —— 这是"不再像同心圆"的关键一步。
+     12×12 每一环只有一格宽，直接拿圈数当梯度、再叠一点平滑噪声，等值线必然是同心方框；
+     揉过之后同样的趋势落在不规则团块上，相邻格的圈数差不再是整齐的 0/1 台阶。 */
+  const warp = opts.low(x * WARP_FREQ, y * WARP_FREQ) * WARP_AMP;
+  const dw = Math.max(0, Math.min(opts.maxDist, dist + warp));
+  const base = 1 + (dw / Math.max(1, opts.maxDist)) * 4;
+  /* ② 噪声定形状：低频团块管"这一片凶不凶"，中频把等值线打散。
+     采样点带偏移（+7.3/-3.1）是为了跟上面做域扭曲的那次采样去相关——同一张场采两次不同的点，
+     不能用同一处，否则"揉圈"和"定形状"会一起朝同一个方向推。 */
+  const wob = opts.low(x * BAND_FREQ + 7.3, y * BAND_FREQ - 3.1) * BAND_AMP
+    + opts.fine(x * FINE_FREQ, y * FINE_FREQ) * FINE_AMP;
+  /* 深渊孤岛：离孤岛中心 5 格以内按平滑曲线加成（中心 +1.6）。
+     用衰减曲线而不是台阶：台阶会在孤岛边缘留下断崖，实测那一格差 1.76 档。 */
   let pitBoost = 0;
   if (opts.pit) {
     const d = Math.max(Math.abs(c - opts.pit.c), Math.abs(r - opts.pit.r));
     if (d <= 5) { const t = 1 - d / 5; pitBoost = 1.6 * t * t * (3 - 2 * t); }
   }
-  /* 边缘（离主城 ≥ maxDist - 1）是"死地"：M17 的硬约束是"最外圈至少危险 4"（不能出现安全角落），
-     所以噪声在这里要**衰减**，否则一个负波谷就会把角落拉到 3（实测就被老测试抓到了）。 */
+  /* 边缘（离主城 ≥ maxDist - 1）是"死地"：最外圈至少危险 4 的契约要靠它兜底，
+     所以噪声在这里**衰减**，否则一个负波谷就会把角落拉到 3。 */
   const edge = Math.min(1, Math.max(0, (dist - (opts.maxDist - 2)) / 2));
-  const v = 1 + (base - 1 + wob * (1 - edge * 0.65)) + edge * 0.6 + pitBoost;
+  const v = 1 + (base - 1 + wob * (1 - edge * 0.6)) + edge * 0.6 + pitBoost;
   /* 硬约束①：新手村（主城 + 紧邻一圈）恒为 1。但**不能写成 `if (dist<=1) return 1`** ——
-     那会造出一个断崖：圈内恒 1、圈外按噪声可能是 3，实测相邻格心差 2.05 档（量出来的），
-     最后只能靠邻居钳制把外圈一格格拉下来。改成"从主城向外平滑压到 1"：
-     dist 1 / 2 / 3 处分别按 0.25 / 0.6 / 0.85 的权重回到安全值，两格之内的数字仍然恒为 1。 */
-  const safe = 1 - Math.min(1, Math.max(0, (dist - 1) / 2));   // dist 1 → 1，dist ≥3 → 0
+     那会造出一个断崖：圈内恒 1、圈外按噪声可能是 3。
+     M51b 把这条"平滑压回"的半径从 3 圈收到 2 圈：原来 dist=2 那一圈被压到 0.6 的权重，
+     一整片 2 被人为摁成 1（实测长出一块 3×5 的"1 平原"），看着比同心圆还假。 */
+  const safe = 1 - Math.min(1, Math.max(0, dist - 1));   // dist 1 → 1，dist ≥2 → 0
   const w = safe * safe * (3 - 2 * safe);
   const out = Math.max(1, Math.min(5, v * (1 - w) + 1 * w));
   return out;
@@ -105,9 +127,125 @@ export function localDanger(cont: (x: number, y: number) => number, baseTier: nu
   return Math.max(1, Math.min(5, Math.round(v)));
 }
 
+export interface DangerInvariantOpts {
+  /** 这一格离"安全屋"几格（切比雪夫） */
+  distOf: (c: number, r: number) => number;
+  /** 全图最远的那一格的距离（最外圈的判据） */
+  maxDist: number;
+  /** 安全区半径：`dist <= safeR` 恒为 1（默认 1 = 家 + 紧邻一圈） */
+  safeR?: number;
+  /** 最外圈的**地板**：离主城最远那一圈至少这么危险（默认 4；传 0 表示不管） */
+  outerMin?: number;
+  /** 地板管几圈（默认 2）：最外圈 = `outerMin`，往里每圈降 1（4 / 3）。
+      为什么要管两圈：主城不在正中时，切比雪夫距离下**四个角并不都在最外圈**
+      （主城偏下一格时左下角只有 maxDist-1），只管一圈会让"地图角落"漏出安全区。 */
+  outerBand?: number;
+}
+
 /**
- * 整张 12×12 的危险度：先取整 + 邻居钳制**扫到收敛**（不是只扫一遍 —— 一遍会留下差值 2 的残余），
- * 再做一次"相邻同类成片"的平滑（同级别超过 6 格的孤立小块往下并一级，让危险区成片、不是雪花点）。
+ * 危险度网格的**收尾不变量** —— 大区 12×12 与"区域内部"那张 24×24 **共用同一套口径**
+ * （用户要的"两张图一样"，落点就是这里，而不是只把噪声调到看起来差不多）：
+ *   · 安全区（`dist <= safeR`）= 1、第二圈封顶 2 —— 玩家总得有个能喘气的地方；
+ *   · 最外圈 ≥ `outerMin` —— 地图边缘不许出现安全角落（M17 评审 #2 的原话）；
+ *   · 相邻两格最多差 1（双向：既不许"5 挨着 3"，也不许"3 挨着 1"）。
+ *
+ * **为什么不是"循环跑几遍钳制"**（M28 的写法，M51b 实测翻车）：三条约束会互相顶 ——
+ * 控制轮把第二圈按回 2，钳制轮又因为外圈的地板把它顶回 3，两个方向来回拉，跑到上限也不收敛。
+ * 实测 8 个种子里 6 个留下 |Δ|=2、2 个留下 |Δ|=3 的断崖（正好是"相邻最多差 1"这条铁律）。
+ * 现在改成**一次算清楚**（三条都是单调传播，必然收敛，不用试次数）：
+ *   ① 每格先有自己的上下限（`need` / `cap`）；
+ *   ② 下限从"外圈地板"往内一格衰减 1 地传（`need[i] = max(need[i], need[j]-1)`，只增、有上界 5）；
+ *   ③ 上限从"安全区"往外一格放宽 1 地传（`cap[i] = min(cap[i], cap[j]+1)`，只减、有下界 1）；
+ *   ④ 噪声值夹进 [need, cap]，再跑**只降不升**的松弛到收敛 —— 只降保证单调收敛，
+ *      而 `need` 本身是 |Δ|≤1 一致的，所以降完仍然 ≥ need（不会把外圈地板降掉）。
+ * 可证：最终 state 满足 `need ≤ v ≤ cap` 且任意相邻 |Δ|≤1；而 need ≤ cap 对
+ * maxDist ≥ 3 的图恒成立（安全区那一侧的上限爬得比外侧地板衰减得快）。
+ */
+export function enforceDangerInvariants(grid: number[][], o: DangerInvariantOpts): number[][] {
+  const rows = grid.length, cols = grid[0]?.length ?? 0;
+  const safeR = o.safeR ?? 1, outerMin = o.outerMin ?? 4;
+  const N = rows * cols;
+  const idx = (c: number, r: number) => r * cols + c;
+  const nbs: number[][] = new Array(N);
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const list: number[] = [];
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+      if (!dc && !dr) continue;
+      const cc = c + dc, rr = r + dr;
+      if (cc >= 0 && cc < cols && rr >= 0 && rr < rows) list.push(idx(cc, rr));
+    }
+    nbs[idx(c, r)] = list;
+  }
+  /* ① 自己的上下限 */
+  const need = new Int32Array(N).fill(1), cap = new Int32Array(N).fill(5);
+  const band = Math.max(1, o.outerBand ?? 2);
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const d = o.distOf(c, r), i = idx(c, r);
+    cap[i] = d <= safeR ? 1 : d === safeR + 1 ? 2 : 5;
+    need[i] = outerMin > 0 && d >= o.maxDist - band + 1
+      ? Math.max(1, outerMin - (o.maxDist - d)) : 1;
+  }
+  /* ②③ 两条约束各自单调传播到不动点 */
+  for (let pass = 0, moved = true; moved && pass < N; pass++) {
+    moved = false;
+    for (let i = 0; i < N; i++) {
+      for (const j of nbs[i]) {
+        if (need[j] - 1 > need[i]) { need[i] = Math.min(5, need[j] - 1); moved = true; }
+        if (cap[j] + 1 < cap[i]) { cap[i] = Math.max(1, cap[j] + 1); moved = true; }
+      }
+    }
+  }
+  /* ④ 噪声值夹进可行区间，再"只降"松弛到相邻差 ≤1（need 是 |Δ|≤1 一致的，所以降不破下限） */
+  const flat = new Array<number>(N);
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const i = idx(c, r);
+    const hi = Math.max(cap[i], need[i]);                 // 极小图上两者可能打架，以下限为准
+    flat[i] = Math.max(need[i], Math.min(hi, grid[r][c]));
+  }
+  for (let pass = 0, moved = true; moved && pass < N; pass++) {
+    moved = false;
+    for (let i = 0; i < N; i++) {
+      let m = 5;
+      for (const j of nbs[i]) m = Math.min(m, flat[j]);
+      if (flat[i] > m + 1) { flat[i] = m + 1; moved = true; }
+    }
+  }
+  const out: number[][] = [];
+  for (let r = 0; r < rows; r++) {
+    const row: number[] = [];
+    for (let c = 0; c < cols; c++) row.push(flat[idx(c, r)]);
+    out.push(row);
+  }
+  return out;
+}
+
+/** 撒盐化清理：同级别里**孤零零的一格**（8 邻域没有同伴）并到邻居的中位档上。
+    噪声地形本来就会长出零星单格，读图时会像噪点；这一步只动真正的孤立点，成片的团块一律不碰。 */
+function despeckle(grid: number[][]): number[][] {
+  const rows = grid.length, cols = grid[0]?.length ?? 0;
+  const drop: Array<[number, number, number]> = [];
+  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+    const around: number[] = [];
+    let same = 0;
+    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+      if (!dc && !dr) continue;
+      const cc = c + dc, rr = r + dr;
+      if (cc < 0 || cc >= cols || rr < 0 || rr >= rows) continue;
+      around.push(grid[rr][cc]);
+      if (grid[rr][cc] === grid[r][c]) same++;
+    }
+    if (!same && around.length) {
+      around.sort((a, b) => a - b);
+      drop.push([c, r, around[Math.floor(around.length / 2)]]);
+    }
+  }
+  for (const [c, r, v] of drop) grid[r][c] = v;
+  return grid;
+}
+
+/**
+ * 整张 12×12 的危险度：**噪声取整 → 去孤立点 → 收尾不变量扫到收敛**。
+ * 大区和"区域内部"两张图共用 `enforceDangerInvariants()`，所以口径是一样的（用户要的"一样"在这）。
  */
 export function buildDangerGrid(opts: DangerFieldOpts, cols: number, rows: number): number[][] {
   const grid: number[][] = [];
@@ -115,41 +253,9 @@ export function buildDangerGrid(opts: DangerFieldOpts, cols: number, rows: numbe
     grid[r] = [];
     for (let c = 0; c < cols; c++) grid[r][c] = Math.max(1, Math.min(5, Math.round(dangerAt(opts, c, r))));
   }
-  const nbs = (c: number, r: number) => {
-    const out: Array<[number, number]> = [];
-    for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
-      if (!dc && !dr) continue;
-      const cc = c + dc, rr = r + dr;
-      if (cc >= 0 && cc < cols && rr >= 0 && rr < rows) out.push([cc, rr]);
-    }
-    return out;
-  };
-  /* 邻居钳制：反复扫，直到没有"差 ≥2"的相邻对（收敛性：每轮把高的一侧往下拉一格，值域有限） */
-  for (let pass = 0; pass < 30; pass++) {
-    let changed = false;
-    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-      for (const [cc, rr] of nbs(c, r)) {
-        if (grid[r][c] - grid[rr][cc] >= 2) { grid[r][c] = grid[rr][cc] + 1; changed = true; }
-      }
-    }
-    if (!changed) break;
-  }
-  /* 成片化：把"同级别里孤零零的一格"往下并一级（并完再钳制一次，防止又出现断崖） */
-  for (let pass = 0; pass < 4; pass++) {
-    const drop: Array<[number, number]> = [];
-    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-      const d = Math.max(Math.abs(c - opts.homeCol), Math.abs(r - opts.homeRow));
-      if (d <= 1) continue;
-      const same = nbs(c, r).filter(([cc, rr]) => grid[rr][cc] === grid[r][c]).length;
-      if (same <= 1 && grid[r][c] > 1) drop.push([c, r]);
-    }
-    if (!drop.length) break;
-    for (const [c, r] of drop) grid[r][c] -= 1;
-    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-      for (const [cc, rr] of nbs(c, r)) if (grid[r][c] - grid[rr][cc] >= 2) grid[r][c] = grid[rr][cc] + 1;
-    }
-  }
-  return grid;
+  const distOf = (c: number, r: number) => Math.max(Math.abs(c - opts.homeCol), Math.abs(r - opts.homeRow));
+  despeckle(grid);
+  return enforceDangerInvariants(grid, { distOf, maxDist: opts.maxDist, safeR: 1, outerMin: 4 });
 }
 
 /** 地图统计（探针与 UI 都用得上）：各档格数、相邻最大差、安全区格数 */

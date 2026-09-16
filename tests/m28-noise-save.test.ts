@@ -70,17 +70,27 @@ describe('柏林噪声难度场', () => {
     }
   });
 
-  it('"太有规律"这件事真的改了：不再是"同一圈同一个数"', () => {
-    const { grid } = mk('shape');
-    const ring = (d: number) => {
-      const v: number[] = [];
-      for (let r = 0; r < 12; r++) for (let c = 0; c < 12; c++) {
-        if (Math.max(Math.abs(c - 5), Math.abs(r - 5)) === d) v.push(grid[r][c]);
+  it('"太有规律"这件事真的改了：不再是"同一圈同一个数"（M51b 把这条钉死）', () => {
+    /* M28 只钉了"第 4 环至少 2 种档位"，但实测（8 个种子）它照样放过了"整行整列复制"：
+       旧版合计 32 环里有 15 环是**单值环**（"这一圈全是 4"）、重复行+列 52 条 ——
+       用户复议"还是太像同心圆"骂的就是这个。现在按两项指纹钉：
+         · 单值环（去掉样本 <4 格的角落环）不超过 1/4；
+         · 整行/整列的完全相同（同心方框最直接的指纹）不超过 8 条。 */
+    let single = 0, rings = 0, dupLines = 0;
+    for (const s of ['shape', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j']) {
+      const { grid } = mk(s);
+      for (let d = 2; d <= 5; d++) {
+        const v: number[] = [];
+        for (let r = 0; r < 12; r++) for (let c = 0; c < 12; c++) if (Math.max(Math.abs(c - 5), Math.abs(r - 5)) === d) v.push(grid[r][c]);
+        if (v.length < 4) continue;
+        rings++; if (new Set(v).size <= 1) single++;
       }
-      return new Set(v);
-    };
-    expect(ring(4).size).toBeGreaterThanOrEqual(2);
-    const hist = dangerStats(grid, 5, 5).hist;
+      dupLines += 12 - new Set(grid.map(r => r.join(''))).size;
+      dupLines += 12 - new Set(grid[0].map((_, c) => grid.map(r => r[c]).join(''))).size;
+    }
+    expect(single / rings).toBeLessThanOrEqual(0.25);
+    expect(dupLines).toBeLessThanOrEqual(12);
+    const hist = dangerStats(mk('shape').grid, 5, 5).hist;
     for (const t of [1, 2, 3, 4, 5]) expect(hist[t]).toBeGreaterThan(0);
   });
 

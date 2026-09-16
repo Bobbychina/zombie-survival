@@ -18,6 +18,7 @@
 import seedrandom from 'seedrandom';
 import { createNoise2D } from 'simplex-noise';
 import { POIS } from './pois';
+import { enforceDangerInvariants } from './region-danger';   // M51b：两张图的危险度收尾口径共用这一份
 import { SUNKEN_MIN_DIST, SUNKEN_PER_WORLD } from './water-core';
 import type { Block, Biome, WorldState, Zone } from '../types';
 
@@ -549,30 +550,23 @@ export function generateWorld(seed: string, opts: GenOpts = {}): WorldState {
   /* ── 9) 收尾不变量（M19）：后面的步骤（POI 危险 +1、实验室 5、沉没基地 ≥4）会破坏前面的平滑，
      所以"越深越难"的两条硬规则必须**最后**再压一遍：
        · 相邻差 ≤1（梯度钳制）——"越深越难"要能一路走过去；
-       · 家的 3×3 = 1（安全区）——玩家总得有个能喘气的地方。
-     两者互相影响（钳制会把安全区边上抬起来），所以各跑几轮直到稳定。 */
-  for (let pass = 0; pass < 8; pass++) {
-    let changed = 0;
-    /* 顺序很关键：先按安全区，再钳制梯度。反过来（先钳制后按安全区）会留下
-       "安全圈边上还挂着 3"的台阶——最后一次操作必须是钳制，它不会破坏安全区
-       （安全圈外的邻居被钳到 ≤2，所以圈内那 1 站得住）。 */
-    for (const r of raws) if (d2home(r.b) <= 1 && r.b.danger !== 1) { r.b.danger = 1; changed++; }
-    /* 第二圈封在 2：不然"外面那一圈"会顶到 3，梯度钳制又会把安全圈抬起来，
-       两条不变量互相打架（实测过：安全圈边上挂着 3，对角那格被抬成 2）。 */
-    for (const r of raws) if (d2home(r.b) === 2 && r.b.danger > 2) { r.b.danger = 2; changed++; }
-    for (const r of raws) {
-      const b = r.b;
-      let lo = 5, hi = 1;
-      for (const [dx, dy] of NEIGHBORS) {
-        const nb = at(b.x + dx, b.y + dy);
-        if (!nb) continue;
-        lo = Math.min(lo, nb.b.danger); hi = Math.max(hi, nb.b.danger);
-      }
-      const clamped = Math.max(hi - 1, Math.min(lo + 1, b.danger));
-      if (clamped !== b.danger) { b.danger = clamped; changed++; }
-    }
-    if (!changed) break;
+       · 家的 3×3 = 1（安全区）、第二圈封在 2 ——玩家总得有个能喘气的地方。
+     M51b：这段和**大区那张 12×12 图**合并成同一份实现（`region-danger.enforceDangerInvariants`）——
+     用户要的是"大区地图照小区域地图那样用柏林噪声随机铺"，那两张图的收尾口径就必须是同一段代码，
+     而不是各写一份各调各的（原来两边都是"跑几遍钳制"，大区那边实测会两个方向互顶、跑到上限留下断崖）。
+     外圈地板这里传 0：区域内部的最外圈本来就由径向基准顶到 5，不需要额外地板。 */
+  const dGrid: number[][] = [];
+  for (let y = 0; y < WORLD_H; y++) {
+    const row: number[] = [];
+    for (let x = 0; x < WORLD_W; x++) row.push(raws[y * WORLD_W + x].b.danger);
+    dGrid.push(row);
   }
+  /* 注意：它**返回新网格**，不原地改（吃过一次亏：把没修过的 dGrid 写回去，等于整段没生效） */
+  const fixed = enforceDangerInvariants(dGrid, {
+    distOf: (c, r) => Math.max(Math.abs(c - home.x), Math.abs(r - home.y)),
+    maxDist, safeR: 1, outerMin: 0,
+  });
+  for (let y = 0; y < WORLD_H; y++) for (let x = 0; x < WORLD_W; x++) raws[y * WORLD_W + x].b.danger = fixed[y][x];
 
   return { seed, w: WORLD_W, h: WORLD_H, home, lab, blocks };
 }
