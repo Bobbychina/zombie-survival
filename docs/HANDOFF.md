@@ -175,17 +175,23 @@ tests/*.test.ts          vitest 单测（385 条）
 10. **合成触摸手势**：`Input.synthesizeScrollGesture` 在带 `touch-action` 的嵌套容器上实测**不动**
     （scrollLeft 一直 0）；要测"单指拖动"就用 `Input.dispatchTouchEvent` 手搓 touchStart → N×touchMove → touchEnd
     （并且 xDistance 方向要对：从右上往左下推 = scrollLeft 增大）。
-### 回归基线（2026-09-15 深夜实测，全部本地）
+### 回归基线（2026-09-16 本地干净 origin 8807 实测，全部通过）
 
 ```
-_m21_layout_probe 31/31 · _m25_probe 33/33 · _m26_res_probe（15 档分辨率表，问题组合为空）
+_m21_layout_probe 32/32 · _m25_probe 33/33 · _m26_res_probe（15 档分辨率表，errors: none）
 _m27_tutorial_probe 12/12 · _m29_probe 23/23 · _m30_probe 20/20 · _m31_probe 15/15
 _m32_probe 17/17 · _m32b_probe 19/19 · _m33_probe 56/56
 _m37_probe 24/24（无尽修复） · _m38_probe 18/18（QoL 第一批）
 _m39_probe 24/24（商人批量/口令导出/备份历史） · _m40_probe 14/14（地图窗/字号/手机触控）
 _m43_probe 8/8（行动后滚动不跳顶） · _m45_probe 7/7（探索页不再重复卡片）
+_m46_probe 32/32（全站重复内容扫查：9 页签 + 商人弹窗）
 单测 597/597（42 文件）
 ```
+
+> ⚠️ **基线要在干净 origin 上量**（新端口 = 空 localStorage）。对着线上跑会因"共用长命 profile + 真实存档"
+> 出 4 条假红（教程已看过 / 保险箱已有密钥 / 字号被别的探针留在 160% / 大区卡算不下），别把它当产品 bug。
+> ⚠️ **字号是本机偏好**（`zsv-ui-v1`，M40 起 `#view` 整体 zoom）：量布局的探针开场要连它一起锁回 100%。
+> 而且**清完必须重新加载** —— ui-scale 启动时就把偏好读进内存缓存，只删 localStorage 不重载等于白删（M47 实测栽过）。
 
 > 探针是**有状态**的（共用同一个浏览器 profile + 同一份存档）：读档会恢复"上次停在哪一页"，
 > 所以每套探针开头都该自己 `setTab('explore')` 之类的把前置条件摆好；换端口跑 = 换了 origin，

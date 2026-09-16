@@ -45,10 +45,13 @@ const pageUrl = url + (url.includes('?') ? '&' : '?') + 'dev=ready'
 await send('Emulation.setDeviceMetricsOverride', { width: 2048, height: 1105, deviceScaleFactor: 1, mobile: false })
 await send('Page.navigate', { url: pageUrl })
 await waitFor(`typeof DEV !== 'undefined'`)
-await ev(`['zombie_survival_save_v2','zsv_worlds_v1','zsv_ghosts_v1','zsv_runs_v1','dsh.mapmode','dsh.regionlayer'].forEach(k => localStorage.removeItem(k)); sessionStorage.clear(); 1`)
+await ev(`['zombie_survival_save_v2','zsv_worlds_v1','zsv_ghosts_v1','zsv_runs_v1','dsh.mapmode','dsh.regionlayer','zsv-ui-v1'].forEach(k => localStorage.removeItem(k)); sessionStorage.clear(); 1`)
 await send('Page.navigate', { url: pageUrl })
 await waitFor(`typeof DEV !== 'undefined'`)
 await sleep(1500)
+/* M47：字号是本机偏好，别的探针（M40/M44）会把它留在 160% —— 量"整页不滚 / 卡片墙"这类布局前先锁回默认档 */
+try { await ev(`(() => { try { window.V4Scale && V4Scale.setFs && V4Scale.setFs(100) } catch (e) {} return 1 })()`) } catch { /* 忽略 */ }
+await sleep(400)
 ok('DEV 钩子可用', (await ev(`typeof DEV !== 'undefined' && typeof DEV.state === 'function'`)) === true)
 
 /* ── 1) 整页不可滚：用户视口 2048×1105 及三档常见高度 ── */
@@ -77,13 +80,20 @@ await sleep(500)
 await tab('探索'); await sleep(900)
 const cols = JSON.parse(await ev(`(() => {
   const v = document.getElementById('view'), wr = document.getElementById('v4world'), cd = document.getElementById('v4cards')
-  const vr = v.getBoundingClientRect()
+  const vr = v.getBoundingClientRect(), de = document.scrollingElement
   return JSON.stringify({ viewScroll: v.scrollHeight > v.clientHeight + 1,
     worldScroll: wr.scrollHeight > wr.clientHeight + 1, cardsScroll: cd.scrollHeight > cd.clientHeight + 1,
-    worldInside: wr.getBoundingClientRect().bottom <= vr.bottom + 2, cardsInside: cd.getBoundingClientRect().bottom <= vr.bottom + 2 })
+    worldInside: wr.getBoundingClientRect().bottom <= vr.bottom + 2, cardsInside: cd.getBoundingClientRect().bottom <= vr.bottom + 2,
+    pageScroll: de.scrollHeight > de.clientHeight + 1,
+    cardsOverflowX: cd.scrollWidth > cd.clientWidth + 2 })
 })()`))
 ok('宽屏：地图列装得下（不再自己滚）且不顶出 #view', cols.worldInside === true && cols.worldScroll === false, JSON.stringify(cols))
-ok('宽屏：卡片墙在自己列里滚（不顶出 #view）', cols.cardsInside === true, 'cardsScroll=' + cols.cardsScroll)
+/* M47 改判：M25 那时是"地图钉左 / 卡片墙在右"的双列，卡片墙有自己的滚动条（cardsInside/cardsScroll 就是那个形状的代理）。
+   M32 把地图搬进悬浮窗、卡片墙改成整宽单列之后，卡片墙不再自滚 —— 它跟着 #view 一起滚（M43 的滚动保持也是这套）。
+   所以现在的契约是：**整页不滚**（页面不许被顶出）+ 卡片墙不横向溢出 + #view 内部滚得动。
+   （顺带锁字号：别的探针把 zsv-ui-v1.fs 留在 160% 会让这里量出的卡高整体 ×1.6 —— M47 已在本探针开场重置。） */
+ok('宽屏：卡片墙不顶出页面（整页不滚，滚动交给 #view）', cols.pageScroll === false && cols.cardsOverflowX === false,
+  `pageScroll=${cols.pageScroll} cardsInside=${cols.cardsInside} cardsScroll=${cols.cardsScroll} overflowX=${cols.cardsOverflowX} viewScroll=${cols.viewScroll}`)
 const fit = JSON.parse(await ev(`(() => {
   const card = document.getElementById('v4world')
   const grid = card.querySelector('.wgrid')

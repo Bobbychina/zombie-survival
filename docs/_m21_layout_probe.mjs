@@ -48,15 +48,26 @@ const waitFor = async (expr, ms = 30000) => {
 const goto = async () => { await send('Page.navigate', { url: pageUrl }); return waitFor(`typeof DEV !== 'undefined'`) }
 /* M40：地图摆法是**本机偏好**（M34 起默认悬浮窗），而本探针检查的全是"页内布局"（大区卡一屏装下、
    #view 里的卡片墙…）。不锁定摆法的话，上一次跑过的会话/别的探针把偏好留在 float，
-   这里量到的就是悬浮窗里的那张卡 → 假红（实测栽过一次）。固定成 inline，让判定重新有意义。 */
-const forceInlineMap = `(() => { try { window.V4Scale && V4Scale.setMapStyle && V4Scale.setMapStyle('inline') } catch (e) {} return 1 })()`
+   这里量到的就是悬浮窗里的那张卡 → 假红（实测栽过一次）。固定成 inline，让判定重新有意义。
+   M47：字号（`zsv-ui-v1.fs`）是同一类本机状态 —— 别的探针（M40/M44）把它留在 160% 之后，
+   #view 里的卡整体放大 1.6 倍，"一屏装下"必然算不成立 → 假红。这里连字号一起锁回默认档。 */
+const forceInlineMap = `(() => {
+  try { localStorage.removeItem('zsv-ui-v1') } catch (e) {}          /* fs 回默认 100% */
+  try { window.V4Scale && V4Scale.setFs && V4Scale.setFs(100) } catch (e) {}
+  try { window.V4Scale && V4Scale.setMapStyle && V4Scale.setMapStyle('inline') } catch (e) {}
+  return 1
+})()`
 const toExplore = `(() => { const b = [...document.querySelectorAll('.tab, button')].find(e => /探索/.test(e.textContent||'')); if (b) b.click(); return 1; })()`
 
-/* 干净起步 */
+/* 干净起步：连字号偏好一起清（`zsv-ui-v1`）——**清完必须重新加载**，
+   因为 ui-scale 模块启动时就把偏好读进内存缓存了，直接 setFs 只改内存里的那份，
+   后面任何一次 Page.navigate 又会从 localStorage 读回旧值（M47 实测：只删键不重载 = 白删）。 */
 await waitFor(`typeof DEV !== 'undefined'`)
-await ev(`['zombie_survival_save_v2','zsv_worlds_v1','zsv_ghosts_v1','zsv_runs_v1','dsh.mapmode','dsh.regionlayer'].forEach(k => localStorage.removeItem(k)); sessionStorage.clear(); 1`)
+await ev(`['zombie_survival_save_v2','zsv_worlds_v1','zsv_ghosts_v1','zsv_runs_v1','dsh.mapmode','dsh.regionlayer','zsv-ui-v1'].forEach(k => localStorage.removeItem(k)); sessionStorage.clear(); 1`)
 await goto()
+const fsStart = await ev(`(() => { try { return JSON.stringify(V4Scale.prefs()) } catch (e) { return 'EXC' } })()`)
 await ev(forceInlineMap); await sleep(900)
+ok('本机偏好已锁成默认（字号 100% + 页内地图）', /"fs":100/.test(String(fsStart)) && /"mapStyle":"inline"/.test(String(await ev(`(() => { try { return JSON.stringify(V4Scale.prefs()) } catch (e) { return 'EXC' } })()`))), 'start=' + fsStart)
 ok('DEV 钩子可用（含 scanRegion）', (await ev(`typeof DEV !== 'undefined' && typeof DEV.scanRegion === 'function' && !!DEV.localWorld`)) === true)
 await ev(toExplore); await sleep(600)
 
@@ -191,6 +202,7 @@ const reg = JSON.parse(await ev(`(() => {
   const vb = v.getBoundingClientRect(), cb = card.getBoundingClientRect(), db = det ? det.getBoundingClientRect() : null;
   const gb = go ? go.getBoundingClientRect() : null;
   return JSON.stringify({ cardH: Math.round(cb.height), viewH: Math.round(vb.height),
+    fs: (() => { try { return V4Scale.prefs().fs } catch (e) { return 'n/a' } })(),
     cardFits: Math.round(cb.bottom) <= Math.round(vb.bottom) + 1,
     detailVisible: db ? Math.round(db.bottom) <= Math.round(vb.bottom) + 1 : false,
     goVisible: gb ? (gb.bottom <= vb.bottom + 1 && gb.top >= vb.top) : false,
