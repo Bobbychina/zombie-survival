@@ -10,7 +10,7 @@ import { resumeFromOver, endDayLabel, endGoalChip, overHint } from '../v4/endles
 import { filterTabs, filterInv, dropCount, depositCount, quickSlots, quickPick, BAG_FILTERS, type BagFilter } from '../v4/qol-core';   // M38：背包筛选/分批丢弃·存入 + 补给快捷键
 import { exportSaveText, importSaveText, parsePortText, portSummary, passphraseIssue, passphraseWeak, portSizeKb, portFileName, PORT_MAGIC } from '../v4/save-port-core';   // M39：口令加密导出/导入
 import { backupLabel, BACKUP_SLOTS } from '../v4/backup-core';   // M39：备份历史（标签与份数）
-import { snapshotScroll, restoreScroll, keepOffsets, shouldStickToBottom } from '../v4/scroll-keep';   // M43：刷新时保住滚动位置
+import { snapshotScroll, restoreScroll, keepOffsets, shouldStickToBottom, nextLogFollow, isAwayKey, isBackKey } from '../v4/scroll-keep';   // M43：刷新时保住滚动位置；M49：日志跟随按玩家意图判
 
 
 /* ═══════════ legacy/00-data.js ═══════════ */
@@ -39,10 +39,7 @@ const ITEMS = {
   bandage:  {n:'绷带',      t:'med',   w:0.2, heal:15, cure:'bleed', cureWound:'bleed', desc:'止血、包扎，一次性。'},
   medkit:   {n:'急救包',    t:'med',   w:1.0, heal:50, cure:'bleed', cureWound:'bleed', desc:'缝合针、酒精、止痛药。'},
   painkiller:{n:'止痛药',   t:'med',   w:0.1, sta:45, heal:5, desc:'压住疼痛，让你还能跑。'},
-  anti:     {n:'抗生素',    t:'med',   w:0.1, infect:-25, cureWound:'sick', clearCond:'respiratory', desc:'压制体内病毒的增殖；呼吸道感染也靠它。'},
-  /* M50：真菌感染以前**没有药**（cure 文案里写着"抗真菌药"，可这件东西游戏里不存在，
-     玩家只能等湿度回落自己消退）。用户报障：「真菌感染…也无法治疗」。 */
-  fungicide:{n:'抗真菌药',  t:'med',   w:0.15, clearCond:'fungal', desc:'压制真菌感染——闷湿季里最值钱的一小盒。'},
+  anti:     {n:'抗生素',    t:'med',   w:0.1, infect:-25, cureWound:'sick', desc:'压制体内病毒的增殖。'},
   serum:    {n:'抗病毒血清',t:'med',   w:0.3, infect:-60, desc:'实验室级别的抑制剂，极稀有。'},
   antitoxin:{n:'解毒剂',    t:'med',   w:0.2, cure:'poison', desc:'中和毒素，别等到咳血。'},
   /* M31：人体伤病治疗链的新东西（急救 → 手术 → 康复）。
@@ -282,8 +279,6 @@ const RECIPES = [
   {out:'antitoxin', n:1, need:{chem:2, water:1},         st:'medlab', lv:1, desc:'用化学药剂中和毒素。'},
   {out:'iodine',   n:3, need:{chem:1, water:1},          st:'medlab', lv:1, desc:'碘片 ×3：进辐射区之前先吃。'},
   {out:'anti',     n:1, need:{chem:2, chip:1},           st:'medlab', lv:2, desc:'抗生素。'},
-  /* M50：抗真菌药 —— 闷湿季的续命药（原来只在文案里存在） */
-  {out:'fungicide',n:1, need:{chem:2, water:1},          st:'medlab', lv:1, desc:'抗真菌药：压住真菌感染，别让它拖成后遗症。'},
   {out:'radaway',  n:1, need:{chem:3, anti:1, water:1},  st:'medlab', lv:2, desc:'抗辐射药：把已经吃进去的放射核素排出去。'},
   {out:'serum',    n:1, need:{chem:3, anti:1, chip:1},   st:'medlab', lv:3, desc:'低配版病毒抑制剂。'},
   /* M31：人体伤病的手术器械（三件都在医疗台做） */
@@ -1322,53 +1317,113 @@ function addXP(sk, amt){
 }
 
 /* ───────────── 日志 ───────────── */
-/** M43：上一次写日志时面板是不是贴着底部（挂 MutationObserver 用；玩家往上翻就置 false，绝不再动他） */
-let logSticky = true;
+/* M49：跟不跟最新一行，看**玩家意图**（用户报障：「现场日志不知道为什么无法自动滚动」）。
+   旧逻辑（M43）是"写每一行之前量一下离底多远"——而 #log 是 scroll-behavior:smooth，
+   程序补底之后动画还在路上，这一量就是"离底两千多像素"，于是被当成"玩家往上翻了"，从此彻底不跟。
+   现在：玩家的动作（轮子/手指/PgUp）才关跟随；程序补底期间（260ms 窗口）的滚动事件不参与判断。 */
+let logFollow = true;        // 玩家是不是在跟最新一行（默认跟）
+let logFollowWhy = '';       // 上一次"关掉跟随"是谁干的（自测/探针取证用；跟着时是空串）
+let logPinUntil = 0;         // 这段时刻之前，日志面板的 scroll 事件算"我们自己滚的"
+function logAtBottom(slack){ const b = $('#log'); return !!b && shouldStickToBottom(b, slack === undefined ? 24 : slack); }
+/** 玩家意图 → 跟随开关（纯逻辑在 v4/scroll-keep.nextLogFollow） */
+function logFollowBy(ev, why){
+  const next = nextLogFollow(logFollow, ev);
+  if(logFollow && !next) logFollowWhy = why || 'unknown';     // 只在"被关掉"时记一笔（探针取证用）
+  if(next) logFollowWhy = '';
+  logFollow = next;
+}
+/** 面板粘到最新一行：只要还在跟随就一直补（smooth 动画没跑完也不怕） */
+function logPin(tries){
+  const b = $('#log'); if(!b || !logFollow) return;
+  b.scrollTop = b.scrollHeight;
+  logPinUntil = (typeof performance === 'object' && performance.now) ? performance.now() + 260 : 0;
+  if((tries || 0) < 12) requestAnimationFrame(() => logPin((tries || 0) + 1));
+}
+/** 给日志面板装"玩家意图"监听（只装一次）：轮子/手指/滚动条/键盘 + scroll 兜底 */
+function bindLogFollow(){
+  const box = $('#log');
+  if(!box || box.__followBound) return;
+  box.__followBound = true;
+  /* 只有"面板真的能滚"时，往上翻才算"去看历史"（内容比面板短的时候怎么拨都没得看，继续跟） */
+  const canScroll = () => box.scrollHeight - box.clientHeight > 4;
+  box.addEventListener('wheel', e => {
+    if((e.deltaY || 0) < 0 && canScroll()) logFollowBy({ userScrollingUp: true }, 'wheel');
+    /* 往下拨**不在这里判"到底了没有"**：smooth 动画还在路上时量位置一定偏上，会把"人已经滚回底部"
+       误判成"还在上面"（探针实测：滚回底部之后仍 d=178）。交给 scroll 监听按最终位置更新 —— 那才是真相。 */
+  }, { passive: true });
+  let lastY = 0;
+  box.addEventListener('touchstart', e => { lastY = (e.touches[0] || {}).clientY || 0; }, { passive: true });
+  box.addEventListener('touchmove', e => {
+    const y = (e.touches[0] || {}).clientY || 0;                     // 手指往下拖 = 在看更早的行
+    if(y - lastY > 2 && canScroll()) logFollowBy({ userScrollingUp: true }, 'touch');
+    lastY = y;
+  }, { passive: true });
+  box.addEventListener('mousedown', () => { logPinUntil = 0; });      // 拖滚动条：马上按真实位置判
+  box.addEventListener('keydown', e => {
+    if(isAwayKey(e.key) && canScroll()) logFollowBy({ userScrollingUp: true }, 'key:' + e.key);
+    /* PgDn/Down/End 同理：等滚动真的落到底部，由 scroll 监听把跟随打开 */
+  });
+  /* 其余滚动 = 玩家自己滚的（我们自己的补底在上面被时间戳挡掉了）：**等滚动落定 140ms 再判**。
+     途中就判会被 smooth 动画骗：动画还没跑完时量到的是"离底两千多像素"，于是"玩家明明滚回底部了"被判成"还在上面"，
+     跟随再也打不开（探针实测 d=178 卡在那里）。落定之后位置才是玩家真正停在的地方。 */
+  let settleTimer = 0;
+  let lastTop = box.scrollTop;
+  box.addEventListener('scroll', () => {
+    const top = box.scrollTop;
+    const movedUp = top < lastTop - 1;      // 往上走 = 玩家在翻历史（我们自己的补底只会往下走）
+    lastTop = top;
+    const inPin = logPinUntil && (typeof performance !== 'object' || !performance.now || performance.now() < logPinUntil);
+    if(inPin) return;                       // 补底窗口内一律不判：clearLog / 裁行 / render 还原都会让 scrollTop 往上跳
+                                            //（玩家真正的往上翻走输入事件那条路：轮子/触摸/键盘/拖滚动条，见上面）
+    if(movedUp) logFollowBy({ userScrollingUp: true }, 'scrollUp');   // 立刻停跟随：不给"下一行把我拽回去"留窗口
+    if(typeof setTimeout !== 'function'){ logFollowBy({ userAtBottom: logAtBottom(48) }); return; }
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(() => { logFollowBy({ userAtBottom: logAtBottom(48) }, 'settle'); }, 140);   // 落定后：真的回到底部就重新跟上
+  }, { passive: true });
+}
 function log(msg, type){
   type = type || 'narrative';
   const el = document.createElement('div');
   el.className = 'le ' + type;
   el.textContent = msg;
   const box = $('#log');
-  /* M43：只有**本来就在底部**时才自动跟着最新一行往下滚。玩家手动往上翻看剧情的时候，
-     每来一行新日志都把他拽回底部，和"主区域跳回顶部"是同一类烦人（一起修了）。 */
-  const stick = shouldStickToBottom(box);
-  logSticky = stick;                                   // 供 MutationObserver 判断"能不能跟着滚"
   box.appendChild(el);
-  while(box.children.length > 260) box.removeChild(box.firstChild);
-  if(stick){
-    box.scrollTop = box.scrollHeight;
-    /* 刚 append 的那一行要等布局才算进 scrollHeight（上面那句其实还差一行），而且字号/换行可能再晚一点才定 ——
-       下一帧、80ms、300ms 各补一次。**守卫是"还贴着底部"（差 ≤60px）**：玩家一旦往上翻就彻底不碰他。 */
-    const pin = (tries = 0) => { try{
-      const b = $('#log'); if(!b) return;
-      if(b.scrollHeight - b.scrollTop - b.clientHeight > 60) return;   // 玩家往上翻了：立刻停手
-      b.scrollTop = b.scrollHeight;
-      if(tries < 12) requestAnimationFrame(() => pin(tries + 1));      // 内容晚一点长高也补得上（约 200ms 内）
-    }catch(_){} };
-    try{ requestAnimationFrame(pin); setTimeout(pin, 80); setTimeout(pin, 300); attachLogStick(); }catch(_){}
+  while(box.children.length > 260){
+    box.removeChild(box.firstChild);
+    /* 裁掉最老那行会让 scrollTop 自己变小 —— 紧接着的 scroll 事件是"我们的"，不是玩家往上翻 */
+    if(typeof performance === 'object' && performance.now) logPinUntil = performance.now() + 120;
+  }
+  if(logFollow){
+    /* 刚 append 的那一行要等布局才算进 scrollHeight，字号/换行也可能再晚一点才定 —— 
+       下一帧、80ms、300ms 各补一次，再挂 MutationObserver 兜底（见下）。守卫是 logFollow（玩家意图），
+       **不再量距离**：量距离会被 smooth 动画骗到，那正是"日志不跟了"的根因。 */
+    try{ requestAnimationFrame(() => logPin(0)); setTimeout(() => logPin(12), 80); setTimeout(() => logPin(12), 300); attachLogStick(); }catch(_){}
   }
   S.logBuf.push([type, msg]);
   if(S.logBuf.length > 90) S.logBuf.shift();
 }
-/* M43：日志内容可能在补底之后才真正长高（换行、字体度量），所以除了那三次定时补底，
-   再挂一个 MutationObserver：只要**玩家还贴着底部**（logSticky）就把面板补到最新一行。
-   玩家一旦往上翻，logSticky=false，这里就彻底不动他。 */
+/* M49：内容可能在补底之后才真正长高（换行、字体度量），所以除了那几次补底，
+   再挂一个 MutationObserver：只要**玩家还在跟**（logFollow）就继续补到最新一行。
+   玩家一旦往上翻，logFollow=false，这里就彻底不动他。 */
 let logStickObs = null;
 function attachLogStick(){
+  bindLogFollow();
   const box = $('#log');
   if(!box || logStickObs || typeof MutationObserver === "undefined") return;
-  logStickObs = new MutationObserver(() => {
-    if(!logSticky) return;
-    requestAnimationFrame(() => { const b = $('#log'); if(b && b.scrollHeight - b.scrollTop - b.clientHeight <= 60) b.scrollTop = b.scrollHeight; });
-  });
+  logStickObs = new MutationObserver(() => { if(logFollow) requestAnimationFrame(() => logPin(12)); });
   logStickObs.observe(box, { childList: true });
 }
-function clearLog(){ $('#log').innerHTML = ''; }
+function clearLog(){
+  $('#log').innerHTML = '';          // 清空会让 scrollTop 自己掉回 0：那一下是我们的，不是玩家往上翻
+  logFollow = true;
+  if(typeof performance === 'object' && performance.now) logPinUntil = performance.now() + 200;   // 这一下是我们自己滚的
+}
 function replayLog(){
   const box = $('#log'); box.innerHTML = '';
   (S.logBuf || []).slice(-40).forEach(p => { const d = document.createElement('div'); d.className = 'le ' + p[0]; d.textContent = p[1]; box.appendChild(d); });
+  logFollow = true;
   box.scrollTop = box.scrollHeight;
+  if(typeof performance === 'object' && performance.now) logPinUntil = performance.now() + 200;   // 这一下是我们自己滚的
 }
 function hr(){ log('────────────────────────','system'); }
 
@@ -2682,12 +2737,6 @@ function useConsumable(id, inCombat){
   }
   if(it.cure && battle && battle.pSt[it.cure]){ battle.pSt[it.cure] = 0; notes.push('已解除' + (it.cure === 'bleed' ? '流血' : '中毒')); }
   if(it.cureWound && cureWound(it.cureWound)) notes.push('已处理' + WOUND_DEF[it.cureWound].n);
-  /* M50：抗生素 / 抗真菌药这类"治病的药"：顺手把对应的病症压下去（人体页那个按钮走的是同一条路） */
-  if(it.clearCond){
-    const sv5 = (typeof window.V4Survival === 'object' && window.V4Survival) ? window.V4Survival : null;
-    const cured = sv5 && sv5.treatByItem ? sv5.treatByItem(id) : null;
-    if(cured) notes.push('压住了' + cured);
-  }
   /* M30：湿度计 —— 看一眼未来三天的湿度走势（确定性：由种子+天数决定，和 env.ts 的翻日同一套） */
   if(it.forecast){
     const sv4 = (typeof window.V4Survival === 'object' && window.V4Survival) ? window.V4Survival : null;
@@ -3572,15 +3621,9 @@ function enterEndless(){
 /* ───────────── 图鉴 ───────────── */
 let codexCat = 'zombie';
 function renderCodex(){
-  /* M50：第 4 类「治疗指南」——原来贴在人体页右下角（用户：「把治疗指南移动到图鉴内」）。
-     内容由 v4 渲染（medical-core 的伤情表 + survival-core 的病症表），这里只留一个调用点。 */
-  const cats = [['zombie','🧟 丧尸'],['item','📦 物品'],['lore','📜 秘闻'],['guide','📘 治疗指南']];
+  const cats = [['zombie','🧟 丧尸'],['item','📦 物品'],['lore','📜 秘闻']];
   let h = '<div class="row" style="margin-bottom:10px">' + cats.map(c =>
     '<button class="btn sm ' + (codexCat === c[0] ? 'warn' : '') + '" onclick="codexCat=\'' + c[0] + '\';render()">' + c[1] + '</button>').join('') + '</div>';
-  if(codexCat === 'guide'){
-    h += window.__v4GuideHtml ? window.__v4GuideHtml() : '<p class="muted">治疗指南还没装载。</p>';
-    return h;
-  }
   if(codexCat === 'zombie'){
     h += '<div class="grid g2">';
     for(const k in ZOMBIES){
@@ -4096,6 +4139,8 @@ Object.assign(window, { VER, SAVE_KEY, V1_KEY, ITEMS, itemName, isWpn, ZOMBIES, 
   depositAll, setBagFilter, quickBarHtml,       // M38：背包批量存入/筛选切换 + 补给快捷条（内联 onclick）
   openSavePort, openBackupHistory, restoreHistory, exportHistory, deleteHistory,   // M39：口令导出/导入 + 备份历史（内联 onclick）
   radLevelAt, radGain, radProtect, RAD_SOURCES, geigerText, boot });
+Object.defineProperty(window, "logFollow", { get: function(){ return logFollow; }, set: function(v){ logFollow = v; }, configurable: true });
+Object.defineProperty(window, "logFollowWhy", { get: function(){ return logFollowWhy; }, configurable: true });
 Object.defineProperty(window, "bagFilter", { get: function(){ return bagFilter; }, set: function(v){ bagFilter = v; }, configurable: true });
 Object.defineProperty(window, "S", { get: function(){ return S; }, set: function(v){ S = v; }, configurable: true });
 Object.defineProperty(window, "battle", { get: function(){ return battle; }, set: function(v){ battle = v; }, configurable: true });
