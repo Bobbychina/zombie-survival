@@ -3664,6 +3664,100 @@ function merchantRate(){
   const trade = Math.min(.45, (S.skills.trade || 0) * .04 + (hasPerk('trade', 3) ? .10 : 0));
   return (1 + S.day * .02) * (1 - trade);
 }
+/* ── M44：收购（用户：「可以让用户将自己的多余物品出售给商人（收购价格比购买价格更低）」）──
+   买卖做成同一个弹窗的两个页签。回收价、能卖什么、批量怎么算全在 shop-core（纯逻辑、有单测），
+   这里只负责画出来 + 成交后刷新。三条已确认口径：回收价 = 买价 45% ／ 除剧情与身上装备外什么都能卖 ／
+   批量出售必须二次确认（材料不可逆）。 */
+let merchantTab = 'buy';
+function setMerchantTab(t){
+  const next = t === 'sell' ? 'sell' : 'buy';
+  if(next === merchantTab) return;
+  merchantTab = next;
+  closeAllModals(); openMerchant();      // 换页签 = 换页：回顶部（和主区域一个口径）
+}
+/** 身上穿的、手里拿的一律不卖（卖掉武器再打起来会很难看）——判据与营地那套一致 */
+function merchantEquipped(){ return Object.keys(S.eq).map(k => S.eq[k]).filter(Boolean); }
+/** 当前"卖"页签下能看到的物品（跟随背包那一套筛选条，和批量存入同一个口径） */
+function sellPool(){
+  const equipped = merchantEquipped();
+  const all = Object.keys(S.inv).filter(k => S.inv[k] > 0 && !!ITEMS[k] && canSell(k, ITEMS, equipped));
+  all.sort((a, b) => (ITEMS[a].t + a).localeCompare(ITEMS[b].t + b));
+  return filterInv(all, ITEMS, bagFilter);
+}
+/** 成交后重开弹窗：记住弹窗自己的滚动位置（.modal 就是滚动容器），别把玩家甩回顶部 */
+function refreshMerchant(){
+  const box = () => document.querySelector('#overlay-root .modal');
+  const top = (box() || {}).scrollTop || 0;
+  closeAllModals(); openMerchant(); render();
+  const back = () => { const m = box(); if(m) m.scrollTop = top; };
+  back(); try{ requestAnimationFrame(back); }catch(_){}
+}
+/** 一单成交的**唯一**入口：校验全过 sellPlan，UI 与批量都走它 */
+function sellItemCore(id, times){
+  const p = sellPlan(id, times, { have: itemCount(id), rate: merchantRate(), items: ITEMS, equipped: merchantEquipped() });
+  if(!p.times) return null;
+  if(!takeItem(id, p.times)) return null;        // 兜底：背包对不上账就整笔不成交，别白给材料
+  S.mat += p.total;
+  addXP('trade', 2 * p.times);                   // M24 承诺的"和商人买卖涨交易技能"：买的那一半在 M32b 补了，这是卖的一半
+  return p;
+}
+function sellMerchant(id, times){
+  const p = sellItemCore(id, times);
+  if(!p){ log('❌ ' + (sellBlockReason(id, ITEMS, merchantEquipped()) || '背包里没有这件东西。'), 'dim'); return; }
+  sfx('ui');
+  log('💰 卖掉 ' + itemName(id) + ' ×' + p.times + '，换回 ' + p.total + ' 材料。', 'loot');
+  autosave(); refreshMerchant();
+}
+/** 批量出售：先弹确认框（这一批是什么、几件、换多少），确认了才真卖 */
+function sellMerchantCat(){
+  const plan = sellBatchPlan(sellPool(), S.inv, { rate: merchantRate(), items: ITEMS, equipped: merchantEquipped() });
+  if(!plan.items){ log('❌ 这一类里没有能卖的东西。', 'dim'); return; }
+  const label = bagFilter === 'all' ? '全部能卖的' : '「' + ((BAG_FILTERS.find(f => f.id === bagFilter) || {}).label || bagFilter) + '」这一类';
+  const list = plan.ids.slice(0, 8).map(id => itemName(id) + '×' + (S.inv[id] || 0)).join('、') + (plan.ids.length > 8 ? ' 等' : '');
+  modal({ title:'💰 确认出售', sticky:true,
+    body:'<p class="muted">这一批是 ' + label + '：<b>' + plan.ids.length + ' 种 · ' + plan.items + ' 件</b>，回收 <b class="mono">+' + plan.total + ' 材料</b>。</p>' +
+      '<div class="hint">' + esc(list) + '</div>' +
+      '<div class="hint" style="margin-top:8px">卖出去就拿不回来了，回收价只有他卖价的 ' + Math.round(SELL_RATE * 100) + '%。确认要卖吗？</div>',
+    footer:'<button class="btn danger" onclick="sellMerchantCatGo()">确认全卖（+' + plan.total + ' 材料）</button>' +
+      '<button class="btn" data-close>再想想</button>' });
+}
+function sellMerchantCatGo(){
+  const plan = sellBatchPlan(sellPool(), S.inv, { rate: merchantRate(), items: ITEMS, equipped: merchantEquipped() });
+  if(!plan.items){ closeAllModals(); openMerchant(); return; }
+  let gain = 0, kinds = 0, cnt = 0;
+  plan.ids.forEach(id => { const p = sellItemCore(id, 'max'); if(!p) return; gain += p.total; cnt += p.times; kinds++; });
+  sfx('loot');
+  log('💰 一次卖掉 ' + kinds + ' 种 · ' + cnt + ' 件，换回 ' + gain + ' 材料。', 'loot');
+  autosave(); refreshMerchant();
+}
+/** 卖东西那半页：只列"能卖的"，每个物品「卖1」+「全卖×N」，底部是带二次确认的批量出售 */
+function sellPanelHtml(rate){
+  const all = Object.keys(S.inv).filter(k => S.inv[k] > 0 && !!ITEMS[k]);
+  const tabs = filterTabs(all.filter(k => canSell(k, ITEMS, merchantEquipped())), ITEMS);   // 筛选条只按"真的能卖的"计数（剧情 / 身上穿的类不该出现在这里）
+  const ids = sellPool();
+  const plan = sellBatchPlan(ids, S.inv, { rate, items: ITEMS, equipped: merchantEquipped() });
+  let h = '<p class="muted" style="margin-bottom:10px">"多出来的东西我也收——按行价给你，别指望我按卖价收。"</p>';
+  h += '<div class="row" style="margin-bottom:8px;flex-wrap:wrap;gap:4px">' +
+    tabs.map(t => '<button class="btn xs ' + (bagFilter === t.id ? 'warn' : 'ghost') + '" onclick="setBagFilter(\'' + t.id + '\')">' +
+      t.label + (t.id === 'all' ? '' : ' ' + t.n) + '</button>').join('') +
+    '<span class="spacer"></span>' +
+    (plan.items ? '<button class="btn xs warn" onclick="sellMerchantCat()">💰 ' + (bagFilter === 'all' ? '卖掉所有能卖的' : '把这一类全卖') + '（+' + plan.total + ' 材料）</button>' : '') +
+    '</div>';
+  if(!ids.length) h += '<p class="muted">背包里没有能卖的东西。<br><span class="hint">剧情道具、独一份的东西、身上穿的／手里拿的他都不收；换成营地或储物箱吧。</span></p>';
+  else h += '<div class="grid g2">' + ids.map(id => {
+    const it = ITEMS[id], n = itemCount(id);
+    const one = sellValue(id, 1, rate, ITEMS), allV = sellValue(id, n, rate, ITEMS);
+    return '<div class="lrow"><div><div class="nm">' + it.n + ' <span class="mono" style="color:var(--dim)">×' + n + '</span></div>' +
+      '<div class="ds">' + (it.desc || '') + '</div></div><div class="rt">' +
+      '<span class="tag ' + TYPE_TAG[it.t] + '">' + TYPE_LABEL[it.t] + '</span>' +
+      '<button class="btn xs ok" onclick="sellMerchant(\'' + id + '\',1)">卖1（+' + one + '）</button>' +
+      (n > 1 ? '<button class="btn xs danger" onclick="sellMerchant(\'' + id + '\',\'max\')">全卖×' + n + '（+' + allV + '）</button>' : '') +
+      '</div></div>';
+  }).join('') + '</div>';
+  h += '<div class="hint" style="margin-top:10px">回收价 = 他卖价的 <b class="mono">' + Math.round(SELL_RATE * 100) + '%</b>（汇率一涨一跌都跟着走，所以卖回去永远比买进来亏）。' +
+    '批量出售会先给你看清单再成交；「全卖×N」是这一种全清。<br>当前材料：<b class="mono">' + S.mat + '</b></div>';
+  return h;
+}
 function openMerchant(){
   if(S.over) return;
   const rate = merchantRate();
@@ -3689,12 +3783,18 @@ function openMerchant(){
   const ammoRows = MERCHANT.map((m, i) => ({ m, i })).filter(x => x.m.sec === 'ammo');
   const gearRows = MERCHANT.map((m, i) => ({ m, i })).filter(x => x.m.sec !== 'ammo');
   const cut = (t, list) => (list.length ? '<div class="sect-title">' + t + '</div>' + list.map(x => row(x.m, x.i)).join('') : '');
-  modal({ title:'🏪 神秘商人', body:'<p class="muted" style="margin-bottom:10px">"末日里最贵的不是子弹，是还能说话的人。看看货？"</p>' +
+  /* M44：买卖两个页签（同一个 popup 里）—— 标题行下面那一排就是切换；材料与汇率两边都看得到 */
+  const tabBtn = (id, label) => '<button class="btn sm ' + (merchantTab === id ? 'warn' : 'ghost') + '" onclick="setMerchantTab(\'' + id + '\')">' + label + '</button>';
+  const head = '<div class="row" style="margin-bottom:10px;flex-wrap:wrap;gap:6px">' + tabBtn('buy', '🛒 买') + tabBtn('sell', '💰 卖（收多余的东西）') +
+    '<span class="spacer"></span><span class="chip gold">🔩 材料 <b>' + S.mat + '</b></span>' +
+    '<span class="chip">汇率 ×' + rate.toFixed(2) + '</span></div>';
+  const buyBody = '<p class="muted" style="margin-bottom:10px">"末日里最贵的不是子弹，是还能说话的人。看看货？"</p>' +
     cut('🔩 弹药（按口径 · 穿透越高越贵）', ammoRows) + cut('🎒 物资与装备', gearRows) +
     '<div class="hint" style="margin-top:10px">今日汇率 <b class="mono">×' + rate.toFixed(2) + '</b>（每天 +2%：外面越乱，他越敢开价）· 每样货每天有量，卖完等明天 · 当前材料：<b class="mono">' + S.mat + '</b><br>' +
     '买到的弹药直接进背包的对应弹种：打装甲目标记得先换<b>穿甲弹</b>（背包 → 弹药 里装填）。<br>' +
     /* M39：批量购买 */
-    '要补货就按 <b>×N / 买满</b>：份数按你现在的材料和今天的库存实时算，一次补完（不会再点十几下）。</div>',
+    '要补货就按 <b>×N / 买满</b>：份数按你现在的材料和今天的库存实时算，一次补完（不会再点十几下）。</div>';
+  modal({ title:'🏪 神秘商人', body: head + (merchantTab === 'sell' ? sellPanelHtml(rate) : buyBody),
     footer:'<button class="btn" data-close>离开</button>' });
 }
 function buyMerchant(i, times){
@@ -3714,7 +3814,8 @@ function buyMerchant(i, times){
     (plan.times > 1 ? '（' + plan.times + ' 份 · -' + plan.total + ' 材料）' : '（-' + plan.total + ' 材料）'), 'loot');
   if(plan.reason) log('　 ' + plan.reason, 'dim');
   addXP('trade', 3 * plan.times);               // M24 承诺过"和商人买卖涨交易技能"，这里补上（按成交份数给）
-  closeAllModals(); openMerchant(); render(); autosave();
+  autosave();
+  refreshMerchant();                            // M44：重开弹窗但保住滚动位置（买卖各一次不再被甩回顶部）
 }
 
 /* ───────────── 菜单 / 帮助 ───────────── */
@@ -3778,7 +3879,7 @@ function openHelp(){
     '<b>战斗</b>：点敌人卡片切换目标；防御可减伤 55% 并回体力；投掷物对全体生效；霰弹枪吃弹快但单发最狠，步枪靠暴击。<br>' +
     '<b>装甲丧尸</b>：枪械伤害减半，用消防斧（破甲）或爆炸物。<br>' +
     '<b>防化服</b>：僵尸伤害 -40%，咬伤概率减半、咬伤带来的感染再 -25%——但它闷热笨重。<br>' +
-    '<b>商人</b>：他按行情开价，价格每天 +2%（界面上会显示"今日汇率"）。<br>' +
+    '<b>商人</b>：他按行情开价，价格每天 +2%（界面上会显示"今日汇率"）。多出来的东西也能卖给他——弹窗里切到「💰 卖」页签：<b>回收价 = 他卖价的 45%</b>（汇率两边一起走，所以卖回去永远比买进来亏），剧情道具、独一份的东西和身上穿的他不收。<br>' +
     '<b>深度搜索</b>：耗 2 行动力，材料效率与普通搜索持平，但更容易刷出稀有物品与秘闻。<br>' +
     '<b>主线</b>：7 个阶段，最后要下到方舟实验室第 7 层。通关后可进无尽模式。<br>' +
     '<b>委托板</b>：每晚刷新 3 张委托（其中 1 张指向当前主线），材料奖励受"当日赏金预算"封顶（9 + 天数÷2），不会凭空印材料。<br>' +
@@ -3932,6 +4033,8 @@ Object.assign(window, { VER, SAVE_KEY, V1_KEY, ITEMS, itemName, isWpn, ZOMBIES, 
   CALIBERS, AMMO_OF, ammoCount, loadedAmmo, setLoaded, cycleLoaded, penMul, radTier, apCapOf, fitnessApBonus, phaseOf, PHASE_LABEL,
   syncAmmo, materializeAmmoPool, ammoShopRows,   // M32b：弹药镜像收口 + 货架弹药段（验收探针直接调）
   shopPrice, buyPlan,                            // M39：货架报价与批量购买方案（验收探针直接调）
+  setMerchantTab, sellMerchant, sellMerchantCat, sellMerchantCatGo, merchantEquipped,   // M44：商人页签 + 卖东西（内联 onclick）
+  sellPlan, sellValue, sellBatchPlan, sellBlockReason, canSell, ITEM_BASE, SELL_RATE,   // M44：收购的纯逻辑（验收探针直接调）
   isLab,                                        // M33：教程沙盒（写盘守卫 + 菜单分岔都用它）
   depositAll, setBagFilter, quickBarHtml,       // M38：背包批量存入/筛选切换 + 补给快捷条（内联 onclick）
   openSavePort, openBackupHistory, restoreHistory, exportHistory, deleteHistory,   // M39：口令导出/导入 + 备份历史（内联 onclick）

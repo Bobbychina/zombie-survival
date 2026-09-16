@@ -2,6 +2,7 @@
    全部由 (seed, 区块坐标) 决定 → 同一个营地每次进都是同一批人、同一批货（可以用存档反复谈价）。 */
 import seedrandom from 'seedrandom';
 import type { Block, WorldState } from '../types';
+import { SELL_RATE } from './shop-core';   // M44：回收率只有一处（45%），商人与营地共用
 
 export type NpcRole = 'trader' | 'medic' | 'scout' | 'mechanic' | 'bandit' | 'refugee';
 
@@ -77,8 +78,9 @@ export function campStock(seed: string, block: Block, npcs: NpcDef[], day: numbe
   });
 }
 
-/** 玩家卖东西：按买价 45% 回收（免得来回倒手刷材料） */
-export const sellPrice = (cost: number) => Math.max(2, Math.round(cost * 0.45));
+/** 玩家卖东西：按买价 45% 回收（免得来回倒手刷材料）。
+    45% 这个数住在 shop-core（M44 起神秘商人也是同一个价）—— 两处商人的回收率永远是同一个。 */
+export const sellPrice = (cost: number) => Math.max(2, Math.round(cost * SELL_RATE));
 
 /** 情报要价：越贵的情报点亮越多（材料计价） */
 export const INTEL_PRICE = 18;

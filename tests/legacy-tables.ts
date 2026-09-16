@@ -46,6 +46,25 @@ export function itemIds(): string[] {
   return [...ids];
 }
 
+/** legacy ITEMS 的 { id: {n, t, unique} }（M44：收购判据要按"类型 + 是不是独一份"分）
+ *  三处来源都要解析：主表 + 两个 Object.assign(ITEMS, {...}) 扩展块。 */
+export function itemTable(): Record<string, { n: string; t: string; unique: boolean }> {
+  const text = src();
+  const main = /const ITEMS = \{([\s\S]*?)\n\};/.exec(text);
+  const blocks = [...text.matchAll(/Object\.assign\(ITEMS, \{([\s\S]*?)\n\}\);/g)].map(m => m[1]);
+  const out: Record<string, { n: string; t: string; unique: boolean }> = {};
+  for (const body of [...(main ? [main[1]] : []), ...blocks]) {
+    for (const m of body.matchAll(/(?:^|\n)\s*([a-z_][a-z0-9_]*)\s*:\s*\{([^}]*)\}/g)) {
+      out[m[1]] = {
+        n: /n:'([^']*)'/.exec(m[2])?.[1] ?? m[1],
+        t: /t:'(\w+)'/.exec(m[2])?.[1] ?? '',
+        unique: /unique:\s*true/.test(m[2]),
+      };
+    }
+  }
+  return out;
+}
+
 /** legacy ITEMS 里的弹药条目：{ id: {cal, pen} }（M32b：货架/掉落的口径核对要用） */
 export function ammoItems(): Record<string, { cal: string; pen: number; dmgMul: number }> {
   const text = src();
