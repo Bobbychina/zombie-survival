@@ -97,12 +97,7 @@ const upTop = Number(await ev(`(() => {
   b.scrollTop = Math.max(40, Math.round(max * 0.3));
   return Math.round(b.scrollTop);
 })()`))
-/* M49：等滚动落定再量（原来是 sleep(120) —— smooth 动画没跑完，量出来的数会假红） */
-for (let i = 0; i < 14; i++) {
-  const still = await ev(`(() => { const b = document.getElementById('log'); const last = window.__m43lastTop; window.__m43lastTop = b.scrollTop; return last !== undefined && b.scrollTop === last ? 1 : 0 })()`)
-  if (still === 1) break
-  await sleep(70)
-}
+await sleep(120)
 const upGap = Number(await ev(`(() => { const b = document.getElementById('log'); return b.scrollHeight - b.scrollTop - b.clientHeight })()`))
 const afterLogTop = Number(await ev(`(() => { log('M43 探针 A：往上翻时不该被拽走', 'info'); return Math.round(document.getElementById('log').scrollTop) })()`))
 /* 只等一帧多一点：这一段才是本次逻辑负责的窗口（"补底"那一下就在这一帧）。

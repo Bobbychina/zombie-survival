@@ -37,37 +37,6 @@ export function keepOffsets(snap: Record<string, number>, opts: { resetView?: bo
 /** 需要跟着 render 一起保住的滚动容器（都在 #view 里面或与它同级） */
 export const KEEP_SELECTORS = ['#view', '#log', '#v4cards', '#v4mapwin .mwbody', '.v4world .wmapwrap'];
 
-/* ── M49：日志"跟不跟最新一行"按**玩家意图**判，不按"此刻离底多远" ──────────────
-   用户报障：「现场日志不知道为什么无法自动滚动」。
-   根因：`#log` 的 CSS 是 `scroll-behavior:smooth`，程序设完 `scrollTop` 之后还有一段动画在跑；
-   而 M43 的判定是"量此刻离底多远 ≤ 48px 才算贴底"——动画还在路上时量到的是"离底两千多像素"，
-   于是下一行日志直接判定成"玩家往上翻了"，从此再也不跟（实测连打 40 行后离底 2323px，一动不动）。
-   所以判定改成状态机：**玩家的动作**（轮子往上 / 手指往下拖 / PgUp）才关掉跟随，
-   程序自己补底期间产生的滚动事件一律不参与判断。这样 smooth 动画跑多久都不会误判。 */
-export interface LogFollowInput {
-  /** 玩家往上翻（轮子 deltaY<0 / 手指把内容往下拖 / PgUp·Home） */
-  userScrollingUp?: boolean;
-  /** 玩家往下翻，并且此刻真的贴到底了（轮子 deltaY>0 / 手指往上拖 / PgDown·End 且已在底部） */
-  userAtBottom?: boolean;
-  /** 这次滚动是程序补底造成的（自己滚自己，不改判定） */
-  programmatic?: boolean;
-}
-
-/** 这一次滚动之后还跟不跟最新一行（纯逻辑：状态只由"玩家意图"驱动） */
-export function nextLogFollow(prev: boolean, ev: LogFollowInput): boolean {
-  if (ev.programmatic) return prev;            // 自己滚自己：不算玩家意图
-  if (ev.userScrollingUp) return false;        // 玩家往上翻：绝不再拽他
-  if (ev.userAtBottom !== undefined) return !!ev.userAtBottom;
-  return prev;
-}
-
-/** 这些键 = 玩家想离开底部（给 keydown 用；Esc 之类不在此列） */
-export const AWAY_KEYS = ['PageUp', 'ArrowUp', 'Home'];
-/** 这些键 = 想回底部（只有真的贴底了才算跟上，见 isBackKey） */
-export const BACK_KEYS = ['PageDown', 'ArrowDown', 'End'];
-export const isAwayKey = (key: string): boolean => AWAY_KEYS.indexOf(key) >= 0;
-export const isBackKey = (key: string): boolean => BACK_KEYS.indexOf(key) >= 0;
-
 const doc = (): Document | null => (typeof document === 'undefined' ? null : document);
 
 /** 记下这些容器当前的滚动偏移 */
