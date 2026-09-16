@@ -154,3 +154,22 @@ export function sealSave(c: SyncCipher, data: unknown, prefix?: string): string 
 export function unsealSave(c: SyncCipher, text: string): unknown {
   try { return JSON.parse(unsealText(c, text)); } catch { return null; }
 }
+
+/* ── M42：账号库那份副本"解不开"时的处理策略 ──
+   背景（用户报障原话「什么鬼」）：acccount-vault 里有个 15 秒一次的预热循环，每轮都对每个槽
+   `hydrate()` 一次；只要那份副本是用**旧密钥**写的（换过浏览器 / 清过站点数据），
+   每 15 秒就往日志里甩一行「⚠️ 账号库里那份存档解不开」——挂机十分钟就是四十行。
+   策略（纯函数，便于单测）：
+   ① warn：只在**第一次**警告，绝不刷屏；
+   ② retry：解不开之后不再反复试同一份（省 CPU / 省日志），直到有人写了新副本；
+   ③ heal：手里有"当前进度"当兜底时，直接**用它重建**这份副本（自愈，比一直提示有用）。 */
+export function unreadablePolicy(state: { warned: boolean; hasFallback: boolean }): { warn: boolean; retry: boolean; heal: boolean } {
+  if (!state.warned) return { warn: true, retry: false, heal: state.hasFallback };
+  return { warn: false, retry: false, heal: state.hasFallback };
+}
+/** 给"这份副本解不开"的日志加一句人话（要能说清"你的进度没事"） */
+export function unreadableHint(hasFallback: boolean): string {
+  return hasFallback
+    ? '账号库里那份是旧密钥写的，本机解不开 —— 已用当前进度重建（本地进度一直没事）。'
+    : '账号库里那份存档解不开（换过浏览器 / 清过站点数据？）—— 本地进度不受影响；下次「存档到账号」会用当前进度覆盖它。';
+}

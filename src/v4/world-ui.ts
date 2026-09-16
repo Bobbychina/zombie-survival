@@ -12,7 +12,7 @@ import {
   META_COLS, META_ROWS, MAX_HOPS, REGIONS, REGION_TYPES as TYPES, TYPE_INFO, dangerColor, dangerLabel, homeRegion,  metaGrid, planRegionTrip, regionById, regionName, typeColor, typeLabel, type RegionDef,
 } from './regions-core';
 import { poiLeft, searchPoi } from './search';
-import { cellTargets } from './ui-scale-core';   // M40：地图格子的目标边长（纯函数，含触屏 30px 命中区）
+import { cellTargets, fitCellSize, CELL_HARD_FLOOR } from './ui-scale-core';   // M40/M41：地图格子的目标尺寸与"一屏装下"的取舍（纯函数）
 import { lastRegionEvent, onEnterRegion } from './region-events';
 import { regionHazardTitles } from './region-events-core';
 import { ghostAt, placeGhosts, raidGhost } from './ghosts';
@@ -958,35 +958,50 @@ function fitMap() {
   if (!wrap || !grid) return;
   const cardBox = card.getBoundingClientRect();
   const viewBox = view.getBoundingClientRect();
-  const chrome = cardBox.height - wrap.getBoundingClientRect().height;   // 标题行/预览条/悬停行/图例/内边距
-  /* M40：可用高度要按**卡片所在的宿主**量，不能永远拿 #view 算。
-     float 摆法下地图卡住在悬浮窗里（body 之外），#view 在手机上还被日志栏压到很矮：
-     实测 390×844 时 `viewBox.bottom - cardBox.top - chrome` ≈ 222 < 300 → fitMap 直接放弃，
-     格子停在 CSS 默认的 18px、网格 478px 溢出 342px 的框（横竖都在滚）。改成量宿主（.mwbody）之后
-     手机上也会走 fit，触屏的 30px 命中区才真正生效。 */
+  /* M40：可用高度按**卡片所在的宿主**量（float 摆法下地图卡在悬浮窗里，不属于 #view）。
+     M41 修正：不再拿 `Math.min(viewBox.bottom, …)` —— 手机上 #view 被日志栏压得很矮（实测 86px），
+     一取 min 就把地图判成"没地方放"而放弃适配。宿主是谁就用谁的底边。 */
   const hostBox = (card.parentElement || view).getBoundingClientRect();
-  const avail = Math.min(viewBox.bottom, hostBox.bottom) - cardBox.top - chrome - 8;
-  if (avail < 300) return;                                             // 太窄就不折腾，交给容器自己滚
-  /* M25.4：预算取 `.wmapwrap` 的**实际高度**（它是 flex:1，卡片高度定死时它才是真可用高度）。
-     上面那个 avail 是按"卡片比视口矮多少"倒推的，在"卡片高度=视口高度、内部 flex 分配"
-     的布局里会高估约 111px —— 于是算出 28px 的格子、塞不进 512px 的框 → 地图又滚了/方块被压扁。
-     宽度仍然按 byW 卡住（左列固定宽度时高度算出来的值会把地图撑出横向滚动）。 */
-  const availW = wrap.clientWidth - 14;                                 // 减去 .wmapwrap 的内边距与边框
-  const byW = Math.floor((availW - 23 * 2) / 24);
-  const byBox = Math.floor((wrap.clientHeight - 16 - 23 * 2) / 24);     // 16 = 上下 padding+边框，23*2 = 留一点余量
+  const chrome0 = cardBox.height - wrap.getBoundingClientRect().height;   // 标题行/预览条/悬停行/图例/内边距
+  if (hostBox.bottom - cardBox.top - chrome0 - 8 < 300) return;           // 太窄就不折腾，交给容器自己滚
   /* M25.4：下限从 18px 回到 **24px**（R4 定的点击命中区）——之前那版 18px 是为了掩盖"缩不下去"的
      假象：真正让地图塞得下的手段是方块尺寸**由列宽推导**（不再写死行高）+ 不在别处覆盖列宽。
      现在 byBox 算得准了，24px 也能塞进 512px 的地图框（24×24 + 2px 缝 = 622px 的内容，
-     靠 .wcell 的 box-sizing:border-box 与 2px 缝的边界取整刚好收进容器）。 */
-  /* M32.1：格子下限/上限要按**渲染后**的像素算 —— #v4world 带 zoom，本地 24px 在 160% 下渲染成
+     靠 .wcell 的 box-sizing:border-box 与 2px 缝的边界取整刚好收进容器）。
+     M32.1：格子下限/上限要按**渲染后**的像素算 —— #v4world 带 zoom，本地 24px 在 160% 下渲染成
      38px，而悬浮窗的宽度是定死的，于是 24×24 的网格横向溢出（实测 57px，右列被切）；
      高度同理会把窗口顶出屏幕。除以 zoom 之后屏幕上仍是 24~28px（R4 的点击命中区不变）。 */
   const z = uiZoom();
-  /* M40：触屏把点击命中区从 24px 提到 30px（手指点 24px 的方块就是在赌运气）。
-     下限仍然按**渲染后**的像素算（除以 zoom），所以 160% 下屏幕上依旧是 30px。
-     规则本体在 ui-scale-core.cellTargets（纯函数、有单测），这里只负责"是不是触屏"。 */
-  const { min: minCell, max: maxCell } = cellTargets(coarsePointer(), z);
-  let cell = Math.max(minCell, Math.min(maxCell, byBox, byW));
+  /* M40：触屏把点击命中区的**目标**从 24px 提到 30px（手指点 24px 的方块就是在赌运气）。
+     M41：它只是"想要多大"，不再强制 —— 用户明确要求"地图别把主区域吃满、压缩回以前那样"，
+     所以先保证一屏装下（fitCellSize 把 byBox/byW 当硬约束），装得下才用目标尺寸。
+     规则本体在 ui-scale-core.cellTargets / fitCellSize（纯函数、有单测）。 */
+  const { max: capCell } = cellTargets(coarsePointer(), z);
+  /* 触屏的绝对下限抬到 16px：手指点 11px 的方块不现实；宁可让地图比框宽一点（单指拖着看）。 */
+  const hardMin = coarsePointer() ? 16 : CELL_HARD_FLOOR;
+  const budget = (): { byBox: number; byW: number } => {
+    /* M41：基准必须**稳定** —— 悬浮窗的高度是跟着地图卡走的（地图缩→窗缩→可用高度又变小），
+       拿"宿主底边"当基准会变成正反馈：格子一路缩到硬下限 12px（实测 100% 下从 24px 掉到 12px）。
+       所以：inline 用 #view 的底边（网格轨道，与地图无关）；float 用**屏幕**底边（窗口自己那份
+       max-height 是 `/var(--fs)` 的视口高度，也是稳定值）。 */
+    const b = card.getBoundingClientRect();
+    const wb = wrap.getBoundingClientRect();
+    const chrome = b.height - wb.height;
+    const hostEl = card.parentElement || view;
+    const stableBottom = (hostEl === view) ? view.getBoundingClientRect().bottom : (window.innerHeight - 12);
+    const avail = stableBottom - b.top - chrome - 8;
+    return {
+      byBox: Math.floor((avail - 16 - 46) / 24),          // 16 = 上下 padding+边框，46 = 缝与余量
+      byW: Math.floor((wrap.clientWidth - 14 - 46) / 24),
+    };
+  };
+  const pickCell = (): number => {
+    const { byBox, byW } = budget();
+    const c = fitCellSize({ byBox, byW, cap: capCell, hardMin });
+    try { ((window as any).__fitLog = (window as any).__fitLog || []).push({ byBox, byW, cell: c, chrome: Math.round(card.getBoundingClientRect().height - wrap.getBoundingClientRect().height), cardH: Math.round(card.getBoundingClientRect().height), hostBottom: Math.round((card.parentElement || view).getBoundingClientRect().bottom) }); } catch { /* 忽略 */ }
+    return c;
+  };
+  let cell = pickCell();
   const apply = (c: number) => {
     const tpl = 'repeat(24, ' + c + 'px)';
     if (grid.style.gridTemplateColumns !== tpl) {
@@ -1001,20 +1016,29 @@ function fitMap() {
     }
   };
   apply(cell);
+  /* M41：**再收敛一次** —— 上面第一次 pickCell 量到的 chrome 可能是换字号那一帧的旧值，
+     直接定死会留下偏大的格子（实测 160% 下窗里还得滚 268px）。apply() 会同步改变布局，
+     所以这里量第二遍、必要时再定一次，最多三轮。 */
+  for (let pass = 0; pass < 3; pass++) {
+    const next = pickCell();
+    if (next === cell) break;
+    cell = next;
+    apply(cell);
+  }
   /* M25.4：把"溢出多少就缩多少"改成**直接算目标边长**再一步到位 ——
      原来按溢出量减，一次会缩过头（实测 24px 时溢出约 103px、算出减 5 → 19px，
      比真正需要的 23px 小 4px，格子白白小了 17%）。这里按"网格高度 = 24c + 46"反解 c。 */
   /* M26.1：46 改成 44 —— 实测 24px 时地图卡比可视区高 31px（#view 会滚 31px），
      而 `网格高 = 24c + 2×23(缝) + 2(边框取整)` 在 c 较小时余量给多了，导致 23px 明明塞得下却被判"还不 fit"。
      少留 2px 就能让循环收到 23px（格子肉眼无差、但整页/容器都不再滚）。 */
-  const fitCell = (cur: number, over: number, rows = 24): number =>
-    Math.max(minCell, Math.min(cur, Math.floor((rows * cur + 44 - over - 48) / rows)));
+  const shrinkTo = (cur: number, over: number, rows = 24): number =>
+    Math.max(CELL_HARD_FLOOR, Math.min(cur, Math.floor((rows * cur + 44 - over - 48) / rows)));
   let guard = 6;
-  while (wrap.scrollWidth > wrap.clientWidth + 1 && cell > minCell && guard-- > 0) apply(--cell);   // 先保宽度不滚
+  while (wrap.scrollWidth > wrap.clientWidth + 1 && cell > CELL_HARD_FLOOR && guard-- > 0) apply(--cell);   // 先保宽度不滚
   guard = 6;
-  while (wrap.scrollHeight > wrap.clientHeight + 1 && cell > minCell && guard-- > 0) {
+  while (wrap.scrollHeight > wrap.clientHeight + 1 && cell > CELL_HARD_FLOOR && guard-- > 0) {
     const over = wrap.scrollHeight - wrap.clientHeight;
-    const next = fitCell(cell, over);
+    const next = shrinkTo(cell, over);
     apply(next >= cell ? cell - 1 : next);
   }
 }

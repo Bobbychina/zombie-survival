@@ -105,12 +105,13 @@
 /* 悬浮窗里的地图卡：去掉卡片自己的外边距与圆角（浮层已经有边框了），高度交给内容 */
 #v4mapwin #v4world{margin:0;border:0;border-radius:0;box-shadow:none;background:transparent;
   display:flex;flex-direction:column;height:auto;max-height:none;overflow:visible}
-/* M40：地图窗里**只留一个滚动容器**（.mwbody）。这里原来还有一层
+/* M40：地图窗里**纵向只留一个滚动容器**（.mwbody）。这里原来还有一层
    `max-height:calc((100vh - maptop - 158px)/var(--fs))`：158px 是"窗头 + 图例"的**写死常量**，
    字号放大后窗头/图例本身也变高（渲染高度 = 158×fs），常量却没跟着走 —— 145%/160% 实测
    窗口被顶出视口、里面还要再滚一次（80/166px），两层滚动条套在一起手感很糟。
-   现在网格自己不再滚（max-height:none / overflow:visible），要滚就滚整个地图卡。 */
-#v4mapwin #v4world .wmapwrap{overflow:visible;max-height:none}
+   M41：横向**仍然允许滚**（`overflow-x:auto`）—— 手机上格子有 16px 的命中区下限，
+   24 列必然比屏幕宽，不留横向滚动就等于把地图右半边裁掉、点不到。 */
+#v4mapwin #v4world .wmapwrap{overflow-x:auto;overflow-y:visible;max-height:none}
 #v4mapwin .rgridwrap{overflow-x:auto}
 /* 折叠态：右上角只留一个可点的小条（不挡任何操作） */
 #v4mapbar{position:fixed;top:var(--v4-maptop,52px);right:10px;z-index:59;display:none;
@@ -155,13 +156,13 @@ html[data-mapstyle="inline"] #v4world{margin-bottom:0}
    ② 格子加大到 30px（手指点得准）：数值下限在 world-ui.fitMap 里按 (hover:none) 走 30 而不是 24；
    ③ 触摸时给一格高亮反馈，玩家知道"我按的是哪一块"。 */
 @media (hover:none), (pointer:coarse){
+  /* 手机上 fitMap 经常"放弃"（卡片在窄屏是一长条，可用高度算不出 300px 以上），这时列宽走样式表的默认
+     `minmax(18px,28px)`，配合内联的可缩 `1fr` 一起把 24 列塞进一屏（用户要的就是"压缩成以前那样"）。
+     M41：**不要**在这里用 !important 把列宽顶到 26px —— 实测那样手机上地图会撑成 828px 高、
+     把整个主区域吃满（用户报障原话："为何整个地图占了整个行动主区域"）。命中区够不够由 fitMap
+     的 fitCellSize 决定：装得下就用触屏目标 30px，装不下就让位给"一屏装下"。 */
   #v4mapwin .mwbody,.v4world .wmapwrap{touch-action:pan-x pan-y;-webkit-overflow-scrolling:touch}
-  /* 手机上 fitMap 经常"放弃"（卡片在窄屏是一长条，可用高度算不出 300px 以上）——
-     所以命中区下限在这里**用 CSS 兜底**：24 列 × minmax(26px,32px)，一屏放不下就左右单手拖。
-     `!important` 不能省：网格的列宽是**内联**写的（world-ui 的 repeat(24,1fr) / fitMap 的显式列宽），
-     不带 !important 的样式表规则压不过内联样式（实测手机上格子一直停在 18px）。 */
-  .v4world .wgrid{grid-template-columns:repeat(24,minmax(26px,32px))!important;justify-content:start!important;width:max-content}
-  .v4world .wcell{touch-action:manipulation;min-height:26px}
+  .v4world .wcell{touch-action:manipulation}
   .v4world .wcell:active{border-color:var(--accent,#5cc8ff);background-image:linear-gradient(rgba(92,200,255,.18),rgba(92,200,255,.18))}
   .v4world .wcell.seen:active{transform:none}
   #v4mapwin .mwhead{padding:10px 12px}
@@ -284,7 +285,11 @@ html[data-mapstyle="inline"] #v4world{margin-bottom:0}
 .v4world .wlegend .sw.cur-sw{background:transparent;outline:2px solid var(--bone)}
 .v4world .wlegend .sw.path-sw{background:transparent;outline:1px dashed rgba(207,210,214,.6)}
 /* M25.4：box-sizing:border-box 必须写 —— 否则 1px 边框会让每格实际占 2px 多，24 行就多出 48px 的溢出 */
-.v4world .wcell{box-sizing:border-box;aspect-ratio:1/1;min-width:0;min-height:18px;border-radius:2px;display:flex;align-items:center;justify-content:center;
+/* M41：`min-height` 从 18px 改成 0 —— 行高必须**跟着列宽走**（aspect-ratio:1/1）。
+   留着 18px 时，fitMap 在大字号下把列算成 12px，行仍被撑到 18px：方块变长方形（M25.4 那个老 bug 的翻版），
+   而且整张地图缩不下去（160% 实测网格 764px 高、窗里还要滚 268px）。
+   命中区下限由**列宽**那侧保证：CSS 兜底是 `minmax(18px,28px)`，fitMap 跑起来后是 fitCellSize 的结果。 */
+.v4world .wcell{box-sizing:border-box;aspect-ratio:1/1;min-width:0;min-height:0;border-radius:2px;display:flex;align-items:center;justify-content:center;
   font-size:11px;line-height:1;border:1px solid transparent;user-select:none}
 .v4world .wcell.seen{cursor:pointer}
 /* M26：悬停放大在触屏上会留下「半缩放」残影、放大后也可能压到邻格 —— 只给真能悬停的设备 */

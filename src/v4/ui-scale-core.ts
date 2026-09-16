@@ -74,6 +74,27 @@ export function cellTargets(coarse: boolean, zoom: number): { min: number; max: 
   return { min, max: Math.max(min, Math.round(ceil / z)) };
 }
 
+/** 实在塞不下时的绝对下限（本地像素）：再小就点不准了，宁可让容器滚一点 */
+export const CELL_HARD_FLOOR = 12;
+
+/**
+ * M41：格子边长 = **先一屏装下、再谈命中区**。
+ *
+ * 用户报障（原话）：「为何整个地图占了整个行动主区域，不应该压缩成以前那种吗」——
+ * M40 把触屏命中区当成了**硬下限**（`Math.max(minCell, min(byBox, byW))`），于是手机上格子被顶到 30px、
+ * 24×24 的网格 828px 高，整个主区域只剩地图；悬浮窗里同理（格子取到上限、地图比窗还高，窗里又要滚）。
+ * 现在的顺序是：`fit = min(byBox, byW)`（装得下）→ `clamp(fit, hardMin, cap)`。
+ * `cap` 就是命中区目标（鼠标 28 / 触屏 34）：**空间够大就自动用大格子，空间不够就让位给"一屏装下"**。
+ * 某个轴量不到（NaN）按"这条轴不设限"处理，另一个轴仍能约束。
+ */
+export function fitCellSize(budget: { byBox: number; byW: number; cap: number; hardMin?: number }): number {
+  const hard = Math.max(1, Math.floor(budget.hardMin ?? CELL_HARD_FLOOR));
+  const cap = Math.max(hard, Math.floor(budget.cap) || hard);
+  const axis = (v: number) => (Number.isFinite(v) ? Math.max(0, v) : cap);   // NaN = 量不到（不设限）；≤0 = 真没地方
+  const fit = Math.min(axis(budget.byBox), axis(budget.byW));
+  return Math.max(hard, Math.min(cap, Math.floor(fit)));
+}
+
 export interface PrefsStore { getItem(k: string): string | null; setItem(k: string, v: string): void }
 
 export const DEFAULT_PREFS: UiPrefs = { fs: 100, mapOpen: true, mapStyle: 'float' };

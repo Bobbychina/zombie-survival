@@ -17,6 +17,7 @@ import { L } from '../main';
 import { SaveVault } from './save-vault';
 import {
   ENVELOPE_MAGIC, checksum, isEnvelope, makeCipher, newPrefix, parseEnvelope, sealText, unsealSave,
+  unreadablePolicy, unreadableHint,
   type SyncCipher,
 } from './account-vault-core';
 
@@ -28,6 +29,8 @@ let cipher: SyncCipher | null = null;
 let opening: Promise<SyncCipher | null> | null = null;
 let api: Acct | null = null;
 let warmTimer: ReturnType<typeof setInterval> | null = null;
+/** M42：解不开过的槽（`游戏/槽位`）——不再重复尝试、不再重复刷日志，直到这一槽被重建/重写 */
+const badSlots = new Set<string>();
 const deps = { subtle: crypto.subtle, randomBytes: (n: number) => crypto.getRandomValues(new Uint8Array(n)) };
 
 /** 内存镜像：同一份存档的「密文 + 明文」 */
@@ -77,23 +80,35 @@ async function sealAsync(obj: unknown): Promise<unknown> {
   try { return sealText(c, plain, prefix); } catch { return obj; }
 }
 
-/** 冷启动后把磁盘上的密文解回内存：之后 `saveGet` 就能同步拿到明文 */
-export async function hydrate(game: string, slot: string): Promise<unknown> {
+/** 冷启动后把磁盘上的密文解回内存：之后 `saveGet` 就能同步拿到明文。
+ *  M42：解不开时**只警告一次**，并把这一槽记成"别再试了"（15 秒一次的预热循环原来是刷屏元凶）；
+ *  如果调用方给了兜底明文（当前进度），直接重建这份副本 —— 比一直提示有用。
+ *  @param fallback 当前进度的明文（可选；`ensureSealed`/`warmUp` 从 SaveVault 取） */
+export async function hydrate(game: string, slot: string, fallback?: unknown): Promise<unknown> {
   const a = api; if (!a) return null;
   const raw = a.saveGet(game, slot);
   if (raw === null || raw === undefined) return null;
   const id = a.currentUid?.();
   const k = id ? mkey(id, game, slot) : null;
+  const sk = (k || (game + '/' + slot));
   if (typeof raw === 'string' && isEnvelope(raw)) {
     const prev = k ? mirror.get(k) : undefined;
     const env = parseEnvelope(raw);
     if (!env) return null;
     /* 镜像里就是这一份（明文指纹对得上）→ 直接给明文，不必再解一次 */
     if (prev?.held && prev.sig === env.sig) return prev.plain;
+    /* 上一次就没解开过：不再重复尝试、更不再重复刷日志（同一份内容不会因为再等 15 秒就变得能解开） */
+    if (badSlots.has(sk)) return null;
     const c = await open(); if (!c) return null;
     await c.prepare(env.prefix, env.bytes);
     const obj = unsealSave(c, raw);
-    if (obj === null) { L.log('⚠️ 账号库里那份存档解不开（换过浏览器 / 清过站点数据？）。', 'danger'); return null; }
+    if (obj === null) {
+      const policy = unreadablePolicy({ warned: badSlots.has(sk), hasFallback: fallback !== undefined && fallback !== null });
+      badSlots.add(sk);
+      if (policy.warn) L.log('⚠️ ' + unreadableHint(fallback !== undefined && fallback !== null), 'danger');
+      if (policy.heal) await resealWith(game, slot, fallback, k);
+      return null;
+    }
     if (k) mirror.set(k, { sealed: raw, plain: obj, sig: env.sig, held: true });
     return obj;
   }
@@ -107,23 +122,55 @@ export async function hydrate(game: string, slot: string): Promise<unknown> {
   return raw;
 }
 
-/** 上传/同步之前：把某个槽在磁盘上确认成密文（云路走 `saveGet`，取到的就是密文串） */
-export async function ensureSealed(game: string, slot: string): Promise<void> {
+/** 上传/同步之前：把某个槽在磁盘上确认成密文（云路走 `saveGet`，取到的就是密文串）
+ *  M42：副本解不开时不干瞪眼 —— 有兜底明文（当前进度）就用它重建这一槽。 */
+export async function ensureSealed(game: string, slot: string, fallback?: unknown): Promise<void> {
   const a = api; if (!a) return;
   const raw = a.saveGet(game, slot);
-  if (raw === null || raw === undefined || isEnvelope(raw)) return;
-  const plain = await hydrate(game, slot);
-  if (plain === null) return;
-  const sealed = await sealAsync(plain);
-  if (typeof sealed === 'string') a.savePut(game, slot, sealed);
+  if (raw === null || raw === undefined || isEnvelope(raw)) {
+    /* 已是密文：确认它还解得开；解不开就（在能拿到进度时）重建 */
+    if (typeof raw === 'string' && isEnvelope(raw)) {
+      const plain = await hydrate(game, slot, fallback);
+      if (plain === null && fallback !== undefined && fallback !== null && badSlots.has(slotKeyFor(game, slot))) {
+        await resealWith(game, slot, fallback, null);
+      }
+    }
+    return;
+  }
+  const plain = await hydrate(game, slot, fallback);
+  if (plain === null && !(fallback !== undefined && fallback !== null)) return;
+  const sealed = await sealAsync(plain ?? fallback);
+  if (typeof sealed === 'string') a.savePut(game, slot, sealed, { noServer: true });
 }
+/** 用兜底明文重建某个槽的密文（自愈路径：副本是旧密钥写的 → 直接用当前进度覆盖） */
+async function resealWith(game: string, slot: string, plain: unknown, k: string | null): Promise<boolean> {
+  const a = api; if (!a || plain === undefined || plain === null) return false;
+  const sealed = await sealAsync(plain);
+  if (typeof sealed !== 'string') return false;
+  a.savePut(game, slot, sealed, { noServer: true });
+  if (k) mirror.set(k, { sealed, plain, sig: sigOf(plain), held: true });
+  badSlots.delete(slotKeyFor(game, slot));
+  L.log('🛟 账号库存档已用当前进度重建（那份旧的解不开，留着也没用）。', 'info');
+  return true;
+}
+/** 这一槽的"健康键"（不依赖账号 id：切号时也该按游戏/槽位记） */
+const slotKeyFor = (game: string, slot: string): string => game + '/' + slot;
 /** 某个游戏下**所有**槽位都确认成密文（上传前调用：上传走的是 `saveGet`，拿到的就是密文串） */
-export async function sealAll(game: string): Promise<void> {
+export async function sealAll(game: string, fallback?: unknown): Promise<void> {
   const a = api; if (!a) return;
-  for (const s of a.slots(game)) await ensureSealed(game, s.slot);
+  const fb = fallback ?? liveSaveObj();
+  for (const s of a.slots(game)) await ensureSealed(game, s.slot, fb);
 }
 /** 主槽位（account-ui 里 SLOT = 'main'）：一键上传/自动同步前调用 */
-export const sealMainSlot = (game: string): Promise<void> => ensureSealed(game, 'main');
+export const sealMainSlot = (game: string, fallback?: unknown): Promise<void> => ensureSealed(game, 'main', fallback ?? liveSaveObj());
+
+/** M42：当前进度（对象形态）——账号库副本解不开时用它重建。解析不了就返回 undefined（那就只警告，不乱写）。 */
+function liveSaveObj(): unknown | undefined {
+  try {
+    const raw = SaveVault.currentPlain();
+    return raw ? JSON.parse(raw) : undefined;
+  } catch { return undefined; }
+}
 
 /** 拉取/合并之后：把落地的密文解进内存，并把明文喂给 applySave（游戏只认明文对象） */
 async function applyOnPull(game: string, slot: string, apply: (d: unknown) => boolean): Promise<void> {
@@ -136,10 +183,11 @@ function applySaveOf(d: unknown): boolean {
   return !!w.V4Account?.applySave?.(d);
 }
 
-/** 把某个账号名下的存档槽全部预热（登录成功 / 面板打开时调用） */
-export async function warmUp(game: string): Promise<void> {
+/** 把某个账号名下的存档槽全部预热（登录成功 / 面板打开时调用）
+ *  M42：`fallback` 是当前进度的明文 —— 哪一槽是旧密钥写的就当场用它重建（自愈），而不是每 15 秒抱怨一次。 */
+export async function warmUp(game: string, fallback?: unknown): Promise<void> {
   const a = api; if (!a) return;
-  for (const s of a.slots(game)) await hydrate(game, s.slot);
+  for (const s of a.slots(game)) await hydrate(game, s.slot, fallback);
 }
 
 /** 劫持账号库对象：记录读写走密文，拉取后自动解密 */
@@ -182,18 +230,18 @@ export function interceptAccount(a: Acct): void {
   /* 上传前先确保磁盘上是密文：account.js 的上传循环走 `saveGet`，取到的就是密文串
      —— 这一步是"Gist / OneDrive 里也是密文"的关键 */
   a.pushAll = async function (game: string) {
-    await sealAll(game).catch(() => undefined);
+    await sealAll(game, liveSaveObj()).catch(() => undefined);
     return await origPushAll(game);
   };
   a.syncNow = async function (game: string) {
-    await sealAll(game).catch(() => undefined);
+    await sealAll(game, liveSaveObj()).catch(() => undefined);
     const r = await origSyncNow(game);
     await applyOnPull(game, 'main', (d) => !!applySaveOf(d));
     return r;
   };
   void open();                                   // 后台先把密钥收好
   /* 账号库自己挑账号（切号/新登录）时会走原生路径写明文，这里定期补一次加密 + 预热 */
-  if (!warmTimer) warmTimer = setInterval(() => { void warmUp('zombie-survival'); }, 15000);
+  if (!warmTimer) warmTimer = setInterval(() => { void warmUp('zombie-survival', liveSaveObj()); }, 15000);
   L.log('🔐 账号库存档已加密（' + ENVELOPE_MAGIC + ' 密文落盘，密钥来自 worker 生成的那把）。', 'dim');
 }
 
@@ -202,7 +250,7 @@ export function initAccountVault(): void {
   const a = window.DSHAccount as Acct | undefined;
   if (!a) { L.log('ℹ️ 账号库没加载：本机只跑游戏主档（同样加密）。', 'dim'); return; }
   interceptAccount(a);
-  void warmUp('zombie-survival');
+  void warmUp('zombie-survival', liveSaveObj());
 }
 
 /* 探针用：当前是否已经拿到密钥、镜像里有多少条 */

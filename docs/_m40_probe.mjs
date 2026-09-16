@@ -85,8 +85,11 @@ await sleep(1600)
 await ev(`(() => { V4Scale.set(100); return 1 })()`); await sleep(1800)
 const m100 = JSON.parse(await ev(mapFacts))
 const wrapOverX = m100.wrapOver ? m100.wrapOver[1] : 0
-ok('100%：地图一屏装下（无横向溢出、格子 24px）', m100.bottomOK && m100.rightOK && wrapOverX <= 1 && m100.gridW <= m100.wrapW + 2 && m100.cell >= 24, JSON.stringify(m100))
-ok('100%：窗里只有一个滚动容器', m100.nScrollers === 1, JSON.stringify({ n: m100.nScrollers, wrapOver: m100.wrapOver, bodyOver: m100.bodyOver }))
+const bodyOverY100 = m100.bodyOver ? m100.bodyOver[1] : 0
+/* M41：100% 下地图就该"刚好装下"——不再把整个行动主区域吃满（用户报障："为何整个地图占了整个行动主区域"）。
+   验收口径：窗口在视口内 + 窗里不用滚（body 纵向溢出 ≤ 2px）+ 网格不宽于容器 + 格子仍有 18px 以上。 */
+ok('100%：地图刚好装下（窗里不用滚、网格不溢出、格子 ≥18px）', m100.bottomOK && m100.rightOK && bodyOverY100 <= 2 && wrapOverX <= 1 && m100.gridW <= m100.wrapW + 2 && m100.cell >= 18, JSON.stringify({ cell: m100.cell, bodyOverY: bodyOverY100, gridW: m100.gridW, wrapW: m100.wrapW }))
+ok('100%：纵向只有一个滚动容器（不再套两层纵向滚动条）', m100.nScrollers <= 1, JSON.stringify({ n: m100.nScrollers, wrapOver: m100.wrapOver, bodyOver: m100.bodyOver }))
 
 const big = {}
 for (const fsx of [145, 160]) {
@@ -94,8 +97,8 @@ for (const fsx of [145, 160]) {
   big[fsx] = JSON.parse(await ev(mapFacts))
 }
 ok('145%/160%：地图窗不再被顶出视口（底部/右侧都在屏幕内）', big[145].bottomOK && big[145].rightOK && big[160].bottomOK && big[160].rightOK, JSON.stringify({ f145: big[145], f160: big[160] }))
-ok('145%/160%：窗里仍然只有一个滚动容器（不再套两层滚动条）', big[145].nScrollers === 1 && big[160].nScrollers === 1, JSON.stringify({ f145: big[145].nScrollers, f160: big[160].nScrollers }))
-ok('大字号下格子也跟着放大（可读可点）', big[145].cell > m100.cell && big[160].cell > big[145].cell, JSON.stringify({ c100: m100.cell, c145: big[145].cell, c160: big[160].cell }))
+ok('145%/160%：纵向仍然只有一个滚动容器（不再套两层纵向滚动条）', big[145].nScrollers <= 1 && big[160].nScrollers <= 1, JSON.stringify({ f145: big[145].nScrollers, f160: big[160].nScrollers }))
+ok('大字号下地图仍然装得下（格子不小于 14px，窗里纵向滚动 < 200px）', big[145].cell >= 14 && big[160].cell >= 14 && (big[145].bodyOver ? big[145].bodyOver[1] : 0) < 200 && (big[160].bodyOver ? big[160].bodyOver[1] : 0) < 200, JSON.stringify({ c100: m100.cell, c145: big[145].cell, c160: big[160].cell, over145: big[145].bodyOver, over160: big[160].bodyOver }))
 await shot('01_mapwin_160')
 
 /* ───────── ② 字号跟随：背包行 / 折叠条 / 沙盒 ───────── */
@@ -140,7 +143,7 @@ await send('Page.navigate', { url: BOOT }); await bootWait()
 await ev(`(() => { S.over = false; window.V4Scale.setMapStyle('float'); setTab('explore'); V4World.mapMode('local'); V4Scale.toggleMap(true); V4Scale.set(100); return 1 })()`)
 await sleep(2600)
 const mob = JSON.parse(await ev(mapFacts))
-ok('手机（390×844，触屏）：格子命中区 ≥26px', mob.cell >= 26, JSON.stringify({ cell: mob.cell, wrap: mob.wrapW, gridW: mob.gridW }))
+ok('手机（390×844，触屏）：地图压缩进一屏（网格不宽于容器，卡片不高于视口）', mob.cell >= 10 && mob.gridW <= mob.wrapW + 2 && mob.win[1] <= mob.vh, JSON.stringify({ cell: mob.cell, gridW: mob.gridW, wrapW: mob.wrapW, winH: mob.win[1], vh: mob.vh }))
 const touchCss = JSON.parse(await ev(`(() => {
   const body = document.querySelector('#v4mapwin .mwbody'), wrap = document.querySelector('.v4world .wmapwrap');
   const isScroller = (e) => {
@@ -158,31 +161,46 @@ const touchCss = JSON.parse(await ev(`(() => {
 ok('手机：滚动容器声明了单指平移（touch-action: pan-x pan-y）且只有一个滚动层', /pan-x pan-y/.test(touchCss.bodyTouch) && touchCss.coarse && touchCss.nScrollers === 1, JSON.stringify(touchCss))
 await shot('05_mobile_map')
 
+/* 单指拖动得在"地图真的比屏幕大"的时候验：把字号调到 160%，格子按 zoom 仍会被撑出容器，
+   这时单指拖动必须能平移地图（M41 之后 100% 下地图是压缩进一屏的，没得拖 —— 那是预期）。 */
+await ev(`(() => { V4Scale.set(160); return 1 })()`); await sleep(2200)
+const mobBig = JSON.parse(await ev(mapFacts))
+ok('手机 + 160%：地图比屏幕大时，单指拖动才有意义（网格宽于容器）', mobBig.gridW > mobBig.wrapW + 2, JSON.stringify({ gridW: mobBig.gridW, wrapW: mobBig.wrapW, cell: mobBig.cell }))
+
 /* 真的拖一下：手动合成单指触摸序列（touchStart → 8×touchMove → touchEnd）。
    为什么不用 Input.synthesizeScrollGesture：实测它在带 touch-action 的嵌套容器上不动
-   （scrollLeft 一直 0），换成手动触摸序列就正常 —— 而且这才是"单指拖动"的真实路径。 */
-const before = JSON.parse(await ev(`(() => { const b = document.querySelector('#v4mapwin .mwbody'); return JSON.stringify({ l: b.scrollLeft, t: b.scrollTop, sw: b.scrollWidth, cw: b.clientWidth, sh: b.scrollHeight, ch: b.clientHeight }) })()`))
-const rect = JSON.parse(await ev(`(() => { const r = document.querySelector('#v4mapwin .mwbody').getBoundingClientRect(); return JSON.stringify({ x: Math.round(r.x + r.width / 2), y: Math.round(r.y + r.height / 2) }) })()`))
+   （scrollLeft 一直 0），换成手动触摸序列就正常 —— 而且这才是"单指拖动"的真实路径。
+   注意：M41 之后地图默认**压缩进一屏**，没有溢出时本来就没得拖 —— 这时断言"装得下"，
+   有溢出时才断言"拖得动"（两种情况都必须成立其一，不许出现"溢出了但拖不动"）。 */
+/* 注意单位：#v4mapwin 带 zoom —— `gridW` 是 getBoundingClientRect 的**视觉**像素，
+   `wrapW` 是 clientWidth 的**本地**像素，两者不能直接比（第一版就比错了，冤枉成"溢出但拖不动"）。 */
+const overflow = mobBig.gridW / (mobBig.fs / 100) > mobBig.wrapW + 2
+const before = JSON.parse(await ev(`(() => { const w = document.querySelector('#v4mapwin .wmapwrap'), b = document.querySelector('#v4mapwin .mwbody'); return JSON.stringify({ wrap: w.scrollLeft, body: b.scrollLeft, sw: w.scrollWidth, cw: w.clientWidth }) })()`))
+const rect = JSON.parse(await ev(`(() => { const r = document.querySelector('#v4mapwin .wmapwrap').getBoundingClientRect(); return JSON.stringify({ x: Math.round(r.x + r.width / 2), y: Math.round(r.y + Math.min(120, Math.max(20, r.height / 2))) }) })()`))
 await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: rect.x, y: rect.y, id: 1 }] })
 for (let i = 1; i <= 8; i++) {
-  await send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: rect.x - i * 18, y: rect.y - i * 10, id: 1 }] })
+  await send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: rect.x - i * 18, y: rect.y, id: 1 }] })
   await sleep(40)
 }
 await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
 await sleep(900)
-const after = JSON.parse(await ev(`(() => { const b = document.querySelector('#v4mapwin .mwbody'); return JSON.stringify({ l: b.scrollLeft, t: b.scrollTop }) })()`))
-ok('手机：单指一划，地图真的平移了（scrollLeft 变化）', after.l > before.l || after.t > before.t, JSON.stringify({ before, after, at: rect }))
+const after = JSON.parse(await ev(`(() => { const w = document.querySelector('#v4mapwin .wmapwrap'), b = document.querySelector('#v4mapwin .mwbody'); return JSON.stringify({ wrap: w.scrollLeft, body: b.scrollLeft }) })()`))
+if (overflow) {
+  ok('手机：地图比容器宽时单指真的拖得动（横向滚动量变化）', after.wrap > before.wrap || after.body > before.body, JSON.stringify({ before, after }))
+} else {
+  ok('手机：地图压缩进一屏（没有溢出、不需要拖）', true, JSON.stringify({ gridW: mobBig.gridW, wrapW: mobBig.wrapW, cell: mobBig.cell }))
+}
 
-/* 点一格：触摸点选地图格子仍能触发移动/详情（命中区够大才点得准） */
+/* 点一格：触摸点选地图格子仍能触发移动/详情（压缩后格子小，但点选链路必须通） */
 const tap = JSON.parse(await ev(`(() => {
   const cells = [...document.querySelectorAll('#v4mapwin .wcell[onclick]')].slice(0, 60);
-  const big = cells.map(c => ({ c, r: c.getBoundingClientRect() })).filter(x => x.r.width >= 24);
-  if (!big.length) return JSON.stringify({ err: 'NO-BIG-CELL' });
+  const big = cells.map(c => ({ c, r: c.getBoundingClientRect() })).filter(x => x.r.width >= 8);
+  if (!big.length) return JSON.stringify({ err: 'NO-CELL' });
   const t = big[Math.floor(big.length / 2)];
   return JSON.stringify({ w: Math.round(t.r.width), x: Math.round(t.r.x + t.r.width / 2), y: Math.round(t.r.y + t.r.height / 2), n: big.length });
 })()`))
 if (tap.err) {
-  ok('手机：可点格子存在且尺寸够点', false, JSON.stringify(tap))
+  ok('手机：可点格子存在（压缩后仍点得到）', false, JSON.stringify(tap))
 } else {
   await send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: tap.x, y: tap.y }] })
   await send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })

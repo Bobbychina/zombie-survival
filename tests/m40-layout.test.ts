@@ -6,7 +6,7 @@
       下一个人重构样式时最容易手滑，用源码断言钉住。 */
 import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
-import { cellTargets, cardsPerScreen } from '../src/v4/ui-scale-core'
+import { cellTargets, cardsPerScreen, fitCellSize, CELL_HARD_FLOOR } from '../src/v4/ui-scale-core'
 
 describe('M40 · 地图格子的命中区（屏幕上是多大）', () => {
   it('鼠标/触控板：24~28px（R4 定的命中区不变）', () => {
@@ -36,6 +36,33 @@ describe('M40 · 地图格子的命中区（屏幕上是多大）', () => {
   })
 })
 
+describe('M41 · 一屏装下优先（用户："地图别把整个行动主区域吃满"）', () => {
+  it('空间够大就用命中区目标（鼠标 28 / 触屏 34）', () => {
+    expect(fitCellSize({ byBox: 40, byW: 40, cap: 28 })).toBe(28)
+    expect(fitCellSize({ byBox: 40, byW: 40, cap: 34 })).toBe(34)
+  })
+  it('装不下就让位给"一屏装下"——不再硬顶到目标尺寸（这就是那个"地图吃满主区域"的根因）', () => {
+    expect(fitCellSize({ byBox: 17, byW: 28, cap: 28 })).toBe(17)
+    expect(fitCellSize({ byBox: 11, byW: 16, cap: 34 })).toBe(CELL_HARD_FLOOR)
+  })
+  it('实在塞不下就停在硬下限（桌面 12 / 触屏 16），别缩成看不见', () => {
+    expect(fitCellSize({ byBox: 3, byW: 3, cap: 28 })).toBe(CELL_HARD_FLOOR)
+    expect(fitCellSize({ byBox: 3, byW: 3, cap: 34, hardMin: 16 })).toBe(16)
+  })
+  it('上限永远生效（byBox 再大也不会超过 cap）', () => {
+    expect(fitCellSize({ byBox: 999, byW: 999, cap: 28 })).toBe(28)
+    expect(fitCellSize({ byBox: 999, byW: 999, cap: 34 })).toBe(34)
+  })
+  it('某个轴量不到（NaN）时按"这条轴不设限"，另一个轴仍然管事', () => {
+    expect(fitCellSize({ byBox: NaN as unknown as number, byW: 20, cap: 28 })).toBe(20)
+    expect(fitCellSize({ byBox: 14, byW: NaN as unknown as number, cap: 28 })).toBe(14)
+  })
+  it('脏输入（0 / 负数）不产生 0 或负的格子', () => {
+    expect(fitCellSize({ byBox: 0, byW: 0, cap: 28 })).toBe(CELL_HARD_FLOOR)
+    expect(fitCellSize({ byBox: -5, byW: -5, cap: 28 })).toBe(CELL_HARD_FLOOR)
+  })
+})
+
 describe('M40 · 布局约定（源码断言）', () => {
   const css = readFileSync('src/styles/v4.css', 'utf8')
   /* 注释里解释历史可以提 158px，断言只看**规则**（把注释剥掉再查） */
@@ -48,24 +75,29 @@ describe('M40 · 布局约定（源码断言）', () => {
   it('教程沙盒（#v4lab）同样跟随字号', () => {
     expect(css).toMatch(/#v4lab\{[^}]*zoom:var\(--fs/)
   })
-  it('地图窗里只有 .mwbody 一个滚动容器；网格自己不再滚（158px 写死常量已删）', () => {
-    expect(css).toMatch(/#v4mapwin #v4world \.wmapwrap\{overflow:visible;max-height:none\}/)
+  it('地图窗里纵向只有 .mwbody 一个滚动容器；158px 写死常量已删', () => {
+    /* M41：横向仍留 `.wmapwrap{overflow-x:auto}`（手机上格子有下限、24 列必然比屏幕宽，
+       不留横向滚动等于把地图右半边裁掉）；纵向只由 .mwbody 负责，这才是原来那个双层滚动的问题 */
+    expect(css).toMatch(/#v4mapwin #v4world \.wmapwrap\{overflow-x:auto;overflow-y:visible;max-height:none\}/)
     /* 注释里解释历史可以提 158px，但**规则**里不许再用这个常量（它不随字号缩放，是那个 bug 的根） */
     expect(cssRules).not.toMatch(/max-height:calc\([^;}]*158px/)
     expect(css).toMatch(/#v4mapwin \.mwbody\{flex:1 1 auto/)
   })
-  it('触屏媒体查询里的列宽带 !important（内联列宽压过普通规则，没它就永远不生效）', () => {
+  it('触屏媒体查询只给"手感"，不再用 !important 顶大列宽（那会让地图吃满主区域）', () => {
     expect(css).toMatch(/@media \(hover:none\), \(pointer:coarse\)/)
-    expect(css).toMatch(/\.v4world \.wgrid\{grid-template-columns:repeat\(24,minmax\(26px,32px\)\)!important/)
     expect(css).toMatch(/touch-action:pan-x pan-y/)
+    expect(css).not.toMatch(/\.v4world \.wgrid\{[^}]*!important/)
   })
-  it('world-ui：命中区规则走 ui-scale-core.cellTargets + 触屏判定', () => {
+  it('格子行高跟着列宽走（min-height 不许把方块撑成长方形）', () => {
+    expect(cssRules).toMatch(/\.v4world \.wcell\{[^}]*min-height:0/)
+  })
+  it('world-ui：命中区规则走 ui-scale-core.cellTargets + fitCellSize + 触屏判定', () => {
     expect(world).toContain('cellTargets(coarsePointer(), z)')
+    expect(world).toContain('fitCellSize({ byBox, byW, cap: capCell, hardMin })')
     expect(world).toContain("matchMedia('(hover:none), (pointer:coarse)')")
   })
-  it('world-ui：可用高度按**卡片宿主**量（悬浮窗里的卡不能拿 #view 的高度算）', () => {
-    expect(world).toContain('const hostBox = (card.parentElement || view).getBoundingClientRect()')
-    expect(world).toContain('Math.min(viewBox.bottom, hostBox.bottom)')
+  it('world-ui：可用高度基准稳定（inline 用 #view 底边 / 悬浮窗用屏幕底边，不许拿宿主底边自反馈）', () => {
+    expect(world).toContain('const stableBottom = (hostEl === view) ? view.getBoundingClientRect().bottom : (window.innerHeight - 12)')
   })
   it('world-ui：网格仍保留可缩的 1fr 内联列宽（窄容器不许横向溢出）', () => {
     expect(world).toContain("style=\"grid-template-columns:repeat(' + WORLD_W + ',1fr)\"")
