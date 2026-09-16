@@ -6,7 +6,7 @@ import { CALIBERS, penMul, apKillOnArmored, ammoTable, pickLoadedAmmo, ammoShort
 import { MERCHANT_GOODS, badShopRows, shopPrice, ammoShopRows, buyPlan,
   sellPlan, sellValue, sellBatchPlan, sellBatchQuote, sellBlockReason, canSell, ITEM_BASE, SELL_RATE } from '../v4/shop-core';   // M32b/M39：货架（弹药按口径卖）+ 坏货架兜底 + 批量购买；M44：收购（把多余的东西卖回去）
 import { apCapOf, fitnessApBonus, phaseOf, PHASE_LABEL } from '../v4/night-core';   // M25.2：行动力上限（睡眠债 + 体能）；M25.3：白昼曲线
-import { resumeFromOver, endDayLabel, endGoalChip, overHint } from '../v4/endless-core';   // M37：无尽模式（通关后继续）的纯逻辑
+import { resumeFromOver, endDayLabel, endGoalChip, winContinuePatch } from '../v4/endless-core';   // M37/M51：通关 → 无尽延续的纯逻辑
 import { filterTabs, filterInv, dropCount, depositCount, quickSlots, quickPick, BAG_FILTERS, type BagFilter } from '../v4/qol-core';   // M38：背包筛选/分批丢弃·存入 + 补给快捷键
 import { exportSaveText, importSaveText, parsePortText, portSummary, passphraseIssue, passphraseWeak, portSizeKb, portFileName, PORT_MAGIC } from '../v4/save-port-core';   // M39：口令加密导出/导入
 import { backupLabel, BACKUP_SLOTS } from '../v4/backup-core';   // M39：备份历史（标签与份数）
@@ -718,6 +718,10 @@ function sanitizeSave(d){
     .filter(p => p && typeof p === 'object' && CROP_IDS.indexOf(p.crop) >= 0)
     .map(p => ({ crop: p.crop, day: Math.floor(num(p.day, 0, 0, 99)) })) : [];
   out.sfx = out.sfx !== false; out.over = false;
+  /* M51：通关 = 无尽延续。老档里"已通关但没进无尽"（won=true / endless=false）的残留状态现在没有
+     任何 UI 出口了（旧版那个「进入无尽模式」按钮本身就是旧界面的一部分），读档时直接归一 ——
+     否则顶栏会留下 "101 / 100" 这种看着像坏档的天数。 */
+  if(out.flags.won) out.flags.endless = true;
   out.tab = TABS.some(t => t.id === out.tab) ? out.tab : 'explore';
   return deepMerge(newState(), out);
 }
@@ -1723,7 +1727,11 @@ function combatRepair(){
 }
 /* 第 100 天：救援结局（有无线电才有人来接你） */
 function rescueEnding(){
-  S.flags.won = true; S.flags.cured = false; S.quest.stage = 6; S.over = true;
+  /* M51：通关不再置 S.over —— over 是 v4 世界面板/移动/夜间结算的总闸，置上就等于把整屏交回
+     旧版探索页（旧版「城市地图」+「本局已通关」图例），玩家得再点一次按钮才回得来。
+     现在通关当场转入无尽延续（winContinue：清 over + 开 endless），界面全程是 v4。 */
+  S.flags.won = true; S.flags.cured = false; S.quest.stage = 6;
+  winContinue();
   sfx('win'); musicSting('win');
   const radio = S.base.radio > 0;
   hr();
@@ -1741,8 +1749,9 @@ function rescueEnding(){
   award('a_endless');
   modal({ title:'🚁 第 100 天', sticky:true,
     body:'<p class="muted">' + (radio ? '救援直升机把你带离了城市。' : '没人来接你，但你活下来了。') + '</p>' +
+      '<p class="muted" style="margin-top:10px">游戏没有结束：你已经在<b>无尽模式</b>里了——丧尸仍会按天数进化，据点、图鉴、结局档案都还在。</p>' +
       recapHtml(sc),
-    footer:'<button class="btn warn" onclick="enterEndless()">♾️ 继续活下去（无尽）</button><button class="btn" data-close>看看日志</button>' });
+    footer:'<button class="btn warn" data-close>♾️ 继续活下去（无尽）</button>' });
   /* M15：救援结局（把消息播出去过 → 「频率上的名字」，否则「第 100 天」） */
   if(window.__v4Ending) window.__v4Ending('rescue');
   render(); autosave();
@@ -1835,7 +1844,6 @@ function renderHud(){
   { const mdH = (typeof window.V4Medical === 'object' && window.V4Medical) ? window.V4Medical : null;
     if(mdH){ const line = mdH.hudLine(); if(line) h += '<span class="chip heavy warnpulse" style="cursor:pointer" onclick="setTab(\'body\')" title="点一下打开人体页">🩺 ' + esc(line) + '</span>'; } }
   if(mods.note.length) h += '<span class="chip heavy warnpulse">⚠️ ' + mods.note.join(' · ') + '</span>';
-  if(S.flags.won && !S.flags.endless) h += '<button class="btn xs warn" onclick="enterEndless()">进入无尽模式</button>';
   h += '</div>';
   // C06 常驻「下一步」：任意时刻屏幕上只有一条可点击的下一步
   const ns = nextStep();
@@ -1847,8 +1855,8 @@ function renderHud(){
 }
 /* C06 下一步建议：按「要死了 → 饿了渴了 → 没行动力 → 主线目标」的优先级给一条 */
 function nextStep(){
-  /* 通关后 over=true 要分两种情形说清楚：已通关还活着不是"倒下了"，否则玩家以为档坏了 */
-  if(S.over) return overHint({ won: !!S.flags.won, endless: !!S.flags.endless, hp: S.hp });
+  /* M51：over=true 现在只剩"真死了"一种情形（通关改成无尽延续，不再置 over），所以这里直说死亡 */
+  if(S.over) return { txt:'你倒下了。可以重新开始，或读取上一次存档。', act:'loadGame()', btn:'读取存档' };
   if(S.hp <= S.hpMax * .3) return { txt:'生命很低：吃东西／用药，或者回据点睡觉。', act:"setTab('inv')", btn:'打开背包' };
   if(S.hun < 30) return { txt:'饿了（饱食 ' + Math.round(S.hun) + '）：背包里的罐头 +30、饼干 +16。', act:"setTab('inv')", btn:'打开背包' };
   if(S.thi < 30) return { txt:'渴了（水分 ' + Math.round(S.thi) + '）：净水 +35，污水会涨感染。', act:"setTab('inv')", btn:'打开背包' };
@@ -2479,7 +2487,8 @@ function renderExplore(){
   '</div>';
   h += quickBarHtml();          // M38：补给快捷键（数字键 1-5，手机也能点）
   h += renderBounties();
-  h += renderMap();
+  /* M51：旧版「城市地图」卡整块删除 —— 大世界地图（v4）从 M17 起就取代它了，它唯一还会露脸的时机
+     是"本局已结束"的旧版回退窗口，露脸时还带一条「本局已通关」的旧图例（用户报障的截图就是它）。 */
   h += renderCalendar();
   h += '<div class="sect-title">可搜刮区域</div><div class="grid g2">';
   for(const id in ZONES){
@@ -3169,7 +3178,7 @@ function renderQuest(){
       '<span class="tag ' + (i <= stage ? 'eq' : '') + '">' + (i < stage ? '✓ ' : '') + (i + 1) + '</span>').join('') + '</div>' +
     '<div class="hint" style="margin-top:8px">进度：' + questProgress() + '</div>' +
     (stage === 5 ? '<div class="row" style="margin-top:12px"><button class="btn primary" onclick="startFinalBattle()">⚔️ 下到第 6 层（最终决战）</button></div>' : '') +
-    (S.flags.won ? '<div class="row" style="margin-top:12px"><span class="tag eq">✅ 已通关 · 解药在手</span>' + (S.flags.endless ? '<span class="tag eq">无尽模式进行中（第 ' + S.day + ' 天）</span>' : '<button class="btn sm warn" onclick="enterEndless()">进入无尽模式</button>') + '</div>' : '') +
+    (S.flags.won ? '<div class="row" style="margin-top:12px"><span class="tag eq">✅ 已通关 · 解药在手</span><span class="tag eq">无尽模式进行中（第 ' + S.day + ' 天）</span></div>' : '') +
     '</div>';
   const done = S.lore.length;
   h += renderSideQuests();
@@ -3253,7 +3262,8 @@ const WOUND_DEF = {
 /* ── 日历：每 7 天一次血月，第 14 天断水断电，第 100 天救援 ── */
 function daysToHorde(){ const m = S.day % 7; return m === 0 ? 0 : 7 - m; }
 function nextEventText(){
-  if(S.flags.won) return '本局已通关';
+  /* M51：删掉了「通关就返回『本局已通关』」那条旧分支 —— 那是旧版的一件残留：
+     通关后 HUD/旧地图卡上会挂一条「📅 本局已通关」。现在通关直接进无尽，这里按血月/断电/尸群照常报。 */
   const dh = daysToHorde();
   if(dh === 0) return '今晚血月';
   if(S.cal.powerOff === false && S.day < 14 && 14 - S.day <= 2) return (14 - S.day) + ' 天后断水断电';
@@ -3296,7 +3306,7 @@ function travelTo(id, silent){
   autosave();
   return true;
 }
-function goHome(){ if(S.loc !== 'base') travelTo('base'); }
+/* M51：goHome() 随旧版「城市地图」卡一起删除（它只服务于那张卡上的「🏠 返回安全屋」按钮）。 */
 /* ── 基地防线：门与围墙都有血，尸潮靠打穿它们进来 ── */
 function defMax(){ return { door: 24 + S.base.door * 26, wall: S.base.wall * 46 }; }
 function defInit(){ const m = defMax(); if(!S.def.doorHp || S.def.doorHp > m.door) S.def.doorHp = m.door; if(S.def.wallHp > m.wall) S.def.wallHp = m.wall; }
@@ -3382,32 +3392,10 @@ function raiseHorde(size, why){
   log('📡 ' + why + '——有东西成群结队地朝这边来了。预计 ' + S.horde.eta + ' 天后抵达。', 'danger');
   toast('⚠️ 尸群迁徙', '约 ' + S.horde.eta + ' 天后抵达基地（规模 ' + S.horde.size + '）', 'bad');
 }
-/* ── 地图与日历面板 ── */
-function mapClick(id){ sfx('ui'); openZone(id); }
-function renderMap(){
-  const ids = Object.keys(MAP);
-  let svg = '<svg class="wmap" viewBox="0 0 100 80" preserveAspectRatio="xMidYMid meet">';
-  ids.forEach(id => { if(id === 'base') return; const m = MAP[id];
-    svg += '<line x1="' + MAP.base.x + '" y1="' + MAP.base.y + '" x2="' + m.x + '" y2="' + m.y + '" class="' + (S.seen[id] ? 'lk' : 'lu') + '"/>'; });
-  ids.forEach(id => {
-    const m = MAP[id], cur = S.loc === id, known = id === 'base' || !!S.seen[id];
-    svg += '<g class="wnode' + (cur ? ' cur' : '') + (known ? '' : ' unk') + '"' + (known ? ' onclick="mapClick(\'' + id + '\')"' : '') + '>' +
-      '<circle cx="' + m.x + '" cy="' + m.y + '" r="' + (cur ? 3.6 : 2.4) + '"/>' +
-      '<text x="' + m.x + '" y="' + (m.y - 4.8) + '">' + m.icon + '</text>' +
-      '<text x="' + m.x + '" y="' + (m.y + 6.6) + '" style="font-size:3.1px">' + (known ? m.n : '???') + '</text></g>';
-  });
-  svg += '</svg>';
-  const here = MAP[S.loc] || MAP.base;
-  let h = '<div class="sect-title">城市地图 <span class="badge">当前位置：' + here.n + '</span></div><div class="card" style="padding:8px">' + svg;
-  h += '<div class="hint" style="margin-top:6px">点地图上的点=前往并查看。路程按两处等级取平均（1~3 行动力）；<b>夜里走路更容易撞上东西</b>，骨折还会 +1。</div>' +
-    '<div class="row" style="margin-top:6px">' +
-      (S.loc === 'base' ? '<span class="tag eq">已在安全屋</span>'
-        : '<button class="btn sm ok" onclick="goHome()">🏠 返回安全屋 (' + travelCost('base') + ' AP)</button>') +
-      '<span class="chip">📍 <b>' + here.n + '</b></span>' +
-      '<span class="chip ' + (threatLevel() >= 3 ? 'heavy warnpulse' : '') + '">📅 <b>' + nextEventText() + '</b></span>' +
-    '</div></div>';
-  return h;
-}
+/* ── 日历面板 ── */
+/* M51：旧版「城市地图」整块删除（renderMap / mapClick / goHome 一起走）。
+   它在 M17 就被 v4 的大世界地图取代了，唯一还能露脸的机会是"本局已结束"时的旧版回退窗口 ——
+   而那正是用户报障的那一屏（旧地图卡 +「📅 本局已通关」图例 + 「已在安全屋」）。 */
 function renderCalendar(){
   let h = '<div class="sect-title">日历 · 第 ' + S.day + ' / ' + GOAL_DAY + ' 天</div><div class="card" style="margin-bottom:12px">';
   h += '<div class="row">' +
@@ -3573,6 +3561,7 @@ function bossPhase2(){
 function finalVictory(){
   S.quest.stage = 6;
   S.flags.won = true; S.flags.cured = true;
+  winContinue();                       // M51：通关 = 转入无尽延续（不置 over，界面不回退旧版）
   grant('cure', 1, true); grant('data', 1, true);
   LORE.forEach(l => discoverLore(l.id, true));
   award('a_cure');
@@ -3594,18 +3583,25 @@ function finalVictory(){
   toast('🏆 通关','你取回了「芥末」病毒的解药。','ok');
   modal({ title:'🏆 通关 · 余烬', sticky:true,
     body:'<p class="muted">你用 <b class="mono">' + S.day + '</b> 天走完了这条线：击杀 <b class="mono">' + S.stats.kills + '</b>，秘闻 <b class="mono">' + S.lore.length + '/' + LORE.length + '</b>，成就 <b class="mono">' + S.ach.length + '/' + ACHIEVEMENTS.length + '</b>。</p>' +
-      '<p class="muted" style="margin-top:10px">游戏没有结束：进入<b>无尽模式</b>后丧尸仍会按天数进化，夜晚尸潮会越来越重，你可以继续把据点建满、把图鉴收全。</p>',
-    footer:'<button class="btn warn" onclick="enterEndless()">♾️ 进入无尽模式</button><button class="btn" data-close>先看看日志</button>' });
+      '<p class="muted" style="margin-top:10px">游戏没有结束：你已经在<b>无尽模式</b>里了——丧尸仍会按天数进化，夜晚尸潮会越来越重，你可以继续把据点建满、把图鉴收全。</p>',
+    footer:'<button class="btn warn" data-close>♾️ 继续活下去（无尽）</button>' });
   render();
   autosave();
 }
+/** M51：通关（取回解药 / 第 100 天救援）= 这一局继续往下走，不是"本局已结束"。
+ *  根因见 v4/endless-core.winContinuePatch：以前通关置 S.over=true，而 v4 世界面板/区域移动/
+ *  夜间结算全以 over 为总闸 —— 关掉结局弹窗后整屏退化成旧版探索页（旧版「城市地图」+
+ *  「本局已通关」图例），要再点一次按钮才回得来。这里当场清 over + 开无尽，界面全程是 v4。 */
+function winContinue(){
+  const p = winContinuePatch({ over: !!S.over, hp: S.hp, hpMax: S.hpMax, ap: S.ap, apMax: S.apMax, endless: !!S.flags.endless });
+  S.over = p.over; S.hp = p.hp; S.ap = p.ap; S.flags.endless = p.endless;
+}
 function enterEndless(){
   closeAllModals();
-  /* 根因：rescueEnding()（第 100 天好结局）与 gameOver() 都会把 S.over 置 true（那一局"已结束"），
-     但 enterEndless() 原来没清它 —— over=true 时 v4 世界面板整块退出渲染
-     （world-ui mountWorld 的 `if(!S || S.over)` 分支），卡片墙/地图消失退化成旧版探索页，
-     同时 travel/search/nightTick 全部 early-return，玩家看到的就是"进无尽直接死 + 地图变旧版"。
-     所以进无尽 = 重新开一局：清 over、补行动力；血为 0（从死亡界面点进来）时救回三成。 */
+  /* M37 的老根因：rescueEnding()/gameOver() 会把 S.over 置 true（那一局"已结束"），
+     而 v4 世界面板整块以 over 为总闸（world-ui 的 `if(!S || S.over)`），不清它就会
+     "进无尽直接死 + 地图变旧版"。M51 起通关已经改为当场 winContinue()（不再有那个中间态），
+     这个函数只剩两个用途：老档救援 + 探针/回归脚本的入口。 */
   const back = resumeFromOver(S);
   if(back.revived) log('💗 你在废墟里又睁开眼——无尽模式不打算这么早收走你（生命恢复到 ' + back.hp + '）。','success');
   S.flags.endless = true;
@@ -3621,9 +3617,15 @@ function enterEndless(){
 /* ───────────── 图鉴 ───────────── */
 let codexCat = 'zombie';
 function renderCodex(){
-  const cats = [['zombie','🧟 丧尸'],['item','📦 物品'],['lore','📜 秘闻']];
+  /* M50：第 4 类「治疗指南」——原来贴在人体页右下角（用户：「把治疗指南移动到图鉴内」）。
+     内容由 v4 渲染（medical-core 的伤情表 + survival-core 的病症表），这里只留一个调用点。 */
+  const cats = [['zombie','🧟 丧尸'],['item','📦 物品'],['lore','📜 秘闻'],['guide','📘 治疗指南']];
   let h = '<div class="row" style="margin-bottom:10px">' + cats.map(c =>
     '<button class="btn sm ' + (codexCat === c[0] ? 'warn' : '') + '" onclick="codexCat=\'' + c[0] + '\';render()">' + c[1] + '</button>').join('') + '</div>';
+  if(codexCat === 'guide'){
+    h += window.__v4GuideHtml ? window.__v4GuideHtml() : '<p class="muted">治疗指南还没装载。</p>';
+    return h;
+  }
   if(codexCat === 'zombie'){
     h += '<div class="grid g2">';
     for(const k in ZOMBIES){
@@ -4128,7 +4130,7 @@ function bootLab(){
 /* 内联 onclick 只能看到 window 上的属性，而顶层 let/const 不是 window 属性：
    这里把状态对象挂成访问器，保证内联事件与外部脚本读写的是同一份状态。 */
 /* ── C23 工程加固：显式导出（内联 onclick 与外部验证脚本依赖这些名字）── */
-Object.assign(window, { VER, SAVE_KEY, V1_KEY, ITEMS, itemName, isWpn, ZOMBIES, ZONES, BASE_UP, RECIPES, SKILLS, COMPANIONS, MERCHANT, LORE, ACHIEVEMENTS, AFFIX, BOUNTY_POOL, QUEST_BOUNTIES, SIDE_QUESTS, MODS, ZONE_SIL, newState, RM, BAK_KEY, writeSave, saveGame, autosave, readSavedRaw, lsGet, lsSet, sanitizeSave, MIGRATIONS, migrateSave, loadGame, confirmRestart, migrateV1, deepMerge, restoreBackup, $, $$, clamp, rnd, ri, chance, pick, wpick, esc, AUDIO_MAX, actx, AMB, ambStart, ambBlip, ambStop, ambMode, ambSync, MUS, MUS_MAX, CHORDS, PENTA, mtof, musicMood, musicTempo, musicVoice, musicNoiseHit, musicBar, musicStart, musicStop, musicSting, tone, arnd, noise, SFX, sfx, floatText, shake, toast, firstTip, award, addXP, log, clearLog, replayLog, hr, skillBonus, capWeight, carryWeight, encumbrance, armorTotal, addItem, takeItem, itemCount, has, ammoInMag, phaseName, spendAP, tickVitals, statMods, sleepNight, nightRaid, combatRepair, rescueEnding, recapHtml, TABS, renderTop, bar, renderHud, nextStep, renderTabs, setTab, render, baseLevel, modal, closeModal, closeAllModals, mkFoe, startCombat, openCombatModal, cbLog, drawCombat, battleTarget, siegePanelHtml, effDmg, combatAct, combatAfter, combatResolve, hitFoe, killFoe, afterPlayerTurn, companionTurn, foeTurn, endCombat, gameOver, restart, zoneOpen, zoneLockText, renderExplore, openZone, drawZone, grant, searchZone, applyFirst, lootItem, encounterRoll, survivorEvent, recruit, restHere, useConsumable, equipItem, equipWeapon, dropItem, deposit, withdraw, TYPE_LABEL, TYPE_TAG, renderInv, renderSideQuests, renderMods, renderCraft, craft, renderBase, scaledCost, build, renderSkills, QUEST_STAGES, questProgress, checkQuest, renderQuest, GOAL_DAY, MAP, WOUND_DEF, daysToHorde, nextEventText, threatLevel, travelCost, travelTo, goHome, defMax, defInit, repairDefense, TRAPS, buildTrap, hasWound, addWound, cureWound, woundTick, spoilTick, powerOff, raiseHorde, mapClick, renderMap, renderCalendar, noiseCheck, runScore, bountyBudget, bountyDef, metricValue, rollBounties, bountyTick, claimBounty, renderBounties, affixRoll, applyAffix, sideActive, sideTick, sideAdvance, sideNightCheck, modsOf, modSum, modMul, addMod, shopLeft, shopDayCheck, startFinalBattle, bossPhase2, finalVictory, enterEndless, renderCodex, discoverLore, renderStats, checkAch, merchantRate, openMerchant, buyMerchant, openMenu, openHelp, firstGesture, togglePace, toggleAmb, toggleMusic, initGame,
+Object.assign(window, { VER, SAVE_KEY, V1_KEY, ITEMS, itemName, isWpn, ZOMBIES, ZONES, BASE_UP, RECIPES, SKILLS, COMPANIONS, MERCHANT, LORE, ACHIEVEMENTS, AFFIX, BOUNTY_POOL, QUEST_BOUNTIES, SIDE_QUESTS, MODS, ZONE_SIL, newState, RM, BAK_KEY, writeSave, saveGame, autosave, readSavedRaw, lsGet, lsSet, sanitizeSave, MIGRATIONS, migrateSave, loadGame, confirmRestart, migrateV1, deepMerge, restoreBackup, $, $$, clamp, rnd, ri, chance, pick, wpick, esc, AUDIO_MAX, actx, AMB, ambStart, ambBlip, ambStop, ambMode, ambSync, MUS, MUS_MAX, CHORDS, PENTA, mtof, musicMood, musicTempo, musicVoice, musicNoiseHit, musicBar, musicStart, musicStop, musicSting, tone, arnd, noise, SFX, sfx, floatText, shake, toast, firstTip, award, addXP, log, clearLog, replayLog, hr, skillBonus, capWeight, carryWeight, encumbrance, armorTotal, addItem, takeItem, itemCount, has, ammoInMag, phaseName, spendAP, tickVitals, statMods, sleepNight, nightRaid, combatRepair, rescueEnding, recapHtml, TABS, renderTop, bar, renderHud, nextStep, renderTabs, setTab, render, baseLevel, modal, closeModal, closeAllModals, mkFoe, startCombat, openCombatModal, cbLog, drawCombat, battleTarget, siegePanelHtml, effDmg, combatAct, combatAfter, combatResolve, hitFoe, killFoe, afterPlayerTurn, companionTurn, foeTurn, endCombat, gameOver, restart, zoneOpen, zoneLockText, renderExplore, openZone, drawZone, grant, searchZone, applyFirst, lootItem, encounterRoll, survivorEvent, recruit, restHere, useConsumable, equipItem, equipWeapon, dropItem, deposit, withdraw, TYPE_LABEL, TYPE_TAG, renderInv, renderSideQuests, renderMods, renderCraft, craft, renderBase, scaledCost, build, renderSkills, QUEST_STAGES, questProgress, checkQuest, renderQuest, GOAL_DAY, MAP, WOUND_DEF, daysToHorde, nextEventText, threatLevel, travelCost, travelTo, defMax, defInit, repairDefense, TRAPS, buildTrap, hasWound, addWound, cureWound, woundTick, spoilTick, powerOff, raiseHorde, renderCalendar, noiseCheck, runScore, bountyBudget, bountyDef, metricValue, rollBounties, bountyTick, claimBounty, renderBounties, affixRoll, applyAffix, sideActive, sideTick, sideAdvance, sideNightCheck, modsOf, modSum, modMul, addMod, shopLeft, shopDayCheck, startFinalBattle, bossPhase2, finalVictory, enterEndless, renderCodex, discoverLore, renderStats, checkAch, merchantRate, openMerchant, buyMerchant, openMenu, openHelp, firstGesture, togglePace, toggleAmb, toggleMusic, initGame,
   /* M25：口径/弹种/辐射这几个查询函数被验收探针与将来的 UI 直接用，一并挂出去 */
   CALIBERS, AMMO_OF, ammoCount, loadedAmmo, setLoaded, cycleLoaded, penMul, radTier, apCapOf, fitnessApBonus, phaseOf, PHASE_LABEL,
   syncAmmo, materializeAmmoPool, ammoShopRows,   // M32b：弹药镜像收口 + 货架弹药段（验收探针直接调）

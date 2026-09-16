@@ -148,8 +148,15 @@ tests/*.test.ts          vitest 单测（385 条）
    根因是 `rescueEnding()`（第 100 天好结局）和 `gameOver()` 都把 `S.over = true`，而 `enterEndless()` 没清它；
    `S.over` 是 v4 世界层的总闸（`world-ui mountWorld` 的 `if (!S || S.over)` 整块退出渲染 → 卡片墙/地图消失，
    `travel/search/nightTick` 全部 early-return → 动不了）。修法：新 `src/v4/endless-core.ts`（`resumeFromOver()` 清 over +
-   补行动力 + 血为 0 救回三成、`endDayLabel/endGoalChip/overHint`），`enterEndless()` 调它。
-   验收：`tests/m37-endless.test.ts` 15 例 + `docs/_m37_probe.mjs` 24/24（本地 + 线上）。
+   补行动力 + 血为 0 救回三成、`endDayLabel/endGoalChip`），`enterEndless()` 调它。
+   **M51 把它改彻底了（同一处报障的第二轮）**：用户截图指出"通关后这个玩意是老版本的、整个界面都退回老版本"——
+   那条路只是把"必须点一次按钮"当成正常流程，中间态本身就是旧版探索页（旧版「城市地图」卡 +「📅 本局已通关」图例）。
+   M51 起：**通关不再置 `S.over`**，`rescueEnding()/finalVictory()` 当场走 `winContinue()`（`endless-core.winContinuePatch`：
+   清 over + 开 endless），"进入无尽模式"按钮全部删除，`nextEventText()` 的「本局已通关」分支、legacy 的
+   `renderMap/mapClick/goHome`（旧版城市地图整块）也一并删除；`over=true` 现在只剩"真死了"一种情形，
+   死亡时由 v4 自己画结束卡（`world-ui.mountOverCard` + `#view.v4-over` 隐藏旧版探索页），不再把页面交回 legacy。
+   老档归一：`sanitizeSave` 里 `won=true → endless=true`。
+   验收：`tests/m37-endless.test.ts` 19 例 + `docs/_m37_probe.mjs` 16/16（本地；截图 `docs/_m51_shots/`）。
 2. **M38 / M39 / M40 三批 QoL 全部完成并上线**（用户从 15 项清单里勾的 10 项）：
    - M38：背包筛选 / 「丢1」·「全丢×N」/ 储物箱"能塞多少塞多少" + 批量存入 / 探索补给快捷键 1-4 / 战斗「重复上次（R）」
      （`src/v4/qol-core.ts`，`tests/m38-qol.test.ts` 18 例，`docs/_m38_probe.mjs` 18/18）

@@ -736,12 +736,13 @@ export function renderDetailPanel(): string {
 /* ── 与 legacy 探索页拼接 ── */
 
 function pruneLegacy(view: HTMLElement) {
-  // legacy 的「城市地图」「可搜刮区域」两段由大世界地图取代：标题 + 紧随其后的那块内容一起摘掉
+  // 「可搜刮区域」这块由大世界地图取代：标题 + 紧随其后的那块内容一起摘掉
   const titles = Array.from(view.querySelectorAll('.sect-title')) as HTMLElement[];
   for (const t of titles) {
     const txt = (t.textContent || '').trim();
-    // 这两块被大世界地图取代（M17），今日行动被 v4 的卡片取代（M21：里面的「睡觉」按钮
-    // 直连 sleepNight()，会绕过 v4 的睡眠债/环境/夜袭结算，且和「今夜」卡重复）
+    // 这两块被大世界地图取代（M17；M51 起「城市地图」在 legacy 里已经整块删除，这里留着只是兜底），
+    // 今日行动被 v4 的卡片取代（M21：里面的「睡觉」按钮直连 sleepNight()，
+    // 会绕过 v4 的睡眠债/环境/夜袭结算，且和「今夜」卡重复）
     if (txt.startsWith('城市地图') || txt.startsWith('可搜刮区域') || txt.startsWith('今日行动')) {
       const next = t.nextElementSibling;
       t.remove();
@@ -804,6 +805,29 @@ function legacyTitleOf(e: HTMLElement): string {
   return fallbackTitle(e.textContent || '');
 }
 
+/** M51：本局结束（死亡）时探索页上唯一该出现的卡 —— 旧版探索页整块隐藏，只留这一张 + 悬浮地图窗。
+ *  幂等：卡片已在且已是第一个子节点就直接返回（再 insertBefore 也算一次 childList 变更，
+ *  会触发 main.ts 那个 MutationObserver → mountWorldPanel 再进来 → 死循环）。 */
+function mountOverCard(view: HTMLElement) {
+  view.classList.add('v4-over');
+  let card = view.querySelector<HTMLElement>('#v4over');
+  if (!card) {
+    const s = L.S as any;
+    card = document.createElement('div');
+    card.id = 'v4over';
+    card.className = 'v4card';
+    card.dataset.card = 'over';
+    card.innerHTML =
+      '<div class="card-hd"><span class="card-tt">💀 本局结束</span>' +
+      '<span class="badge">第 ' + Math.max(1, Number(s?.day) || 1) + ' 天</span></div>' +
+      '<div class="card-bd"><div class="hint">这一档到这里收尾了。重开一局，或者读回上一次存档。</div>' +
+      '<div class="row" style="margin-top:8px">' +
+      '<button class="btn warn" onclick="restart()">🔄 重新开始</button>' +
+      '<button class="btn" onclick="loadGame()">📂 读取存档</button></div></div>';
+  }
+  if (view.firstChild !== card) view.insertBefore(card, view.firstChild);
+}
+
 export function mountWorldPanel() {
   const S = L.S;
   const view = document.getElementById('view');
@@ -823,10 +847,16 @@ export function mountWorldPanel() {
   const host = inlineHere ? view : (winBody || view);
   if (map.parentElement !== host) host.appendChild(map);     // 换宿主（两种摆法共用同一张卡）
   if (!S || S.over) {
+    /* M51：本局结束（现在只剩"死亡"这一种情形 —— 通关改成无尽延续，不再置 over）也**不把探索页
+       交回 legacy**：那正是用户报的"通关后整个界面退回老版本"（旧版城市地图 +「本局已通关」图例）。
+       v4 自己挂一张结束卡，并给 #view 打上 v4-over（CSS 把旧版内容整块隐藏）。 */
+    if (S && S.tab === 'explore') mountOverCard(view);
+    else view.classList.remove('v4-over');
     view.classList.remove('v4-board');
     paintMapWindow();
     return;
   }
+  view.classList.remove('v4-over');            // 重开/读档后不能再带着结束态（那张卡随 legacy 重画一起没了）
   if (S.tab === 'explore') {
     /* M25.2：读档/换日之后把 AP 上限与睡眠债 + 体能对齐（R5：债是唯一真值）。 */
     const capBefore = L.S.apMax;
