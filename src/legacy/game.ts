@@ -12,6 +12,7 @@ import { exportSaveText, importSaveText, parsePortText, portSummary, passphraseI
 import { backupLabel, BACKUP_SLOTS } from '../v4/backup-core';   // M39：备份历史（标签与份数）
 import { snapshotScroll, restoreScroll, keepOffsets, shouldStickToBottom, nextLogFollow, isAwayKey, isBackKey } from '../v4/scroll-keep';   // M43：刷新时保住滚动位置；M49：日志跟随按玩家意图判
 import { BASE_SECTIONS, scaledCost as coreScaledCost, defMaxOf, raidChance, raidGuaranteed, abandonCost, waterYield, nightlyYield, trapCap, verdictOf, missingFor, adviseBuilds, facilityDelta } from '../v4/base-core';   // M54：据点系统的算式与建议（纯逻辑，唯一真值）
+import { starvationTick, sleepHealMul, nightConsumption, sleepWarning } from '../v4/hunger-core';   // M55：饥饿/脱水的夜间结算（堵住"只睡觉速通"）
 import { seasonOf } from '../v4/env-core';   // M54：据点产出要按季节/天气算（鱼塘冬天减产）
 import { POND_FEED_ITEMS } from '../v4/water-core';
 
@@ -519,6 +520,7 @@ function newState(){
     cal:{ powerOff:false, bloodMoon:false, warned:0 },                // 日历状态
     seen:{},              // 区域首次发现记录
     noise:0,              // 噪音值：引尸潮
+    starveN:0, thirstN:0, // M55：连续挨饿/脱水几晚（夜里按它加码掉血；吃东西喝水就归零）
     world:null,           // v4.0 大世界进度（区块位置/迷雾/POI 剩余次数/载具）：由 src/v4/worldstate.ts 解释
     // M13：委托（接单制）与「大故事」章节进度 —— 逻辑全在 src/v4/contracts-core.ts / story-core.ts，
     // 这里只留两个字段做存档容器；老档没有它们 → 由 v4 侧 ensure 补齐。
@@ -700,6 +702,9 @@ function sanitizeSave(d){
   out.horde = { eta: Math.floor(num(hd.eta, 0, 0, 99)), size: Math.floor(num(hd.size, 0, 0, 99)) };
   const ca = out.cal || {};
   out.cal = { powerOff: !!ca.powerOff, bloodMoon: !!ca.bloodMoon, warned: Math.floor(num(ca.warned, 0, 0, 999)) };
+  /* M55：饥饿/脱水计数（老档没有这两个字段 → 0；手改档塞进负数/天文数字也拉回安全区间） */
+  out.starveN = Math.floor(num(out.starveN, 0, 0, 999));
+  out.thirstN = Math.floor(num(out.thirstN, 0, 0, 999));
   const sh = out.shop || {};
   out.shop = { day: Math.floor(num(sh.day, 0, 0, 1e6)), bought: {} };
   if(sh.bought && typeof sh.bought === 'object') for(const id in sh.bought)
@@ -1571,18 +1576,28 @@ function sleepNight(){
   if(!atBase) log('⚠️ 你在外面过夜：没有墙，只有一堆纸箱和一件外套。', 'danger');
   log('🌙 你把门窗顶死，缩进角落。这一夜会很长……','system');
   sfx('night');
-  // 夜间消耗
+  // 夜间消耗（M55：野外 ×1.5 —— 没热饭没净水，冻一夜更耗人）
   const cut = 1 - skillBonus('survival', .03, .35);
-  S.hun = clamp(S.hun - 12 * cut, 0, 100);
-  S.thi = clamp(S.thi - 14 * cut, 0, 100);
+  const eat = nightConsumption(atBase);
+  S.hun = clamp(S.hun - eat.hun * cut, 0, 100);
+  S.thi = clamp(S.thi - eat.thi * cut, 0, 100);
   /* M30：病程在夜里推进得更快（"病了就早睡"要真的有用） */
   { const svN = (typeof window.V4Survival === 'object' && window.V4Survival) ? window.V4Survival : null; if(svN) svN.nightStep(); }
   /* M31：过夜也是康复的关键窗口（睡一觉，手术过的伤恢复得更快） */
   { const mdN = (typeof window.V4Medical === 'object' && window.V4Medical) ? window.V4Medical : null; if(mdN) mdN.nightBody(); }
   S.sta = S.staMax;
-  const bedHeal = Math.round((12 + S.base.bed * 9) * (atBase ? 1 : .45));
+  /* M55：饥饿/脱水的夜间结算（用户报的速通漏洞就在这里 —— 以前睡觉这条路完全不结算饥饿伤害，
+     于是"不吃不喝一直睡"既能回血又能推进天数，直接睡到第 100 天通关）。
+     现在：归零当晚就掉血、连睡加剧、空腹回血只剩 1/4。 */
+  const starve = starvationTick({ hun: S.hun, thi: S.thi, starveN: S.starveN, thirstN: S.thirstN });
+  S.starveN = starve.starveN; S.thirstN = starve.thirstN;
+  if(starve.hpLoss > 0){ S.hp -= starve.hpLoss; for(const ln of starve.lines) log(ln, 'danger'); }
+  const warn = sleepWarning(S.hun, S.thi);
+  if(warn) log(warn, 'danger');
+  const bedHeal = Math.round((12 + S.base.bed * 9) * (atBase ? 1 : .45) * sleepHealMul(S.hun, S.thi));
   S.hp = Math.min(S.hpMax, S.hp + bedHeal);
-  log('😴 睡了 ' + (atBase ? (S.base.bed ? '行军床' : '地板') : '露天') + '，恢复 ' + bedHeal + ' 生命、全部体力。','success');
+  log('😴 睡了 ' + (atBase ? (S.base.bed ? '行军床' : '地板') : '露天') + '，恢复 ' + bedHeal + ' 生命、全部体力。' +
+    (sleepHealMul(S.hun, S.thi) < 1 ? '（空腹/脱水：只恢复四分之一）' : ''),'success');
   // 感染自然消退 / 爆发
   if(S.infect > 0){
     if(S.infect >= 60){
