@@ -4211,6 +4211,14 @@ function bootLab(){
       }
     }
   }
+  /* M55：教学保证（2）—— 把指定敌人的血量按倍率压成"训练靶"（同样只动沙盒内存里的那张表） */
+  if(p.foeHpMul && typeof p.foeHpMul === 'object'){
+    for(const eid in p.foeHpMul){
+      const z = ZOMBIES[eid], mul = +p.foeHpMul[eid];
+      if(!z || !isFinite(mul) || mul <= 0 || mul >= 1) continue;
+      z.hp = Math.max(1, Math.round(z.hp * mul));
+    }
+  }
   hr();
   log('🧪 教程沙盒 · ' + (lab.ch || 'survival') + '（固定种子 ' + S.seed + '）','system');
   log('这里怎么玩都**不会**写进你的主档：不存档、不上传、死了不惩罚。照着右侧目标清单练就行。','info');

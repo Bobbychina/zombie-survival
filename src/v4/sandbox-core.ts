@@ -74,6 +74,10 @@ export interface LabPreset {
       第 2 章要"用穿甲弹打死装甲丧尸"，而装甲丧尸平时只在地铁/军方/实验室那几区刷，
       靠运气走进去太玄学；只在沙盒生效，主档不受影响。 */
   extraEnemies?: string[];
+  /** M55：教学保证（2）—— 把这些敌人的血量按倍率压下来（**只在沙盒的内存里改**）。
+      第 2 章那只装甲丧尸 62 血、手枪打上去一下只有 3~11 点，探针实测经常"打得对但弹药见底"，
+      教学章不该被运气卡住：给它半个血条当"训练靶"，打法（换穿甲弹 + 连发 + 包扎）照样得学。 */
+  foeHpMul?: Record<string, number>;
 }
 
 /** 沙盒快照 → 通用读取（缺字段一律给安全默认，坏快照不许把父页面判绿/判崩） */
@@ -138,6 +142,7 @@ export const COMBAT_PRESET: LabPreset = {
   hp: 100, hun: 85, thi: 85, sta: 100,
   inv: { pistol: 1, crowbar: 1, a9_fmj: 24, a9_ap: 40, kevlar: 1, bandage: 5, medkit: 2, can: 2, water: 2 },
   extraEnemies: ['armored'],
+  foeHpMul: { armored: 0.55 },        // 训练靶：半个血条（打法照学，别让运气卡住教学章）
 };
 
 /** 第 3 章「人体与伤病」：用户拍板的"预设伤情"落在这里 —— 开局就带一处小出血 + 一处骨折，
