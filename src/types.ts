@@ -124,6 +124,8 @@ export interface Battle {
   /** 玩家的先手值：playerAct 内部要用它推进到下一轮 */
   playerSpeed: number;
   stats: { dealt: number; taken: number; clean: boolean };
+  /** M56：这一场已经逃跑失败过几次（每失败一次更难跑，失败还挨白打） */
+  fleeTries?: number;
 }
 
 /* ── NPC 幸存者 ── */

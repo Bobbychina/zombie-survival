@@ -5,6 +5,8 @@
    - 引擎不碰 DOM，也不直接读全局 S：由 bridge 注入玩家数值、由 UI 层同步回存档 */
 import { ITEM_MOVES, STATUS_NAME, TACTIC_MOVES, typeMult, effectivenessText, weaponMoves } from './moves';
 import { penMul } from './ammo-core';        // M25：子弹穿透 vs 装甲（口径弹种规则与 legacy 共用一份）
+import { fleeChanceOf, fleeFailPlan } from './flee-core';   // M56：逃跑成功率（含"连试递减"）与失败代价
+import { DECOYS, planDecoy } from './decoy-core';           // M56：避战道具（气味引诱器三档）
 import type { ActorRef, Battle, BattleEvent, DamageType, Foe, Move, PlayerCombatState, StatusKind } from '../types';
 
 export interface PlayerProfile {
@@ -33,11 +35,19 @@ export function movesFor(p: PlayerProfile): Move[] {
   // 战术槽：有体力就带突进，否则带架势
   const tactic = p.sta >= 8 ? TACTIC_MOVES.find(m => m.id === 'lunge')! : TACTIC_MOVES.find(m => m.id === 'guard')!;
   out.push(tactic);
+  // M56：避战道具槽（身上有气味引诱器才出现）—— 引走敌人，能全引走就直接脱离接触
+  if (DECOYS.some(d => (p.inventory[d.id] ?? 0) > 0)) out.push(DECOY_MOVE);
   // 物品槽：优先能救命/能清场的
   const itemMove = ITEM_MOVES.find(m => (p.inventory[m.cost.item!] ?? 0) > 0);
   out.push(itemMove ?? TACTIC_MOVES.find(m => m.id === 'focus')!);
   return out;
 }
+
+/** M56：引诱器在战斗里占一个槽（用哪一档由 decoy-core 按场上威胁自动挑；本体不造成伤害） */
+export const DECOY_MOVE: Move = {
+  id: 'decoy', name: '引诱器', desc: '投放气味引诱器把敌人引开（够档的最低档；引不走的不消耗）',
+  type: 'shock', power: 0, acc: 1, crit: 0, cost: {}, target: 'all',
+};
 
 export function canUse(p: PlayerProfile, m: Move): { ok: boolean; why?: string } {
   if (m.cost.sta && p.sta < m.cost.sta) return { ok: false, why: '体力不足' };
@@ -146,6 +156,18 @@ export function playerAct(b: Battle, p: PlayerProfile, moveId: string, targetIdx
   if (m.cost.ammo) { p.ammo -= m.cost.ammo; b.player.ammo = p.ammo; }
   if (m.cost.item) { p.inventory[m.cost.item] = (p.inventory[m.cost.item] ?? 0) - 1; }
   if (moveId === 'smoke') { push(b, { kind: 'end', text: '💨 烟雾弹炸开，你脱离了接触。' }); finish(b, 'flee'); return; }
+  /* M56：引诱器 —— 按场上威胁自动挑"够档的最低档"；全引走 = 脱离接触，剩下几只继续打；
+     引不走的不消耗道具。引走的敌人**不算击杀**（不掉落、不给经验），所以只打 driven 标记 + 归零血量。 */
+  if (moveId === 'decoy') {
+    const plan = planDecoy(p.inventory, b.foes, { noFlee: !!b.opts.noFlee });
+    if (!plan.item) { push(b, { kind: 'info', text: plan.text }); return; }     // 不消耗、不占回合
+    p.inventory[plan.item] = (p.inventory[plan.item] ?? 0) - 1;
+    for (const i of plan.driven) { const f = b.foes[i]; f.hp = 0; (f as Foe & { driven?: boolean }).driven = true; }
+    push(b, { kind: 'effect', text: plan.text });
+    if (plan.clears) { push(b, { kind: 'end', text: '🚪 你趁着它们被引开，脱离了接触。' }); finish(b, 'flee'); return; }
+    endPlayerAction(b, p);
+    return;
+  }
 
   if (m.self) {
     if (m.self.guard) { b.player.guard = m.self.guard; }
@@ -325,13 +347,23 @@ export function advance(b: Battle, p: PlayerProfile, pSpeed: number): boolean {
 }
 
 export function fleeChance(b: Battle, p: PlayerProfile): number {
-  // 不许逃的场合（尸潮守夜/最终决战）就是 0：以前是在里面 -1 再被 8% 下限抬回来，等于永远有 8% 能溜
+  /* M56：成功率算式搬进 flee-core，并带上"这一场已经失败过几次"的递减（连试越难跑）。
+     `b.opts.noFlee`（守夜战 / 最终决战）直接给 0 —— 以前是在里面 -1 再被 8% 下限抬回来，等于永远有 8% 能溜。 */
   if (b.opts.noFlee) return 0;
   const fast = b.foes.some(f => f.hp > 0 && f.spd >= 2);
-  return Math.max(0.08, Math.min(0.92, 0.45 + p.speed * 0.02 - (fast ? 0.18 : 0)));
+  return fleeChanceOf({ base: 0.45 + p.speed * 0.02, fast, noFlee: false, tries: b.fleeTries || 0 });
 }
+/** M56：逃跑失败 = **真的挨打**（每个活着的敌人白打一轮 + 掉体力 + 下一次更难跑）。
+ *  用户报的漏洞就是这里：旧版失败只写一行日志，于是"一直点逃跑"= 无限免战。 */
 export function tryFlee(b: Battle, p: PlayerProfile): boolean {
   if (rnd() < fleeChance(b, p)) { finish(b, 'flee'); push(b, { kind: 'end', text: '🏃 你甩开了它们。' }); return true; }
-  push(b, { kind: 'info', text: '❌ 逃跑失败，它们扑了上来！' });
+  const alive = aliveFoes(b);
+  const plan = fleeFailPlan(alive.length);
+  b.fleeTries = (b.fleeTries || 0) + 1;
+  p.sta = Math.max(0, p.sta - plan.staCost);
+  b.player.sta = p.sta;
+  push(b, { kind: 'info', text: plan.text });
+  for (const i of alive) foeTurn(b, p, i);                     // 白挨一轮（引擎自己算伤害）
+  if (!b.over) push(b, { kind: 'info', text: '（下一次逃跑成功率：' + Math.round(fleeChance(b, p) * 100) + '%）' });
   return false;
 }

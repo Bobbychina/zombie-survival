@@ -13,6 +13,8 @@ import { backupLabel, BACKUP_SLOTS } from '../v4/backup-core';   // M39：备份
 import { snapshotScroll, restoreScroll, keepOffsets, shouldStickToBottom, nextLogFollow, isAwayKey, isBackKey } from '../v4/scroll-keep';   // M43：刷新时保住滚动位置；M49：日志跟随按玩家意图判
 import { BASE_SECTIONS, scaledCost as coreScaledCost, defMaxOf, raidChance, raidGuaranteed, abandonCost, waterYield, nightlyYield, trapCap, verdictOf, missingFor, adviseBuilds, facilityDelta } from '../v4/base-core';   // M54：据点系统的算式与建议（纯逻辑，唯一真值）
 import { starvationTick, sleepHealMul, nightConsumption, sleepWarning } from '../v4/hunger-core';   // M55：饥饿/脱水的夜间结算（堵住"只睡觉速通"）
+import { fleeChanceOf, fleeFailPlan } from '../v4/flee-core';     // M56：逃跑成功率（连试递减）与失败代价
+import { DECOYS, planDecoy } from '../v4/decoy-core';             // M56：避战道具（气味引诱器三档）
 import { seasonOf } from '../v4/env-core';   // M54：据点产出要按季节/天气算（鱼塘冬天减产）
 import { POND_FEED_ITEMS } from '../v4/water-core';
 
@@ -87,6 +89,11 @@ const ITEMS = {
   molotov:  {n:'燃烧瓶',    t:'thr',   w:1.2, dmg:48, area:true,  desc:'对全体敌人造成伤害并点燃。'},
   grenade:  {n:'手雷',      t:'thr',   w:0.9, dmg:70, area:true,  desc:'军方遗留，清场利器。'},
   smoke:    {n:'烟雾弹',    t:'thr',   w:0.5, escape:true, desc:'保证脱离战斗，无声。'},
+  /* M56：避战道具（用户：「气味引诱器…分等级，简易的引走普通僵尸，高阶的赶走高级僵尸」「可以找到或者自己做」）
+     规则在 v4/decoy-core：够档的最低档自动生效，引不走的**不消耗**；血月/守夜战/决战无效。 */
+  decoy1:   {n:'简易气味引诱器', t:'thr', w:0.4, decoy:1, desc:'腐肉与布料扎的臭味包：把普通丧尸引开（工作台可做，超市仓库能搜到）。'},
+  decoy2:   {n:'强力气味引诱器', t:'thr', w:0.5, decoy:2, desc:'浓缩化学臭味：进阶丧尸（壮汉/毒尸/猎犬/喷吐者）也扛不住（医疗台可做）。'},
+  decoy3:   {n:'军用信息素诱饵', t:'thr', w:0.6, decoy:3, desc:'军用级配方：精英与暴君都会转身离开（弹药台高阶可做，军方检查站能搜到）。'},
   // 武器
   crowbar:  {n:'撬棍',      t:'wpn',   w:2.0, dmg:14, sta:7,  crit:.08, noise:0,   desc:'开局的老伙计。无声、耐用。'},
   machete:  {n:'砍刀',      t:'wpn',   w:1.5, dmg:23, sta:9,  crit:.18, noise:0,   desc:'开山刀，劈砍顺手，容易出血。'},
@@ -147,13 +154,13 @@ const ZOMBIES = {
 // 区域：d 危险等级，req 解锁条件，enemies 权重表
 const ZONES = {
   hospital: {n:'圣玛丽医院', d:'1', icon:'🏥', desc:'你苏醒的地方。药房和急诊室里还有东西。',
-    enemies:['walker','walker','crawler','screamer'], loot:{cloth:.35, bandage:.3, anti:.18, painkiller:.2, chem:.12},
+    enemies:['walker','walker','crawler','screamer'], loot:{cloth:.35, bandage:.3, anti:.18, painkiller:.2, chem:.12, decoy2:.12},
     first:{item:'bandage', n:3, log:'你在护士站的抽屉里翻出几卷还能用的绷带。'}, lore:['l_the_one']},
   police:   {n:'第 9 分局', d:'2', icon:'🚓', desc:'枪柜被撬过，但总有漏网的。',
     enemies:['walker','brute','crawler','hound'], loot:{metal:.3, powder:.3, pistol:.1, shotgun:.06, tape:.2},
     first:{item:'pistol', n:1, ammo:12, log:'枪柜底层卡着一把手枪和一小盒子弹。'}, lore:['l_military']},
   market:   {n:'惠民超市', d:'2', icon:'🛒', desc:'货架被扫空过一遍，但仓库深处没人动过。',
-    enemies:['runner','walker','hound','runner'], loot:{can:.4, water:.3, biscuit:.3, cola:.2, dirty:.15},
+    enemies:['runner','walker','hound','runner'], loot:{can:.4, water:.3, biscuit:.3, cola:.2, dirty:.15, decoy1:.18},
     first:{item:'can', n:2, log:'仓库的铁门还能推开，里面堆着没开封的罐头。'}, lore:['l_outbreak']},
   oldtown:  {n:'老城区', d:'2', icon:'🏚️', desc:'塌了一半的居民楼，钢筋和木料遍地。',
     enemies:['walker','crawler','brute','hound'], loot:{wood:.4, metal:.3, cloth:.3, tape:.2, chip:.12},
@@ -162,10 +169,10 @@ const ZONES = {
     enemies:['hound','runner','brute','poison'], loot:{fuel:.4, bottle:.3, powder:.2, molotov:.12},
     first:{item:'molotov', n:2, log:'便利店里凑齐了瓶子和汽油——你顺手做了两个燃烧瓶。'}, lore:['l_tech']},
   subway:   {n:'地铁三号线', d:'3', icon:'🚇', desc:'漆黑、潮湿、回声很大。毒气在隧道里积着不散。',
-    enemies:['poison','crawler','giant','walker','armored'], loot:{chem:.4, chip:.2, metal:.2, gasmask:.1, serum:.05, keycard:.08},
+    enemies:['poison','crawler','giant','walker','armored'], loot:{chem:.4, chip:.2, metal:.2, gasmask:.1, serum:.05, keycard:.08, decoy1:.14},
     first:{item:'gasmask', n:1, log:'检修间挂着一具防毒面具，滤罐还有余量。'}, lore:['l_virus']},
   military: {n:'军方检查站', d:'4', icon:'🪖', desc:'“净空协议”的边缘。装甲丧尸在这里游荡。',
-    enemies:['armored','brute','screamer','hound'], loot:{kevlar:.12, rifle:.1, marksman:.05, powder:.35, metal:.3, grenade:.1, keycard:.1, chip:.2},
+    enemies:['armored','brute','screamer','hound'], loot:{kevlar:.12, rifle:.1, marksman:.05, powder:.35, metal:.3, grenade:.1, keycard:.1, chip:.2, decoy3:.14},
     first:{item:'hazmat', n:1, log:'检查站的更衣帐篷里挂着一套完整的防化服，尺码刚好。'}, lore:['l_company']},
   lab:      {n:'方舟实验室外围', d:'5', icon:'☣️', desc:'通风井在往外吐白雾。往下的每一层都写着“别进去”。',
     req:{quest:5}, enemies:['giant','armored','poison','hound'], loot:{serum:.2, chem:.35, powder:.25, medkit:.2},
@@ -270,6 +277,10 @@ const RECIPES = [
   {out:'tape',     n:1, need:{cloth:1, chem:1},         st:'bench', lv:1, desc:'劣质胶带，但能粘住东西。'},
   {out:'medkit',   n:1, need:{bandage:2, anti:1, tape:1}, st:'bench', lv:2, desc:'凑齐一套急救物资。'},
   {out:'grenade',  n:1, need:{powder:3, metal:2, tape:1}, st:'bench', lv:3, desc:'自制破片手雷，威力有限但够用。'},
+  /* M56：避战道具（三档，越高档越能引走狠角色） */
+  {out:'decoy1',   n:2, need:{cloth:2, rot:1},  st:'bench', lv:0, desc:'简易气味引诱器 ×2：把普通丧尸引开（腐坏食物就是最好的臭源）。'},
+  {out:'decoy2',   n:2, need:{chem:2, cloth:2, tape:1}, st:'medlab', lv:1, desc:'强力气味引诱器 ×2：进阶丧尸也扛不住（化学药剂浓缩臭味）。'},
+  {out:'decoy3',   n:2, need:{powder:2, chem:2, chip:1, cloth:1}, st:'loading', lv:3, desc:'军用信息素诱饵 ×2：精英与暴君都会转身离开。'},
   /* ── 弹药台：复装（参考塔科夫的"弹种"分层） ── */
   {out:'a9_fmj',   n:12, need:{powder:2, metal:1},       st:'loading', lv:0, desc:'9mm 复装弹 ×12，打普通丧尸够用。'},
   {out:'a556_fmj', n:12, need:{powder:3, metal:2},       st:'loading', lv:1, desc:'5.56 复装弹 ×12。'},
@@ -2058,6 +2069,8 @@ function drawCombat(){
       '<button class="btn ok" onclick="combatAct(\'guard\')" ' + (b.busy ? 'disabled' : '') + '>🛡️ 防御 <kbd>2</kbd></button>' +
       '<button class="btn warn" onclick="combatAct(\'item\')" ' + (b.busy ? 'disabled' : '') + '>💊 用药 <kbd>3</kbd></button>' +
       '<button class="btn" onclick="combatAct(\'throw\')" ' + (b.busy ? 'disabled' : '') + '>💣 投掷 <kbd>4</kbd></button>' +
+      /* M56：避战道具（身上有气味引诱器才出现）—— 引走敌人，够了就直接脱离接触 */
+      (DECOYS.some(d => itemCount(d.id) > 0) ? '<button class="btn" onclick="combatAct(\'decoy\')" ' + (b.busy ? 'disabled' : '') + ' title="' + DECOYS.filter(d => itemCount(d.id) > 0).map(d => d.icon + d.name + '×' + itemCount(d.id)).join('、') + '">🧪 引诱器 <kbd>6</kbd></button>' : '') +
       (b.opts.noFlee ? '' : '<button class="btn danger" onclick="combatAct(\'flee\')" ' + (b.busy ? 'disabled' : '') + '>🏃 逃跑 <kbd>5</kbd></button>') +
     '</div>' +
     '<div class="round-log" id="cb-log" style="margin-top:10px;height:150px">' + rounds + '</div>' +
@@ -2198,13 +2211,28 @@ function combatResolve(kind, arg, staged){
     if(id === 'molotov') b.foes.forEach(f => { if(!f.dead) f.st.burn = 3; });
     cbLog('💥 ' + ITEMS[id].n + ' 在尸群里炸开！', 'good');
     S.noise += 2; noiseCheck();
+  } else if(kind === 'decoy'){
+    /* M56：避战道具 —— 按场上威胁自动挑"够档的最低档"；全引走 = 脱离接触；引不走的不消耗 */
+    const plan = planDecoy(S.inv, b.foes, { noFlee: !!b.opts.noFlee });
+    if(!plan.item){ cbLog(plan.text, 'hurt'); drawCombat(); return; }
+    takeItem(plan.item, 1);
+    plan.driven.forEach(i => { const f = b.foes[i]; f.dead = true; f.hp = 0; f.driven = true; });   // 引走 ≠ 击杀：不掉战利品、不给经验
+    cbLog(plan.text, 'good');
+    if(plan.clears){ endCombat('flee'); return; }
+    afterPlayerTurn();                              // 引走一部分也要过一个回合
   } else if(kind === 'flee'){
     const enc = encumbrance();
     const fast = alive.some(f => f.spd >= 2);
-    let p = .42 + S.skills.stealth * .035 + (S.eq.feet ? .08 : 0) - (fast ? .18 : 0) - (enc > 1 ? .15 : 0) - (b.opts.noFlee ? 1 : 0);
-    p = clamp(p, .08, .92);
-    if(chance(p)){ cbLog('🏃 你甩开了它们。', 'good'); endCombat('flee'); return; }
-    cbLog('❌ 逃跑失败，它们扑了上来！', 'hurt');
+    /* M56：成功率算式在 v4/flee-core；**反复失败会越来越难跑**，失败还要挨白打（用户报的漏洞：
+       旧版失败只写一行日志，"一直点逃跑" = 无限免战）。 */
+    const chanceOf = (tries) => fleeChanceOf({ base: .42, stealthLv: S.skills.stealth, hasBoots: !!S.eq.feet, fast, encOver: enc > 1, noFlee: !!b.opts.noFlee, tries });
+    if(chance(chanceOf(b.fleeTries || 0))){ cbLog('🏃 你甩开了它们。', 'good'); endCombat('flee'); return; }
+    const plan = fleeFailPlan(alive.length);
+    b.fleeTries = (b.fleeTries || 0) + 1;
+    S.sta = Math.max(0, S.sta - plan.staCost);
+    cbLog(plan.text, 'hurt');
+    afterPlayerTurn();                              // 把后背露给它们 = 每个活着的敌人白打一轮（含死亡判定与重绘）
+    if(battle && !battle.over) cbLog('（下一次逃跑成功率：' + Math.round(chanceOf(b.fleeTries) * 100) + '%）', 'dim');
   }
 }
 function hitFoe(foe, dmg, o){

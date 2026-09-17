@@ -168,7 +168,8 @@ export const V4UI = {
     killFoeHelpers();
     // 击杀奖励（引擎只负责判定，奖励走 legacy）
     b.foes.forEach((f, i) => {
-      if (f.hp <= 0 && !(f as any).__rewarded) { (f as any).__rewarded = true; onFoeFaint(cur!.srcs[i], f); }
+      /* M56：被引诱器引走的敌人不算击杀 —— 不掉战利品、不给经验、不计入"清空"（driven 标记） */
+      if (f.hp <= 0 && !(f as any).__rewarded && !(f as any).driven) { (f as any).__rewarded = true; onFoeFaint(cur!.srcs[i], f); }
     });
     // 只对这次行动新产生的伤害做飘字/抖动
     let hurt = 0;
@@ -250,6 +251,15 @@ export const V4UI = {
     return false;
   },
   isOpen() { return !!cur; },
+  /** M56：验证/调试用 —— 当前战斗的关键状态（探针不必去猜 DOM 文案：逃跑次数/成功率/被引走的敌人） */
+  state() {
+    if (!cur) return null;
+    return {
+      over: cur.b.over, round: cur.b.round, fleeTries: cur.b.fleeTries || 0,
+      chance: fleeChance(cur.b, cur.p), hp: cur.b.player.hp, sta: cur.p.sta,
+      foes: cur.b.foes.map(f => ({ id: f.id, hp: f.hp, driven: !!(f as any).driven })),
+    };
+  },
   /** M38：验证/调试用 —— 当前记着的"上次动作" */
   last() { return lastAct; },
   /** 验证/调试用：拿到当前战斗对象（探针要能强制结算来测 onWin 链） */

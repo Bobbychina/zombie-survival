@@ -48,7 +48,9 @@ export function playerProfile(): PlayerProfile {
   const e = L.effDmg(w, isGun);
   const mods = L.statMods();
   const inv: Record<string, number> = {};
-  ['bandage', 'medkit', 'molotov', 'grenade', 'smoke', 'antitoxin'].forEach(id => { if (L.itemCount(id) > 0) inv[id] = L.itemCount(id); });
+  /* 战斗里能用的道具白名单（M56：把避战道具也放进来 —— 以前这里是写死的一份，
+     新增的东西不加进来就会出现"背包里有、战斗里没这个槽"的怪事） */
+  for (const id of BATTLE_ITEMS) { if (L.itemCount(id) > 0) inv[id] = L.itemCount(id); }
   return {
     /* M25：弹药按"当前武器口径里装的那种弹"计数（口径分开后没有笼统的弹药池了） */
     hp: S.hp, hpMax: S.hpMax, sta: S.sta, staMax: S.staMax,
@@ -89,12 +91,15 @@ export function syncBack(p: PlayerProfile) {
     S.stats.ammoUsed = (S.stats.ammoUsed || 0) + took;
   }
   S.ammo = Math.max(0, p.ammo);
-  ['bandage', 'medkit', 'molotov', 'grenade', 'smoke', 'antitoxin'].forEach(id => {
+  for (const id of BATTLE_ITEMS) {
     const want = p.inventory[id] ?? 0;
     const have = L.itemCount(id);
     if (want < have) L.takeItem(id, have - want);
-  });
+  }
 }
+
+/** M56：战斗里能用的道具白名单（profile 与 syncBack 共用一份，避免"背包里明明有、战斗里没这个槽"的漂移） */
+const BATTLE_ITEMS = ['bandage', 'medkit', 'molotov', 'grenade', 'smoke', 'antitoxin', 'decoy1', 'decoy2', 'decoy3'];
 
 /** 击杀奖励：沿用 legacy 的掉落/经验/门禁卡/统计，再由 UI 层提示 */
 export function onFoeFaint(src: any, foe: Foe) {
