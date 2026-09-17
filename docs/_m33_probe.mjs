@@ -1,4 +1,4 @@
-// M33 取证：教程沙盒（章节壳 + 独立 iframe + 第 1 章目标清单全绿才算过）
+﻿// M33 取证：教程沙盒（章节壳 + 独立 iframe + 第 1 章目标清单全绿才算过）
 //   ① 入口在 ☰ 菜单里 ② 章节列表 6 章 / 只第 1 章可玩 ③ iframe 带 ?sandbox=1 且不读主档（day=1、固定种子）
 //   ④ 父页面收到快照 ⑤ 照着目标做真实操作 → 目标逐条判绿 → 全绿通关（记进本机进度）
 //   ⑥ **隔离**：玩了一整轮之后主档密文一个字节没变、父页面自己的进度也没变 ⑦ 重来/关闭 ⑧ 无报错
@@ -237,7 +237,7 @@ for (let i = 0; i < 20; i++) {
   if (r && r !== 'WAIT' && r !== 'NO-FRAME' && !String(r).startsWith('EXC')) { boot2 = JSON.parse(r); break }
   await sleep(500)
 }
-ok('第 2 章沙盒按自己的预设开局（固定种子 lab-combat-01 + 手枪 + 两种 9mm + 计数清零）', boot2 && boot2.day === 1 && boot2.pistol === 1 && boot2.ap === 24 && boot2.wpn === 'pistol' && boot2.kills === 0, JSON.stringify(boot2))
+ok('第 2 章沙盒按自己的预设开局（固定种子 lab-combat-01 + 手枪 + 两种 9mm + 计数清零）', boot2 && boot2.day === 1 && boot2.pistol === 1 && boot2.ap === 40 && boot2.wpn === 'pistol' && boot2.kills === 0, JSON.stringify(boot2))
 
 /** 打一场：点招式槽（真按钮）直到战斗结束；结束面板上的「继续」也要点（战斗界面不会自己关） */
 const fight = async (rounds = 30) => {

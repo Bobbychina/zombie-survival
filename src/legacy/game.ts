@@ -11,6 +11,9 @@ import { filterTabs, filterInv, dropCount, depositCount, quickSlots, quickPick, 
 import { exportSaveText, importSaveText, parsePortText, portSummary, passphraseIssue, passphraseWeak, portSizeKb, portFileName, PORT_MAGIC } from '../v4/save-port-core';   // M39：口令加密导出/导入
 import { backupLabel, BACKUP_SLOTS } from '../v4/backup-core';   // M39：备份历史（标签与份数）
 import { snapshotScroll, restoreScroll, keepOffsets, shouldStickToBottom, nextLogFollow, isAwayKey, isBackKey } from '../v4/scroll-keep';   // M43：刷新时保住滚动位置；M49：日志跟随按玩家意图判
+import { BASE_SECTIONS, scaledCost as coreScaledCost, defMaxOf, raidChance, raidGuaranteed, abandonCost, waterYield, nightlyYield, trapCap, verdictOf, missingFor, adviseBuilds, facilityDelta } from '../v4/base-core';   // M54：据点系统的算式与建议（纯逻辑，唯一真值）
+import { seasonOf } from '../v4/env-core';   // M54：据点产出要按季节/天气算（鱼塘冬天减产）
+import { POND_FEED_ITEMS } from '../v4/water-core';
 
 
 /* ═══════════ legacy/00-data.js ═══════════ */
@@ -1621,7 +1624,7 @@ function sleepNight(){
   // v3.0：血月（每 7 天）与尸群迁徙到达时**必定**开战
   S.cal.bloodMoon = (S.day % 7 === 0);
   const hordeArrived = S.horde.eta > 0 && S.horde.eta - 1 <= 0;
-  const raid = 0.16 + S.day * 0.011 + S.noise * 0.03;
+  const raid = raidChance(S.day, S.noise);   // M54：概率算式在 v4/base-core（据点页展示的就是它）
   S.noise = Math.max(0, S.noise - 1);
   const raiding = S.cal.bloodMoon || hordeArrived || chance(Math.min(raid, .6));
   if(S.horde.eta > 0) S.horde.eta--;
@@ -1697,11 +1700,9 @@ function nightRaid(){
       award('a_horde');
     },
     onFlee(){
-      const guard = 1 - S.base.door * .25 - S.base.wall * .15;
-      const power = Math.round((10 + S.day * 1.6) * Math.max(.25, guard) * (blood ? 1.6 : 1));
-      const hasWall = S.base.wall > 0;
-      const hpLoss = Math.max(2, Math.round(power * (hasWall ? .5 : 1) * .5));
-      const matLoss = Math.min(S.mat, Math.round(power * .6 * (hasWall ? .4 : 1)));
+      /* M54：弃守代价的算式搬到 v4/base-core（据点页会提前把这笔账算给玩家看，两处必须是同一个数） */
+      const c = abandonCost({ day: S.day, doorLv: S.base.door || 0, wallLv: S.base.wall || 0, blood: blood, mat: S.mat });
+      const hpLoss = c.hpLoss, matLoss = c.matLoss;
       S.hp -= hpLoss; S.mat = Math.max(0, S.mat - matLoss);
       S.def.doorHp = 0; S.def.wallHp = 0;
       log('🏚️ 你弃守了据点：受伤 ' + hpLoss + ' 点，物资损失 ' + matLoss + '，门窗全被拆了。', 'combat');
@@ -3039,58 +3040,119 @@ function craft(i){
 }
 
 /* ───────────── 据点 ───────────── */
+/* M54：据点页**全面革新**（用户：「全面革新据点系统，现在还是太何意味了」）。
+   以前是 15 张一模一样、大半灰着的卡：看不出"建了有什么用"、看不出"今晚守不守得住"、
+   也看不出"现在到底该建什么"。现在这一页是一间**作战室**：
+     ① 安全屋：睡觉/休整/商人 + 今晚尸潮概率；
+     ② 🌙 今夜守夜：判词（稳/悬/危险）+ 防线血条 + 抢修 + 陷阱 + 弃守代价预告；
+     ③ 🌾 明天的收成：净水/蔬菜/鱼各多少、为什么是这个数（发电机/断水/季节都在这一行说清）；
+     ④ 🧭 该建什么：按局势与手上材料排前三，每条带理由（可解释，不是玄学推荐）；
+     ⑤ 🛠️ 设施：守夜/产线/工坊/基建 四个分区，每张卡写清"升级后会多出什么"与"还差什么材料"。
+   算式全部来自 v4/base-core（可单测的唯一真值），这一页只负责摆出来、点下去。 */
 function renderBase(){
-  let h = '<div class="sect-title">安全屋 <span class="badge">设施等级合计 ' + baseLevel() + '</span></div>';
+  const stk = (cost) => { const out = {}; for(const m in cost) out[m] = itemCount(m); return out; };
+  const costOf = (k) => coreScaledCost(BASE_UP[k].cost, S.base[k] || 0);
+  const afford = (k) => { const c = costOf(k); return Object.keys(c).every(m => itemCount(m) >= c[m]); };
+  const dm = defMax();
+  const tonight = raidGuaranteed(S.day, S.horde.eta);
+  const chancePct = Math.round(raidChance(S.day, S.noise) * 100);
+  const drag = abandonCost({ day: S.day, doorLv: S.base.door || 0, wallLv: S.base.wall || 0, blood: S.cal.bloodMoon, mat: S.mat });
+  const verdict = verdictOf({ doorHp: S.def.doorHp, wallHp: S.def.wallHp, doorMax: dm.door, wallMax: dm.wall,
+    traps: S.def.traps, tonightRaid: tonight, bloodMoon: S.cal.bloodMoon, hordeEta: S.horde.eta });
+  const season = seasonOf(S.day), weather = (S.env && S.env.weather) || 'clear';
+  const pondFed = POND_FEED_ITEMS.some(id => itemCount(id) > 0);
+  const yield_ = nightlyYield({ base: S.base, gridOff: powerOff(), hasFuel: has('fuel'), season, weather, pondFed, vegFreshBase: (ITEMS.veg && ITEMS.veg.fresh) || 3 });
+
+  /* ── ① 安全屋 ── */
+  let h = '<div class="sect-title">安全屋 <span class="badge">第 ' + S.day + ' 天</span>' +
+    '<span class="badge">设施等级合计 ' + baseLevel() + '</span>' +
+    '<span class="badge ' + (tonight ? 'heavy warnpulse' : '') + '">' + (tonight ? '今晚必打' : '今晚尸潮 ' + chancePct + '%') + '</span></div>';
   h += '<div class="card" style="margin-bottom:12px"><div class="row">' +
-    '<button class="btn warn" onclick="sleepNight()">🌙 睡觉（第 ' + (S.day + 1) + ' 天）</button>' +
+    '<button class="btn warn" onclick="sleepNight()">🌙 睡觉（进入第 ' + (S.day + 1) + ' 天）</button>' +
     '<button class="btn ok" onclick="restHere()">☕ 休整 (1 AP)</button>' +
     '<button class="btn" onclick="openMerchant()">🏪 呼叫商人（' + (S.base.radio ? '无线电常驻' : '需要无线电') + '）</button>' +
-    '<span class="spacer"></span><span class="hint">每晚有尸潮风险：当前约 ' + Math.round(Math.min(60, (0.16 + S.day * .011 + S.noise * .03) * 100)) + '%（噪音 ' + S.noise + '）</span></div>' +
-    '<div class="hint" style="margin-top:8px">建造消耗 <b>1 行动力</b> + 材料。夜间尸潮由「加固门窗 / 围墙工事」抵挡。</div></div>';
-  // v3.0 防御工事：防线血量 + 抢修 + 陷阱（血月前必须准备的东西）
-  const dm2 = defMax();
-  h += '<div class="sect-title">防御工事</div><div class="card" style="margin-bottom:12px">' +
-    '<div class="hbar"><div class="top"><span>🚪 门窗</span><b>' + Math.round(S.def.doorHp) + ' / ' + dm2.door + '</b></div><div class="bar"><i class="sta" style="width:' + clamp(S.def.doorHp / Math.max(1, dm2.door) * 100, 0, 100) + '%"></i></div></div>' +
-    '<div class="hbar" style="margin-top:6px"><div class="top"><span>🧱 围墙</span><b>' + Math.round(S.def.wallHp) + ' / ' + dm2.wall + '</b></div><div class="bar"><i class="sta" style="width:' + clamp(S.def.wallHp / Math.max(1, dm2.wall) * 100, 0, 100) + '%"></i></div></div>' +
-    '<div class="row" style="margin-top:8px"><button class="btn sm ok" onclick="repairDefense()">🔨 抢修防线 (1 AP + 铁片2/木料2)</button>' +
-    '<span class="hint">尸潮先砸门、再砸墙；防线在，它们就进不来。门窗/围墙每级抬高上限。</span></div>' +
-    '<div class="grid g3" style="margin-top:10px">' + Object.keys(TRAPS).map(k => {
-      const t = TRAPS[k], n = S.def.traps[k], cap = (k === 'alarm' ? 1 : 9);
-      const can = Object.keys(t.cost).every(m => itemCount(m) >= t.cost[m]) && S.ap >= 1 && n < cap;
-      return '<div class="card" style="padding:10px"><h3 style="font-size:12px">' + t.icon + ' ' + t.n + ' <span class="sub">×' + n + '</span></h3>' +
-        '<div class="hint" style="min-height:34px">' + t.desc + '</div>' +
-        '<div class="row" style="margin:6px 0">' + Object.keys(t.cost).map(m => '<span class="tag ' + (itemCount(m) >= t.cost[m] ? 'eq' : '') + '">' + itemName(m) + ' ' + itemCount(m) + '/' + t.cost[m] + '</span>').join('') + '</div>' +
-        '<button class="btn sm block ' + (can ? 'warn' : '') + '" ' + (can ? '' : 'disabled') + ' onclick="buildTrap(\'' + k + '\')">布置 (1 AP)</button></div>';
-    }).join('') + '</div>' +
-    '<div class="hint" style="margin-top:8px">血月还有 ' + daysToHorde() + ' 天。' + (S.horde.eta > 0 ? '⚠️ 另有一支尸群 ' + S.horde.eta + ' 天后到。' : '') + '</div>' +
-  '</div>';
-  h += '<div class="grid g2">';
-  for(const k in BASE_UP){
-    const u = BASE_UP[k], lv = S.base[k], maxed = lv >= u.max;
-    const cost = maxed ? null : scaledCost(k, lv);
-    const costTxt = cost ? Object.keys(cost).map(c => '<span class="tag ' + (itemCount(c) >= cost[c] ? 'eq' : '') + '">' + itemName(c) + ' ' + itemCount(c) + '/' + cost[c] + '</span>').join(' ') : '';
-    const can = cost && Object.keys(cost).every(c => itemCount(c) >= cost[c]) && S.ap >= 1;
-    h += '<div class="card"><h3>' + u.icon + ' ' + u.n + ' <span class="sub">Lv.' + lv + '/' + u.max + '</span></h3>' +
-      '<div class="ds hint" style="min-height:32px">' + u.desc + '</div>' +
-      '<div class="row" style="margin:8px 0 6px">' + (maxed ? '<span class="tag eq">已满级</span>' : costTxt) + '</div>' +
-      '<button class="btn sm block ' + (can ? 'ok' : '') + '" ' + (can ? '' : 'disabled') + ' onclick="build(\'' + k + '\')">' +
-      (maxed ? '已完工' : (S.ap < 1 ? '没有行动力' : '建造 / 升级 (1 AP)')) + '</button></div>';
-  }
+    '<span class="spacer"></span><span class="hint">建造消耗 <b>1 行动力</b> + 材料；尸潮判定：基础 16% + 天数 + 噪音每点 3%</span></div>' +
+    '<div class="hint" style="margin-top:8px">今晚怎么过，全看下面这张「今夜守夜」：防线还在，它们就进不来。</div></div>';
+
+  /* ── ② 今夜守夜 ── */
+  h += '<div class="sect-title">🌙 今夜守夜 <span class="badge ' + (verdict.tier === 'danger' ? 'heavy warnpulse' : verdict.tier === 'risky' ? 'warnpulse' : '') + '">判词：' + verdict.label + '</span>' +
+    '<span class="badge">' + (S.cal.bloodMoon ? '🩸 血月' : '血月 ' + daysToHorde() + ' 天后') + '</span>' +
+    (S.horde.eta > 0 ? '<span class="badge heavy">🧟 尸群 ' + S.horde.eta + ' 天后</span>' : '') + '</div>';
+  h += '<div class="card" style="margin-bottom:12px">' +
+    '<div class="hint" style="margin-bottom:8px">' + verdict.hint + '</div>' +
+    '<div class="hbar"><div class="top"><span>🚪 门窗</span><b>' + Math.round(S.def.doorHp) + ' / ' + dm.door + '</b></div><div class="bar"><i class="sta" style="width:' + clamp(S.def.doorHp / Math.max(1, dm.door) * 100, 0, 100) + '%"></i></div></div>' +
+    '<div class="hbar" style="margin-top:6px"><div class="top"><span>🧱 围墙</span><b>' + Math.round(S.def.wallHp) + ' / ' + dm.wall + (dm.wall ? '' : '（还没围墙）') + '</b></div><div class="bar"><i class="sta" style="width:' + clamp(S.def.wallHp / Math.max(1, dm.wall) * 100, 0, 100) + '%"></i></div></div>';
+  const fixCost = { metal: 2, wood: 2 };
+  const fixMiss = missingFor(fixCost, stk(fixCost));
+  const needFix = S.def.doorHp < dm.door || S.def.wallHp < dm.wall;
+  const canFix = !fixMiss.length && S.ap >= 1 && needFix;
+  h += '<div class="row" style="margin-top:8px"><button class="btn sm ok" ' + (canFix ? '' : 'disabled') + ' onclick="repairDefense()">🔨 抢修防线 (1 AP + 铁片2/木料2)</button>' +
+    '<span class="hint">' + (!needFix ? '防线是满的，不用修。' : S.ap < 1 ? '没有行动力了。' : fixMiss.length ? '还差 ' + fixMiss.map(m => itemName(m.mat) + '×' + m.short).join('、') : '尸潮期间也能在战斗里抢修（更贵，但救命）。') + '</span></div>';
+  h += '<div class="grid g3" style="margin-top:10px">' + Object.keys(TRAPS).map(k => {
+    const t = TRAPS[k], n = S.def.traps[k], cap = trapCap(k);
+    const cost = stk(t.cost), miss = missingFor(t.cost, cost);
+    const can = !miss.length && S.ap >= 1 && n < cap;
+    return '<div class="card" style="padding:10px"><h3 style="font-size:12px">' + t.icon + ' ' + t.n + ' <span class="sub">×' + n + (cap > 1 ? '/' + cap : '') + '</span></h3>' +
+      '<div class="hint" style="min-height:34px">' + t.desc + '</div>' +
+      '<div class="row" style="margin:6px 0">' + Object.keys(t.cost).map(m => '<span class="tag ' + (itemCount(m) >= t.cost[m] ? 'eq' : '') + '">' + itemName(m) + ' ' + itemCount(m) + '/' + t.cost[m] + '</span>').join('') + '</div>' +
+      '<button class="btn sm block ' + (can ? 'warn' : '') + '" ' + (can ? '' : 'disabled') + ' onclick="buildTrap(\'' + k + '\')">' + (n >= cap ? '已布满' : miss.length ? '还差 ' + miss.map(m => itemName(m.mat)).join('、') : '布置 (1 AP)') + '</button></div>';
+  }).join('') + '</div>';
+  h += '<div class="hint" style="margin-top:8px">守不住就得弃守：今晚弃守大约 <b>掉 ' + drag.hpLoss + ' 点生命 + 丢 ' + drag.matLoss + ' 材料</b>（门窗/围墙等级越高越轻；有围墙再减半）。' +
+    '陷阱是"提前准备的回报"：开场就结算，不占回合。</div></div>';
+
+  /* ── ③ 明天的收成 ── */
+  const yBadge = (yield_.water ? '💧 +' + yield_.water : '') + (yield_.veg ? ' · 🥬 +' + yield_.veg : '') + (yield_.fish ? ' · 🐟 +' + yield_.fish : '');
+  h += '<div class="sect-title">🌾 明天的收成 <span class="badge">' + (yBadge.replace(/^ · /, '') || '还没有产线设施') + '</span>' +
+    '<span class="badge">' + (powerOff() ? '🔌 电网已断' : '🔌 电网正常') + '</span>' +
+    ((S.base.power || 0) > 0 ? '<span class="badge">🔋 发电机在转</span>' : '') + '</div>';
+  h += '<div class="card" style="margin-bottom:12px"><div class="grid g3">' +
+    '<div><div class="hint">💧 净水</div><b>' + (yield_.water ? '+' + yield_.water + ' / 天' : '0') + '</b><div class="hint">' + (yield_.waterNote || '净水装置 Lv.' + (S.base.filter || 0)) + '</div></div>' +
+    '<div><div class="hint">🥬 新鲜蔬菜</div><b>' + (yield_.veg ? '+' + yield_.veg + ' / 天' : '0') + '</b><div class="hint">' + (yield_.veg ? yield_.vegSpoilDays + ' 天内要吃掉或炖了' : '还没有菜园') + '</div></div>' +
+    '<div><div class="hint">🐟 鱼</div><b>' + (yield_.fish ? '+' + yield_.fish + ' / 天' : '0') + '</b><div class="hint">' + yield_.fishNote + '</div></div>' +
+    '</div><div class="hint" style="margin-top:8px">另外：医疗台每晚 +' + ((S.base.power || 0) > 0 ? 1 : 0) + ' 份药（需发电机）· 储物箱 ' + (S.base.storage * 12) + ' 格 · 熟食与净水都能靠工坊自己做。</div></div>';
+
+  /* ── ④ 该建什么 ── */
+  const adv = adviseBuilds({ base: S.base, stock: stk({}), table: BASE_UP, day: S.day, ap: S.ap, hordeEta: S.horde.eta, bloodMoonToday: S.cal.bloodMoon, buildable: afford });
+  h += '<div class="sect-title">🧭 该建什么 <span class="badge">按当下局势排的</span></div><div class="card" style="margin-bottom:12px">';
+  h += adv.map((a, i) => {
+    if (!a.key) return '<div class="hint">' + a.why + '</div>';
+    const u = BASE_UP[a.key], lv = S.base[a.key] || 0, cost = costOf(a.key), miss = missingFor(cost, stk(cost));
+    const can = !miss.length && S.ap >= 1;
+    return '<div class="row" style="margin:' + (i ? '10px' : '0') + ' 0 0;align-items:flex-start">' +
+      '<span class="badge ' + (a.urgent ? 'heavy warnpulse' : '') + '">' + (i + 1) + '</span>' +
+      '<div style="flex:1;min-width:0"><div><b>' + u.icon + ' ' + u.n + '</b> <span class="sub">Lv.' + lv + '/' + u.max + ' → Lv.' + (lv + 1) + '：' + facilityDelta(a.key, lv + 1, { powerLv: S.base.power || 0 }) + '</span></div>' +
+      '<div class="hint">' + a.why + '</div>' +
+      '<div class="hint">' + (miss.length ? '还差 ' + miss.map(m => itemName(m.mat) + '×' + m.short).join('、') : '材料够' + (S.ap < 1 ? '，但没有行动力' : '')) + '</div></div>' +
+      '<button class="btn sm ' + (can ? 'ok' : '') + '" ' + (can ? '' : 'disabled') + ' onclick="build(\'' + a.key + '\')">建造 (1 AP)</button></div>';
+  }).join('');
   h += '</div>';
-  const canAny = Object.keys(BASE_UP).some(k => {
-    const lv = S.base[k];
-    if(lv >= BASE_UP[k].max) return false;
-    const c = scaledCost(k, lv);
-    return Object.keys(c).every(m => itemCount(m) >= c[m]);
-  });
+
+  /* ── ⑤ 设施（四个分区） ── */
+  for(const sec of BASE_SECTIONS){
+    const keys = sec.keys.filter(k => BASE_UP[k]);
+    if(!keys.length) continue;
+    const lvSum = keys.reduce((a, k) => a + (S.base[k] || 0), 0), lvMax = keys.reduce((a, k) => a + BASE_UP[k].max, 0);
+    h += '<div class="sect-title">' + sec.icon + ' ' + sec.name + ' <span class="badge">Lv.' + lvSum + ' / ' + lvMax + '</span></div><div class="grid g2">';
+    for(const k of keys){
+      const u = BASE_UP[k], lv = S.base[k] || 0, maxed = lv >= u.max;
+      const cost = maxed ? null : costOf(k);
+      const miss = cost ? missingFor(cost, stk(cost)) : [];
+      const costTxt = cost ? Object.keys(cost).map(c => '<span class="tag ' + (itemCount(c) >= cost[c] ? 'eq' : '') + '">' + itemName(c) + ' ' + itemCount(c) + '/' + cost[c] + '</span>').join(' ') : '';
+      const can = cost && !miss.length && S.ap >= 1;
+      h += '<div class="card"><h3>' + u.icon + ' ' + u.n + ' <span class="sub">Lv.' + lv + '/' + u.max + '</span></h3>' +
+        '<div class="ds hint" style="min-height:32px">' + u.desc + '</div>' +
+        (maxed ? '' : '<div class="hint" style="margin-top:2px;color:#cfd2d6">升级后：<b>' + facilityDelta(k, lv + 1, { powerLv: S.base.power || 0 }) + '</b></div>') +
+        '<div class="row" style="margin:8px 0 6px">' + (maxed ? '<span class="tag eq">已满级</span>' : costTxt) + '</div>' +
+        '<button class="btn sm block ' + (can ? 'ok' : '') + '" ' + (can ? '' : 'disabled') + ' onclick="build(\'' + k + '\')">' +
+        (maxed ? '已完工' : S.ap < 1 ? '没有行动力' : miss.length ? '还差 ' + miss.map(m => itemName(m.mat) + '×' + m.short).join('、') : '建造 / 升级 (1 AP)') + '</button></div>';
+    }
+    h += '</div>';
+  }
+  const canAny = Object.keys(BASE_UP).some(k => (S.base[k] || 0) < BASE_UP[k].max && afford(k));
   if(canAny) firstTip('build', '材料够了：据点设施能永久改善生存（净水器/菜园每天产物资，工作台解锁制作）。');
   return h;
 }
-function scaledCost(k, lv){
-  const base = BASE_UP[k].cost, out = {};
-  for(const c in base) out[c] = Math.ceil(base[c] * (1 + lv * .6));
-  return out;
-}
+function scaledCost(k, lv){ return coreScaledCost(BASE_UP[k].cost, lv); }
 /** M25：建设价目的一行文字（制作页里告诉玩家"这个站要多少材料才建得起来"） */
 function buildCostText(k){
   const u = BASE_UP[k];
@@ -3323,7 +3385,7 @@ function travelTo(id, silent){
 }
 /* M51：goHome() 随旧版「城市地图」卡一起删除（它只服务于那张卡上的「🏠 返回安全屋」按钮）。 */
 /* ── 基地防线：门与围墙都有血，尸潮靠打穿它们进来 ── */
-function defMax(){ return { door: 24 + S.base.door * 26, wall: S.base.wall * 46 }; }
+function defMax(){ return defMaxOf(S.base.door || 0, S.base.wall || 0); }   // M54：算式搬到 v4/base-core（唯一真值）
 function defInit(){ const m = defMax(); if(!S.def.doorHp || S.def.doorHp > m.door) S.def.doorHp = m.door; if(S.def.wallHp > m.wall) S.def.wallHp = m.wall; }
 function repairDefense(){
   const m = defMax();

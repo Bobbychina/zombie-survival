@@ -68,8 +68,8 @@ describe('章节表', () => {
     expect(CH2.objectives.length).toBe(4);
   });
 
-  it('第 2 章的预设够打通这一章：穿甲弹 ≥16 发 + 各区都刷得到装甲丧尸', () => {
-    expect(COMBAT_PRESET.inv.a9_ap).toBeGreaterThanOrEqual(24);   // 装甲丧尸 hp62/armor5：一下只有 3~9 点，8 发必然卡章（探针实测）
+  it('第 2 章的预设够打通这一章：穿甲弹 ≥40 发 + 防弹衣 + 急救 + 各区都刷得到装甲丧尸', () => {
+    expect(COMBAT_PRESET.inv.a9_ap).toBeGreaterThanOrEqual(40);   // 装甲丧尸 hp62/armor5：一下只有 3~9 点（M54 实测过一次"打得对但弹尽"的倒霉局）
     expect(COMBAT_PRESET.extraEnemies).toContain('armored');
     expect(COMBAT_PRESET.inv.medkit).toBeGreaterThanOrEqual(2);   // 这一场要边打边包扎（它一巴掌 17）
     expect(COMBAT_PRESET.inv.kevlar).toBeGreaterThanOrEqual(1);   // 裸装玩家会先倒下（探针实测）

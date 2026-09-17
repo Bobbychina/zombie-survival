@@ -129,12 +129,14 @@ const DEFAULT_PRESET: LabPreset = { seed: 'lab-basic-01', day: 1, ap: 14, mat: 1
     + 撬棍（近战不耗弹但会挨咬）。饱食水分给足 —— 这一章不该被饿肚子打断。
     M48：穿甲弹从 8 发加到 24 发、并给一件防弹衣 + 更多急救（探针实测：装甲丧尸 hp62/armor5，
     打上去一下只有 3~9 点，而它一巴掌 17 —— 不换弹/不包扎的裸装玩家会先倒下，8 发更是必然卡章），
-    并把装甲丧尸塞进所有区的敌人表（extraEnemies），让"用穿甲弹打死装甲目标"这条目标真的做得到。 */
+    并把装甲丧尸塞进所有区的敌人表（extraEnemies），让"用穿甲弹打死装甲目标"这条目标真的做得到。
+    M54：再加到 40 发 + 绷带 5 —— 回归时撞上过一次"打得对但弹药见底、怪还剩 16 血"的倒霉局：
+    教学章不该被运气卡住（手枪打装甲本来就费弹，这一章正好教"带够弹、该包扎就包扎"）。 */
 export const COMBAT_PRESET: LabPreset = {
   seed: 'lab-combat-01',
   day: 1, ap: 14, mat: 12,
   hp: 100, hun: 85, thi: 85, sta: 100,
-  inv: { pistol: 1, crowbar: 1, a9_fmj: 24, a9_ap: 24, kevlar: 1, bandage: 3, medkit: 2, can: 2, water: 2 },
+  inv: { pistol: 1, crowbar: 1, a9_fmj: 24, a9_ap: 40, kevlar: 1, bandage: 5, medkit: 2, can: 2, water: 2 },
   extraEnemies: ['armored'],
 };
 
