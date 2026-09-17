@@ -114,7 +114,17 @@ tests/*.test.ts          vitest 单测（385 条）
 
 ### 下一批
 
-0. **M53 已完成并上线**（P3 视觉统一）：探索页之外的页签也走卡片语言。
+0. **M54 已完成并上线**（用户：「全面革新据点系统，现在还是太何意味了」）：据点页从"15 张一样的卡"
+   改成"作战室"——安全屋 / 🌙 今夜守夜（判词 稳·悬·危险 + 弃守代价预告）/ 🌾 明天的收成（净水·蔬菜·鱼
+   各多少、为什么）/ 🧭 该建什么（按局势排前三 + 理由 + 就地建造）/ 🛠️ 设施四分区（守夜·产线·工坊·基建，
+   每张卡写「升级后：…」与「还差 X×N」）。算式收成一份真值 **`src/v4/base-core.ts`**（raidChance /
+   raidGuaranteed / abandonCost / defMaxOf / scaledCost / waterYield / nightlyYield，鱼复用 water-core.pondYield）：
+   legacy 的 nightTick、守夜战 onFlee、defMax、scaledCost 现在都调它们 —— 页面数字与夜间结算同源。
+   实测：单测 678/678（m54-base 24 例，含"分区表 ↔ BASE_UP 键一一对应"）、`docs/_m54_probe.mjs` **11/11**
+   （本地 + 线上）、回归 m21/m25/m33/m37/m38/m39/m43/m45/m46/m50(别会话)/m53 全绿。
+   顺手：教学第 2 章装甲丧尸给到 40 发穿甲弹 + 绷带 5（回归时撞到过"打得对但弹尽"的倒霉局）。
+
+1. **M53 已完成并上线**（P3 视觉统一）：探索页之外的页签也走卡片语言。
    `card-wall-core.sectionGroups()` 按 `.sect-title` 切段（标题 + 后面所有散件，到下一个标题为止 ——
    不按"标题 + 紧随的一个 .card"，因为各页形状不统一），`world-ui.unifyTab()` 在非探索页**原地**包 `.v4card`
    （不搬家、不动地图卡、幂等、空段不包）。人体页/图鉴页没有 `.sect-title` → no-op。
