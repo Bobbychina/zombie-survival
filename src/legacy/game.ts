@@ -15,6 +15,21 @@ import { BASE_SECTIONS, scaledCost as coreScaledCost, defMaxOf, raidChance, raid
 import { starvationTick, sleepHealMul, nightConsumption, sleepWarning } from '../v4/hunger-core';   // M55：饥饿/脱水的夜间结算（堵住"只睡觉速通"）
 import { fleeChanceOf, fleeFailPlan } from '../v4/flee-core';     // M56：逃跑成功率（连试递减）与失败代价
 import { DECOYS, planDecoy } from '../v4/decoy-core';             // M56：避战道具（气味引诱器三档）
+import { causeOfDeath, highlightsOf, adviceOf, mergeBest, bestLine, type BestRun } from '../v4/recap-core';   // M57：死亡结算（死因/瞬间/建议/生涯最好）
+/** M57：本机生涯记录（评分 / 天数 / 击杀三项各自比，存 localStorage；不写进存档 —— 重开不该抹掉历史） */
+const BEST_KEY = 'zsv-best-v1';
+function readBestRun(){
+  try {
+    const raw = localStorage.getItem(BEST_KEY);
+    if(!raw) return null;
+    const o = JSON.parse(raw);
+    if(!o || typeof o !== 'object') return null;
+    return { score: Math.max(0, Math.floor(+o.score || 0)), days: Math.max(0, Math.floor(+o.days || 0)), kills: Math.max(0, Math.floor(+o.kills || 0)) } as BestRun;
+  } catch(e){ return null; }
+}
+function writeBestRun(b){
+  try { localStorage.setItem(BEST_KEY, JSON.stringify(b)); } catch(e){ /* 隐私模式忽略 */ }
+}
 import { seasonOf } from '../v4/env-core';   // M54：据点产出要按季节/天气算（鱼塘冬天减产）
 import { POND_FEED_ITEMS } from '../v4/water-core';
 
@@ -1789,11 +1804,19 @@ function rescueEnding(){
   render(); autosave();
 }
 function recapHtml(sc){
+  /* M57：六格数字 + 这一局的瞬间（有料的才上，最多四条） */
+  const s = {
+    day: S.day, hp: 0, hun: S.hun, thi: S.thi, infect: S.infect, rad: S.rad, mat: S.mat, wounds: [],
+    loc: S.loc, stats: S.stats, visited: Object.keys((S.world && S.world.visited) || {}).length,
+    regions: Object.keys((S.world && S.world.seenRegions) || {}).length,
+    lore: S.lore.length, baseLv: baseLevel(), score: sc.raw,
+  };
   return '<div class="grid g3" style="margin-top:12px">' +
     [['存活天数', sc.days], ['击杀', sc.kills], ['到过的地方', sc.zones], ['据点等级', baseLevel()],
      ['秘闻', S.lore.length + '/' + LORE.length], ['评分', sc.raw]].map(r =>
       '<div class="card" style="padding:10px"><div class="hint">' + r[0] + '</div><div class="mono" style="font-size:18px;color:var(--bone)">' + r[1] + '</div></div>').join('') +
-    '</div><p class="muted" style="margin-top:10px">评级：<b style="color:var(--warn)">' + sc.rank + '</b></p>';
+    '</div><p class="muted" style="margin-top:10px">评级：<b style="color:var(--warn)">' + sc.rank + '</b></p>' +
+    '<div class="card" style="margin-top:10px;padding:10px">' + highlightsOf(s).map(h => '<div class="hint">' + h.icon + ' ' + esc(h.text) + '</div>').join('') + '</div>';
 }
 
 /* ───────────── 顶部 / HUD / 标签 ───────────── */
@@ -2478,6 +2501,18 @@ function gameOver(msg, opts){
   sfx('lose');
   musicSting('lose');
   const sc = runScore();
+  /* M57：死亡结算 —— 把"怎么死的 / 这一局留下了什么 / 下次改什么"讲清楚（旧版只有六格数字） */
+  const recapState = {
+    day: S.day, hp: 0, hun: S.hun, thi: S.thi, infect: S.infect, rad: S.rad, mat: S.mat,
+    wounds: ((S.body && S.body.injuries) || []).map(i => i.id + ':' + i.part),
+    loc: S.loc, stats: S.stats, visited: Object.keys((S.world && S.world.visited) || {}).length,
+    regions: Object.keys((S.world && S.world.seenRegions) || {}).length,
+    lore: S.lore.length, baseLv: baseLevel(), score: sc.raw,
+  };
+  const cause = causeOfDeath(msg, recapState);
+  const record = readBestRun();
+  const merged = mergeBest(record, { score: sc.raw, days: S.day, kills: S.stats.kills });
+  writeBestRun(merged.best);
   hr();
   log('💀 ' + msg, 'danger');
   log('你生存了 ' + S.day + ' 天，击杀 ' + S.stats.kills + ' 只丧尸。', 'system');
@@ -2485,7 +2520,15 @@ function gameOver(msg, opts){
   modal({ title:'💀 你死了', sticky:true,
     body:'<p class="muted">' + esc(msg) + '</p>' +
       '<p class="muted" style="margin-top:8px">倒在第 <b class="mono">' + S.day + '</b> / ' + GOAL_DAY + ' 天 · 死在 <b>' + ((MAP[S.loc] || MAP.base).n) + '</b></p>' +
+      /* 死因判词（M57）：一句话说清"你是怎么没的" */
+      '<div class="card" style="margin-top:12px;padding:10px"><div class="row"><b style="font-size:15px">' + cause.icon + ' ' + cause.label + '</b>' +
+      '<span class="spacer"></span><span class="hint">' + esc(cause.how) + '</span></div></div>' +
       recapHtml(sc) +
+      /* 下次怎么做（带数字） */
+      '<div class="card" style="margin-top:12px;padding:10px"><div class="hint" style="margin-bottom:4px">🧭 下次可以这样：</div>' +
+      adviceOf(cause, recapState).map(a => '<div class="hint">· ' + esc(a) + '</div>').join('') + '</div>' +
+      /* 本机历史最好 */
+      '<p class="muted" style="margin-top:10px">生涯记录：' + esc(bestLine({ score: sc.raw, days: S.day, kills: S.stats.kills }, record, merged.improved)) + '</p>' +
       (S.flags.rescueUsed
         ? '<p class="muted" style="margin-top:8px;color:#e08a72">唯一救援已用（第 1–3 天那次获救不会再来）。</p>'
         : '<p class="muted" style="margin-top:8px">第一次濒死救援还留着：第 1–3 天阵亡会被救回一次（扣一半材料）。</p>'),
