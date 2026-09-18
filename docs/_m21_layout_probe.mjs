@@ -201,7 +201,15 @@ const reg = JSON.parse(await ev(`(() => {
   const det = document.querySelector('#v4world .rdetail'), go = document.querySelector('#v4world .rdetail .rgo');
   const vb = v.getBoundingClientRect(), cb = card.getBoundingClientRect(), db = det ? det.getBoundingClientRect() : null;
   const gb = go ? go.getBoundingClientRect() : null;
+  const rgb = document.getElementById('v4world') ? document.getElementById('v4world').querySelector('.rgrid') : null;
+  const win = document.getElementById('v4mapwin');
   return JSON.stringify({ cardH: Math.round(cb.height), viewH: Math.round(vb.height),
+    cardTop: Math.round(cb.top), cardBottom: Math.round(cb.bottom), viewTop: Math.round(vb.top), viewBottom: Math.round(vb.bottom),
+    winTop: win ? Math.round(win.getBoundingClientRect().top) : null,
+    winMaxH: win ? getComputedStyle(win).maxHeight : null,
+    headH: win ? (win.querySelector('.mwhead') || {}).offsetHeight : null,
+    chrome: rgb ? Math.round(card.offsetHeight - rgb.offsetHeight) : null,
+    mapStyle: (() => { try { return V4Scale.mapStyle() } catch (e) { return 'n/a' } })(),
     fs: (() => { try { return V4Scale.prefs().fs } catch (e) { return 'n/a' } })(),
     cardFits: Math.round(cb.bottom) <= Math.round(vb.bottom) + 1,
     detailVisible: db ? Math.round(db.bottom) <= Math.round(vb.bottom) + 1 : false,

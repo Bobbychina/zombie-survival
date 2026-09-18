@@ -1154,8 +1154,15 @@ function fitRegion(view: HTMLElement, card: HTMLElement, rgrid: HTMLElement) {
   const chrome = Math.max(0, card.offsetHeight - rgrid.offsetHeight);
   const byBox = Math.floor((avail - chrome - 40) / 12);
   const byW = Math.floor(((col ? col.clientWidth : card.clientWidth) - 33) / 12);
-  const cell = Math.max(minRCell, Math.min(maxRCell, byBox, byW));
-  apply(cell);
+  const cell0 = Math.max(minRCell, Math.min(maxRCell, byBox, byW));
+  apply(cell0);
+  /* 兜底**一次**：CSS 里 `.rcell2{min-height:34px}` 会让"边长 30px"的行实际排到 34px（非 tiny 档），
+     光按列宽推会低估 ~4px/行 —— 所以再按**真实溢出量**收一次。只收一次、不再回环，
+     否则又会变成"越量越小"的振荡（M59 的原始 bug）。 */
+  const over = card.getBoundingClientRect().bottom - (stableBottom + 2);
+  if (over > 0 && cell0 > minRCell) {
+    apply(Math.max(minRCell, cell0 - Math.ceil(over / 12)));
+  }
 
   function apply(c: number): void {
     const tpl = 'repeat(12, ' + c + 'px)';
