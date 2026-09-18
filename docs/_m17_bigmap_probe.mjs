@@ -59,7 +59,9 @@ const dump = `(() => {
     return {
       id: m ? m[1] : '',
       bg: (getComputedStyle(c).backgroundColor || '').replace(/\\s/g, ''),
-      tier: Number((c.querySelector('.rnum') || {}).textContent || 0),
+      /* M59：危险度取自格子类名 d{n} —— M24 起「地貌层只画颜色、危险度层才画数字」，
+         .rnum 在地貌层根本不存在，老写法会把它读成 tier=0（探针自己过期了，不是地图坏了）。 */
+      tier: Number((c.className.match(/(?:^|\\s)d([1-5])(?:\\s|$)/) || [])[1] || (c.querySelector('.rnum') || {}).textContent || 0),
       dc: (c.getAttribute('style') || '').replace(/.*--dc:\s*([^;"']+).*/, '$1'),
       name: (c.querySelector('.rnm') || {}).textContent || '',
       unseen: c.className.includes('unseen'),
