@@ -61,3 +61,77 @@ export function geigerText(level: number, hasGeiger: boolean): string {
   const clicks = ['偶尔一声咔哒。', '咔哒声断断续续。', '咔哒咔哒咔哒……很密。', '几乎连成一片啸叫。'][Math.min(3, level - 1)];
   return '☢️ 盖革计数器：<b>辐射 ' + level + ' 级</b>——' + clicks;
 }
+
+/* M58：辐射的**白天症状**（HANDOFF §8.4 挂账）。
+   以前只有"压体力上限 + 夜里掉血 + 拖慢愈合"，白天照跑照打，玩家看不出"我现在被辐射害了"。
+   现在每档都给白天的可感后果：体力消耗更快、口渴更快、命中/闪避下降、重度以上每步掉血、随时呕吐。
+   —— 与 `radTier` 的分档一一对应（同一份阈值），夜里那部分仍归 night.ts，不重复扣。 */
+export interface RadSymptoms {
+  tier: number; label: string; note: string;
+  /** 每步体力消耗倍率（≥1） */
+  staDrainMul: number;
+  /** 水分消耗倍率（≥1） */
+  thirstMul: number;
+  /** 命中惩罚（0~1，直接加到 statMods 的减伤上） */
+  hitPenalty: number;
+  /** 闪避惩罚（0~1） */
+  dodgePenalty: number;
+  /** 每步掉血（0 = 不掉） */
+  hpPerStep: number;
+  /** 每步呕吐概率（掉饱食） */
+  vomitChance: number;
+  /** 一行处理建议（带具体药名） */
+  care: string;
+}
+
+/** 症状表的一行：档位/标签/文案都从 radTier 取，这里只存"白天怎么难受"的数值 */
+type RadRow = Omit<RadSymptoms, 'label' | 'note'>;
+
+const RAD_SYMPTOMS: RadRow[] = [
+  { tier: 0, staDrainMul: 1, thirstMul: 1, hitPenalty: 0, dodgePenalty: 0, hpPerStep: 0, vomitChance: 0,
+    care: '不用处理：辐射值会随时间与净水慢慢回落。' },
+  { tier: 1, staDrainMul: 1.05, thirstMul: 1.1, hitPenalty: 0, dodgePenalty: 0, hpPerStep: 0, vomitChance: 0,
+    care: '离开辐射区、多喝水；碘片（医疗台 Lv1）能把这 25 点直接压回去。' },
+  { tier: 2, staDrainMul: 1.15, thirstMul: 1.2, hitPenalty: 0.05, dodgePenalty: 0.03, hpPerStep: 0, vomitChance: 0.06,
+    care: '吃碘片（-25）或抗辐射药（-55），今天别再进辐射区；净水要喝够。' },
+  { tier: 3, staDrainMul: 1.35, thirstMul: 1.35, hitPenalty: 0.1, dodgePenalty: 0.06, hpPerStep: 1, vomitChance: 0.12,
+    care: '抗辐射药优先（碘片不够用），回据点睡觉；给药期间别硬撑打架。' },
+  { tier: 4, staDrainMul: 1.6, thirstMul: 1.5, hitPenalty: 0.18, dodgePenalty: 0.1, hpPerStep: 3, vomitChance: 0.25,
+    care: '立刻撤退：抗辐射药 + 净水 + 睡觉。这一档每走一步都在掉血，别贪那点物资。' },
+];
+
+/** 白天辐射症状（按体内辐射值分档；档位/标签/文案都取自 radTier，这里只加"白天怎么难受"的数值） */
+export function radSymptoms(rad: number): RadSymptoms {
+  const t = radTier(rad);
+  const row = RAD_SYMPTOMS[t.tier] || RAD_SYMPTOMS[0];
+  return { ...row, label: t.label, note: t.note };
+}
+
+/** 全部症状档（图鉴/治疗指南拿它生成对照表，不手抄第二份）：每档取一个代表值走同一条函数 */
+const RAD_TIER_SAMPLE = [0, 30, 60, 80, 97];
+export function radSymptomTable(): RadSymptoms[] { return RAD_TIER_SAMPLE.map(radSymptoms); }
+
+/** 极短摘要（HUD chip 里用）：只挑最要命的三条，长了会把状态栏挤爆 */
+export function radBrief(s: RadSymptoms): string {
+  if (s.tier <= 0) return '';
+  const bits: string[] = [];
+  if (s.hpPerStep) bits.push('掉血 ' + s.hpPerStep + '/步');
+  if (s.hitPenalty) bits.push('命中 -' + Math.round(s.hitPenalty * 100) + '%');
+  if (!bits.length && s.vomitChance) bits.push('呕吐 ' + Math.round(s.vomitChance * 100) + '%');
+  if (!bits.length && s.thirstMul > 1) bits.push('口渴 ×' + s.thirstMul.toFixed(2).replace(/0$/, ''));
+  if (!bits.length && s.staDrainMul > 1) bits.push('体力 ×' + s.staDrainMul.toFixed(2).replace(/0$/, ''));
+  return bits.slice(0, 3).join(' · ');
+}
+
+/** 症状的一句话摘要（HUD / 人体页 / 图鉴都用它，避免三处各写一份） */
+export function radSymptomText(s: RadSymptoms): string {
+  if (s.tier <= 0) return '无症状';
+  const bits: string[] = [];
+  if (s.hitPenalty) bits.push('命中 -' + Math.round(s.hitPenalty * 100) + '%');
+  if (s.dodgePenalty) bits.push('闪避 -' + Math.round(s.dodgePenalty * 100) + '%');
+  if (s.hpPerStep) bits.push('每步 -' + s.hpPerStep + ' 生命');
+  if (s.thirstMul > 1) bits.push('口渴 ×' + s.thirstMul.toFixed(2).replace(/0$/, ''));
+  if (s.staDrainMul > 1) bits.push('体力消耗 ×' + s.staDrainMul.toFixed(2).replace(/0$/, ''));
+  if (s.vomitChance) bits.push('呕吐 ' + Math.round(s.vomitChance * 100) + '%');
+  return bits.join(' · ') || '无症状';
+}

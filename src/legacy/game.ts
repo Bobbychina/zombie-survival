@@ -1,7 +1,7 @@
 // @ts-nocheck —— v3.0 的单文件代码整体搬进这里当底座，逐块迁出到 src/v4/*。
 // 不要在这个文件里加新功能：新东西写进 src/v4/，通过 window 上的名字与这里互操作。
 // M25 例外：辐射的分档/累积公式在 src/v4/rad-core.ts（纯逻辑、可单测），这里只 import 公式，不重复实现。
-import { radTier, radGain, radLevelAt, radProtect, RAD_SOURCES, geigerText } from '../v4/rad-core';
+import { radTier, radGain, radLevelAt, radProtect, RAD_SOURCES, geigerText, radSymptoms, radSymptomText, radBrief } from '../v4/rad-core';
 import { CALIBERS, penMul, apKillOnArmored, ammoTable, pickLoadedAmmo, ammoShortName, resolveAmmoId, legacyAmmoFold } from '../v4/ammo-core';
 import { MERCHANT_GOODS, badShopRows, shopPrice, ammoShopRows, buyPlan,
   sellPlan, sellValue, sellBatchPlan, sellBatchQuote, sellBlockReason, canSell, ITEM_BASE, SELL_RATE } from '../v4/shop-core';   // M32b/M39：货架（弹药按口径卖）+ 坏货架兜底 + 批量购买；M44：收购（把多余的东西卖回去）
@@ -1530,18 +1530,22 @@ function spendAP(n, label){
   if(S.ap <= 0) firstTip('noap', '行动力用完了：睡觉进入下一天（会消耗食物与水，夜里也可能遇上尸潮）。');
   return true;
 }
+/* M58：辐射病的掉血提示按步节流（每 3 步报一次），否则长途赶路会把日志刷穿 */
+let radLogTick = 0;
 function tickVitals(mult){
   mult = mult || 1;
   const cut = 1 - skillBonus('survival', .03, .35);
   /* M30：干燥/中暑/脱水放大水分消耗（湿度是天气的导出量，所以玩家能靠看天预判） */
   const sv = (typeof window.V4Survival === 'object' && window.V4Survival) ? window.V4Survival : null;
   const vm = sv ? sv.vitalsMul() : { thirst: 1, temp: 1 };
+  /* M58：体内辐射的**白天**症状（口渴/体力/掉血/呕吐）——以前白天照跑照打，玩家看不出自己被辐射害了 */
+  const rs = radSymptoms(S.rad);
   S.hun = clamp(S.hun - 3.6 * cut * mult, 0, 100);
-  S.thi = clamp(S.thi - 4.4 * cut * mult * vm.thirst, 0, 100);
+  S.thi = clamp(S.thi - 4.4 * cut * mult * vm.thirst * rs.thirstMul, 0, 100);
   const enc = encumbrance();
   /* M25：体内辐射压低体力上限（重度辐射时几乎跑不动）；M30：病症再压一档（中暑 −30% 等） */
   const radCap = S.staMax * radTier(S.rad).staMul * (sv ? sv.staCapMul() : 1);
-  S.sta = clamp(S.sta - (6 + enc * 6) * mult, 0, radCap);
+  S.sta = clamp(S.sta - (6 + enc * 6) * mult * rs.staDrainMul, 0, radCap);
   /* M30：病症链推进（每若干步结算一次病程，掉血在 step 里扣） */
   if(sv) sv.step(1);
   /* M31：人体伤病的出血与康复也按步推进（medical.ts 内部有节流） */
@@ -1551,6 +1555,15 @@ function tickVitals(mult){
   if(S.thi <= 0){ S.hp -= 5; log('💧 严重脱水，视线开始发黑。','danger'); }   // C08：归零掉血 6/8 → 4/5，别让饥饿单独构成死亡螺旋
   else if(S.thi < 18) log('💧 喉咙干得发疼（闪避下降）。','dim');
   if(S.infect >= 100){ S.hp = 0; log('🦠 病毒攻陷了中枢。你听见自己的呼吸变成了别人的。','danger'); }
+  /* M58：重度以上每走一步都在掉血；呕吐随机把刚吃的吐掉（都是"该去吃药了"的硬信号） */
+  if(rs.hpPerStep > 0){
+    S.hp -= rs.hpPerStep;
+    if(++radLogTick % 3 === 1) log('☢️ 辐射病：牙龈渗血、手脚发麻，每走一步都在消耗生命。','danger');
+  }
+  if(rs.vomitChance > 0 && Math.random() < Math.min(.9, rs.vomitChance * mult)){
+    S.hun = clamp(S.hun - 8, 0, 100);
+    log('🤢 你扶着墙干呕了一阵，刚吃下去的东西白费了（饱食 -8）。','danger');
+  }
   if(S.noise > 0) firstTip('noise', '噪音越高，夜里越容易被尸潮撞门：近战无声，开枪很吵。');
 }
 function statMods(){
@@ -1574,12 +1587,15 @@ function statMods(){
     const names = sv2.condNames();
     if(names.length) m.note.push(names.join('/'));
   }
-  /* M25：辐射分档惩罚（轻度只提示、明显以上真的扣战力与治疗） */
+  /* M25：辐射分档惩罚（轻度只提示、明显以上真的扣战力与治疗）；M58：白天的命中/闪避症状并进同一本账 */
   {
     const rt = radTier(S.rad);
+    const rsM = radSymptoms(S.rad);
     if(rt.tier >= 2) m.dmgMul -= .10;
     if(rt.tier >= 3) m.dodge -= .10;
-    if(rt.tier >= 1) m.note.push('辐射 ' + rt.label);
+    if(rsM.hitPenalty) m.hit = (m.hit || 0) - rsM.hitPenalty;
+    if(rsM.dodgePenalty) m.dodge -= rsM.dodgePenalty;
+    if(rt.tier >= 1) m.note.push('辐射病 ' + rt.label);
   }
   /* M31：人体伤病的惩罚（双轨制：部位伤只影响能力，不参与生死判定） */
   {
@@ -1879,10 +1895,14 @@ function renderHud(){
   h += '<span class="chip cold"' + (swappable ? ' style="cursor:pointer" title="点一下换弹种" onclick="cycleLoaded()"' : '') + '>🔫 弹药 <b>' + ammoCount() + '</b>' +
     (wAmmo ? ' <span class="mono" style="opacity:.75">' + CALIBERS[wCal].short + '·' + ITEMS[wAmmo].n.split(' ').pop() +
       ' 穿透' + (ITEMS[wAmmo].pen || 0) + ' ×' + (S.inv[wAmmo] || 0) + '</span>' + (swappable ? ' ⟳' : '') : '') + '</span>';
-  /* M25：辐射 chip —— 只有真的吃进去才显示，标签直接给分档 */
+  /* M25：辐射 chip —— 只有真的吃进去才显示，标签直接给分档；M58：把白天的症状摘要也顶上去（点一下进人体页吃药） */
   if(S.rad > 0){
     const rt = radTier(S.rad);
-    h += '<span class="chip ' + (rt.tier >= 2 ? 'heavy warnpulse' : '') + '" title="' + rt.note + '">☢️ 辐射 <b>' + Math.round(S.rad) + '</b> · ' + rt.label + '</span>';
+    const rsC = radSymptoms(S.rad);
+    const brief = radBrief(rsC);
+    h += '<span class="chip ' + (rt.tier >= 2 ? 'heavy warnpulse' : '') + '" style="cursor:pointer" onclick="setTab(\'body\')" title="' +
+      esc(rt.note + '　症状：' + radSymptomText(rsC) + '　' + rsC.care) + '">☢️ 辐射 <b>' + Math.round(S.rad) + '</b> · ' + rt.label +
+      (brief ? ' <span class="mono" style="opacity:.75">' + esc(brief) + '</span>' : '') + '</span>';
   }
   h += '<span class="chip gold">🔩 材料 <b>' + S.mat + '</b></span>';
   h += '<span class="chip ' + (w > cw ? 'heavy warnpulse' : '') + '">🎒 负重 <b>' + w + '/' + cw + '</b></span>';
@@ -4312,6 +4332,8 @@ Object.assign(window, { VER, SAVE_KEY, V1_KEY, ITEMS, itemName, isWpn, ZOMBIES, 
   depositAll, setBagFilter, quickBarHtml,       // M38：背包批量存入/筛选切换 + 补给快捷条（内联 onclick）
   openSavePort, openBackupHistory, restoreHistory, exportHistory, deleteHistory,   // M39：口令导出/导入 + 备份历史（内联 onclick）
   radLevelAt, radGain, radProtect, RAD_SOURCES, geigerText, boot });
+/* M58：白天辐射症状也挂出去（人体页/图鉴渲染 + 验收探针直接调） */
+Object.assign(window, { radSymptoms, radSymptomText, radBrief });
 Object.defineProperty(window, "logFollow", { get: function(){ return logFollow; }, set: function(v){ logFollow = v; }, configurable: true });
 Object.defineProperty(window, "logFollowWhy", { get: function(){ return logFollowWhy; }, configurable: true });
 Object.defineProperty(window, "bagFilter", { get: function(){ return bagFilter; }, set: function(v){ bagFilter = v; }, configurable: true });

@@ -17,6 +17,7 @@ import { envOf, seasonNow, tempPenalty, weatherNow } from './env';
 import { SEASON_INFO, WEATHER, tempStateText, tempText } from './env-core';
 import { condRows, fireOk, humNow, riskLine, rotMul } from './survival';
 import { CONDS, COND_CURE, COND_IDS, condPenaltyText, humBand, humLine } from './survival-core';
+import { radSymptomTable, radSymptomText, radSymptoms } from './rad-core';
 
 let steps = 0;
 const STEPS_PER_BODY_TICK = 4;                 // 与 survival 同一个节奏：每 4 步走一次病程
@@ -244,8 +245,48 @@ export function guideHtml(): string {
     }).join('<br>') +
     '</div><div class="hint" style="margin-top:6px">气候病会自己消退（回到舒适区 + 撑过两段），但拖久了留后遗症；手上有药就在 <b>人体</b> 页点一下，当场压下去。</div>' +
     '<div class="hint">湿度与体温的档位看 <b>人体 → 🌡️ 体温与环境</b>：干燥容易中暑/脱水，闷湿容易呼吸道感染与真菌。</div></div>';
+  /* M58：辐射分档对照表（数值全部来自 rad-core 的 RAD_SYMPTOMS，不手抄） */
+  h += '<div class="card" style="grid-column:1/-1"><h3>☢️ 辐射怎么处理</h3><div class="hint">' +
+    radSymptomTable().map(s => '☢️ <b>' + esc(s.label) + '</b>（' + esc(radValueRange(s)) + '）：' + esc(radSymptomText(s)) +
+      '<br><span style="opacity:.8">　怎么办：' + esc(s.care) + '</span>').join('<br>') +
+    '</div><div class="hint" style="margin-top:6px">剂量只涨不回的地方是核电站与废料场周边（贴得越近涨得越快，有盖革计数器才看得见级别）；' +
+    '防护服/防毒面具能挡一部分，碘片（-25）与抗辐射药（-55）在 <b>人体 → ☢️ 辐射</b> 卡上一键吃。</div></div>';
   h += '</div>';
   return h;
+}
+
+/** 症状档对应的辐射值区间（从档位反推，不另立阈值表） */
+function radValueRange(s: { tier: number }): string {
+  return ['0–24', '25–49', '50–74', '75–94', '95–100'][s.tier] || '—';
+}
+
+/** M58：辐射卡 —— 白天症状原来只有 HUD 一个数字，看不见后果；现在分档后果与"吃什么药"摊在同一张卡上。
+ *  掉的那部分剂量仍走 legacy 的 useConsumable（同一本账），这里只负责显示与按钮。 */
+const RAD_MEDS: { id: string; name: string; cut: number }[] = [
+  { id: 'iodine', name: '碘片', cut: 25 },
+  { id: 'radaway', name: '抗辐射药', cut: 55 },
+];
+function radHtml(): string {
+  const S = L.S as any;
+  const rad = Math.max(0, Math.min(100, Number(S.rad) || 0));
+  const rs = radSymptoms(rad);
+  let h = '<div class="card" style="padding:10px"><h3>☢️ 辐射 <span class="sub">' +
+    (rs.tier <= 0 ? '干净' : Math.round(rad) + ' / 100 · ' + rs.label) + '</span></h3>';
+  if (rs.tier <= 0) {
+    return h + '<div class="hint">体内没有积存辐射。贴着核电站/废料场走会涨，涨了就回来开这张卡。</div></div>';
+  }
+  h += '<div class="hint">白天症状：<b>' + esc(radSymptomText(rs)) + '</b></div>';
+  h += '<div class="hint">' + esc(rs.note) + '</div>';
+  h += '<div class="hint" style="color:#e0b06a">' + esc(rs.care) + '</div>';
+  h += '<div class="row" style="flex-wrap:wrap;gap:6px;margin-top:6px">';
+  for (const m of RAD_MEDS) {
+    const have = Number(L.itemCount(m.id)) || 0;
+    h += '<button class="btn sm ' + (have ? 'ok' : '') + '"' + (have ? '' : ' disabled') +
+      ' onclick="useConsumable(\'' + m.id + '\')" title="' + esc(L.itemName(m.id)) + '：体内辐射 -' + m.cut + '">💊 ' +
+      esc(m.name) + ' ×' + have + '（-' + m.cut + '）</button>';
+  }
+  h += '</div><div class="hint" style="margin-top:4px">这两样只压体内剂量；射线也拖慢伤口愈合，重度以上长得明显慢——先吃药再打架。</div>';
+  return h + '</div>';
 }
 
 /** 人体页整体（由 legacy 的 render() 调用） */
@@ -279,6 +320,7 @@ export function renderBodyTab(): string {
   h += '<div style="flex:1;min-width:280px">' + envCondHtml() + '</div>';
   h += '<div style="flex:1;min-width:280px">' + condsHtml() + '</div>';
   h += '</div>';
+  h += '<div style="margin-top:10px">' + radHtml() + '</div>';
   h += '<div style="margin-top:10px">' + treatmentHtml(b) + '</div>';
   return h;
 }
