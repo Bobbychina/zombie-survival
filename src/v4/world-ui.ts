@@ -1134,12 +1134,20 @@ function fitRegion(view: HTMLElement, card: HTMLElement, rgrid: HTMLElement) {
   const z = uiZoom();                                   // M32.1：同样的"下限按渲染像素算"（见 fitMap）
   const minRCell = Math.max(8, Math.round(18 / z));
   const maxRCell = Math.max(minRCell, Math.round(72 / z));
-  /* M41 同款口径：悬浮窗的高度是跟着卡片走的，所以基准取**视口**底边；inline 取 #view 底边（网格轨道，与地图无关）。
-     M59 补一刀：还要跟 `#view` 底边取小 —— 悬浮窗虽然钉在屏幕右上角，但"整张卡一屏装下"是按 #view 量的
-     （M21.1 用户报障"这边也溢出了"就是这条），取小之后两种口径同时满足，且两个基准都与格子大小无关。 */
+  /* M41 同款口径：悬浮窗的高度是跟着卡片走的，所以基准取**与格子无关**的固定边界：
+     inline = #view 底边（网格轨道）；悬浮窗 = min(#view 底边, 窗口自己的 max-height 底边, 视口底)。
+     —— 窗口是"固定右上角、按内容长高到 max-height 为止"，上限写在 CSS 里，所以同样稳定；
+     再跟 #view 底边取小是因为"整张卡一屏装下"一直是按 #view 量的（M21.1 用户报障"这边也溢出了"）。
+     窗口头部（.mwhead）不是卡片的地盘，要扣掉。 */
   const inlineHost = card.parentElement === view;
-  const viewBottom = view.getBoundingClientRect().bottom;
-  const stableBottom = inlineHost ? viewBottom : Math.min(viewBottom, window.innerHeight - 12);
+  let stableBottom = view.getBoundingClientRect().bottom;
+  if (!inlineHost) {
+    const win = document.getElementById('v4mapwin');
+    const maxH = win ? parseFloat(getComputedStyle(win).maxHeight) : NaN;
+    const headH = win ? ((win.querySelector('.mwhead') as HTMLElement | null)?.offsetHeight || 0) : 0;
+    const winBottom = (win && isFinite(maxH)) ? win.getBoundingClientRect().top + maxH - headH - 6 : Infinity;
+    stableBottom = Math.min(stableBottom, winBottom, window.innerHeight - 12);
+  }
   const avail = stableBottom - card.getBoundingClientRect().top - 8;
   if (avail < 280) return;
   /* 除网格以外的开销：标题行/图层条/说明/图例/详情/内边距 —— details 开合会变，但**与格子边长无关**。 */
