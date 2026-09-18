@@ -88,6 +88,8 @@ tools/serve.mjs        零依赖静态服务器（start 脚本用）
 tools/postbuild.mjs    构建收尾：单文件产物复制到根目录与 docs/（Pages）
 tools/sync-site.mjs    同步到主页仓库的 /games/（游戏厅 + 账号库）
 docs/                  历次验收记录与决策（含团队评审结论）
+docs/ROADMAP.md        下一批更新计划（P0/P1/P2 + 明确不做 + 已划掉）
+CHANGELOG.md           对外更新日志（一个里程碑一条，带日期与产物字节数）
 release/               v1 / v3.0 单文件版存档（历史版本，可直接玩）
 ```
 
@@ -126,6 +128,8 @@ node docs/_file_check.mjs                                       # file:// 直开
 - 存档完整性只是"取证"（能看出被改过），纯前端无法阻止改档。
 
 **反馈 / 报 bug / 提建议**：<https://github.com/Bobbychina/zombie-survival/issues>
+
+**最近更新**：见 [`CHANGELOG.md`](CHANGELOG.md)（一个里程碑一条）；**下一批计划**见 [`docs/ROADMAP.md`](docs/ROADMAP.md)。
 
 ## 开源与许可
 

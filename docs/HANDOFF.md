@@ -1,6 +1,7 @@
-# 丧尸末日生存 v4.0「余烬」—— 接手必知（交接时间：2026-09-15 深夜，M37 无尽修复 + M38 QoL 第一批 已上线）
+# 丧尸末日生存 v4.0「余烬」—— 接手必知（交接时间：2026-09-17，M57 死亡结算已上线）
 
-> 写给下一个 agent 会话。**先读这份，再读 `docs/V40-ACCEPTANCE.md`**（每个里程碑的完整验收证据，最后两节是 M32 / M32b）。
+> 写给下一个 agent 会话。**先读这份，再读 `docs/V40-ACCEPTANCE.md`**（每个里程碑的完整验收证据，最后一节是 M57）。
+> 待办清单看 **`docs/ROADMAP.md`**（唯一入口）；对外更新日志看 **`CHANGELOG.md`**。
 > 本文件只讲"怎么干活、现在到哪了、哪里有坑"，不讲历史。
 
 ---
@@ -12,9 +13,10 @@
 | 工程目录 | `E:\Files\Games\zombieSurvival`（Vite 5 + TS strict + vitest） |
 | 主页仓库 | `E:\Files\bobbychina-pages`（`Bobbychina/Bobbychina.github.io`） |
 | 日记仓库 | `E:\Files\bobbychina-diary`（私有，一天一条） |
-| 线上地址 | <https://bobbychina.github.io/games/zombie-survival/> |
-| 测试基线 | **单测 418 通过 / 探针 10 套**（见 §5） |
-| 当前 HEAD | `482ba41`（M33 前两批已上线）＋ 本轮的 **M33 第三批：第 3~6 章**（六章全可玩，探针 49/49） |
+| 线上地址 | <https://bobbychina.github.io/games/zombie-survival/>（单文件 692438 字节 / 2026-09-17） |
+| 测试基线 | **单测 718 通过（50 文件）/ 回归探针 15 套全绿**（见 §3 回归基线） |
+| 文档地图 | `docs/HANDOFF.md`（本文：怎么干活）· `docs/V40-ACCEPTANCE.md`（每节的验收证据）· `docs/ROADMAP.md`（待办）· `CHANGELOG.md`（对外日志） |
+| 当前 HEAD | `d550eab`（M57 验收文档；M41~M57 全部已上线） |
 | 用户 | bobbychina，学生 + 独立开发者，中文交流、口语化、不要客套。**他要的是"修好并上线"，不是报告** |
 
 ---
@@ -375,10 +377,13 @@ cd E:\Files\bobbychina-pages; git add -A; git commit -m "[AI] M3x 同步：…";
 
 ## 8. 现在就能开始的清单（按顺序）
 
-1. 起浏览器把 §5 的十套探针 + 单测跑一遍（探针的 outDir 先建好，见 §3「下一批」4），确认基线（任何一条红都先查是不是探针自身的前置状态）。
-2. **M33 第三批**：第 3~6 章（章节表已留好 `ready:false` 的位置，补 objectives + preset 即可）。
+> 待办与验收口径已收敛到 **`docs/ROADMAP.md`**（P0/P1/P2 + 明确不做 + 已划掉）。
+> 本节只留"接手当天怎么起步"。
+
+1. 起浏览器把 §3「回归基线」那批探针 + 单测跑一遍（探针的 outDir 先建好，见 §3「下一批」4），确认基线（任何一条红都先查是不是探针自身的前置状态或老 origin 污染）。
+2. 按 `docs/ROADMAP.md` 的 P0 往下做（当前第一个是"辐射的白天症状"）。
 3. **构建产物/上线**：`npm run build` + `node tools/sync-site.mjs` 要在**工作区没有别人未提交的源码**时做
    （或用 `git worktree` + junction `node_modules` 从 HEAD 干净构建再拷产物回来）——否则会把别人的半成品一起发上线。
-4. 之后可选：M32 遗留的"145%/160% 地图区内部滚动"、死亡结算细节、辐射白天症状。
-5. 收尾时按 §7 写日记（2026-09-15 那条已经写到 M33，跨天再新开），并可顺手 `update_user_profile`
-   （用户偏好：先给结果、要证据、别客套）。
+   `sync-site` 现在发布的是**已入库**的 `docs/index.html`，与 `dist/` 不一致时会打印双方指纹告警。
+4. 收尾时按 §7 写日记（一天一条、同一天合并），并可顺手 `update_user_profile`
+   （用户偏好：先给结果、要证据、别客套）；对外更新日志记一条到 `CHANGELOG.md`。
