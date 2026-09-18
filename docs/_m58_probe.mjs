@@ -69,7 +69,7 @@ const hud = JSON.parse(await ev(`(() => {
   const text = el ? el.textContent.replace(/\\s+/g, ' ').trim() : '';
   return JSON.stringify({ cleanHidden, text, title: el ? (el.getAttribute('title') || '') : '',
     clickable: el ? /setTab/.test(el.getAttribute('onclick') || '') : false });
-`)()`))
+})()`))
 console.log('  HUD: ' + JSON.stringify(hud))
 ok('① 干净档不出辐射 chip（没吃进去就别吓人）', hud.cleanHidden)
 ok('① 80 剂量：chip 报「重度」并顶出症状摘要', /辐射/.test(hud.text) && /重度/.test(hud.text) && /掉血 1\/步/.test(hud.text), hud.text)
@@ -85,11 +85,12 @@ const vit = JSON.parse(await ev(`(() => {
     return { hp: h0 - S.hp, thi: +(t0 - S.thi).toFixed(3), sta: +(s0 - S.sta).toFixed(3) };
   };
   const one = (rad) => run(rad, 1);
-  const clean = one(0), light = one(30), heavy = run(80, 3), fatal = run(97, 3);
+  const clean = one(0), light = one(30), fatalStep = one(97);
+  const heavy = run(80, 3), fatal = run(97, 3);
   S.rad = 0; render();
   return JSON.stringify({ clean, light, heavy, fatal,
-    thirstRatio: +(fatal.thi / clean.thi).toFixed(3), staRatio: +(fatal.sta / clean.sta).toFixed(3) });
-`)()`))
+    thirstRatio: +(fatalStep.thi / clean.thi).toFixed(3), staRatio: +(fatalStep.sta / clean.sta).toFixed(3) });
+})()`))
 console.log('  每步结算: ' + JSON.stringify(vit))
 ok('② 干净档：走一步不掉血', vit.clean.hp === 0, 'hp -' + vit.clean.hp)
 ok('② 重度（80）每步 -1 血，致命（97）每步 -3 血（3 步 3 / 9）', vit.heavy.hp === 3 && vit.fatal.hp === 9, `heavy=${vit.heavy.hp} fatal=${vit.fatal.hp}`)
@@ -110,7 +111,7 @@ const vom = JSON.parse(await ev(`(() => {
   out.tier1Hit = one(30, 0);                   // 轻微档不该吐
   Math.random = rnd; S.rad = 0; render();
   return JSON.stringify(out);
-`)()`))
+})()`))
 console.log('  呕吐: ' + JSON.stringify(vom))
 ok('③ 明显以上会呕吐：一步多掉 8 点饱食（3.6 → 11.6）', vom.heavyHit > vom.heavyMiss + 7 && vom.heavyMiss < 4.5, `${vom.heavyMiss} → ${vom.heavyHit}`)
 ok('③ 轻微档不呕吐、干净档不受影响', vom.tier1Hit < 4.5 && vom.clean < 4.5, `${vom.clean} / ${vom.tier1Hit}`)
@@ -122,7 +123,7 @@ const mods = JSON.parse(await ev(`(() => {
   const r0 = at(0), r60 = at(60), r80 = at(80);
   S.rad = 0; render();
   return JSON.stringify({ r0, r60, r80 });
-`)()`))
+})()`))
 console.log('  战力账: ' + JSON.stringify(mods))
 ok('④ 干净档没有「辐射病」备注', !mods.r0.notes.some(n => /辐射/.test(n)), JSON.stringify(mods.r0.notes))
 ok('④ 60 剂量：命中 -5%、备注写「辐射病 明显」', Math.abs(mods.r60.hit + 0.05) < 0.001 && mods.r60.notes.some(n => /辐射病 明显/.test(n)), JSON.stringify(mods.r60))
@@ -140,9 +141,9 @@ const body = JSON.parse(await ev(`(() => {
   const before = S.rad;
   if (btn) btn.click();
   const t1 = txt();
-  return JSON.stringify({ hasCard: /☢️ 辐射/.test(t0), hasSymptom: /白天症状/.test(t0), hasStep: /掉血 1\\/步/.test(t0),
+  return JSON.stringify({ hasCard: /☢️ 辐射/.test(t0), hasSymptom: /白天症状/.test(t0), hasStep: /每步 -1 生命/.test(t0),
     hasCare: /抗辐射药优先/.test(t0), hasBtn: !!btn, before, after: S.rad, afterTier: /轻微/.test(t1), left: itemCount('radaway') });
-`)()`))
+})()`))
 console.log('  人体页: ' + JSON.stringify(body))
 ok('⑤ 人体页有辐射卡：剂量/档位 + 白天症状 + 怎么办', body.hasCard && body.hasSymptom && body.hasStep && body.hasCare)
 ok('⑤ 卡上按钮真的能吃药（抗辐射药 80 → 25，卡面跟着降到轻微）', body.hasBtn && body.before === 80 && body.after === 25 && body.afterTier, `${body.before} → ${body.after}，剩余 ${body.left}`)
@@ -157,7 +158,7 @@ const guide = JSON.parse(await ev(`(() => {
   return JSON.stringify({ clicked: !!btn, hasRad: /辐射怎么处理/.test(txt),
     tiers: ['干净', '轻微', '明显', '重度', '致命'].filter(l => txt.includes(l)),
     hasRange: /75–94/.test(txt), hasMed: /抗辐射药/.test(txt), hasGeiger: /盖革计数器/.test(txt) });
-`)()`))
+})()`))
 console.log('  图鉴: ' + JSON.stringify(guide))
 ok('⑥ 治疗指南新增「辐射怎么处理」', guide.clicked && guide.hasRad)
 ok('⑥ 五档标签 + 剂量区间 + 用药全都写清楚', guide.tiers.length === 5 && guide.hasRange && guide.hasMed && guide.hasGeiger, JSON.stringify(guide))
@@ -169,7 +170,7 @@ const api = JSON.parse(await ev(`(() => {
   const mono = t.every((s, i) => i === 0 || (s.staDrainMul >= t[i-1].staDrainMul && s.hitPenalty >= t[i-1].hitPenalty && s.hpPerStep >= t[i-1].hpPerStep));
   return JSON.stringify({ hasFn: typeof window.radSymptoms === 'function' && typeof window.radBrief === 'function',
     mono, labels: t.map(s => s.label), brief: window.radBrief(window.radSymptoms(97)) });
-`)()`))
+})()`))
 console.log('  纯逻辑: ' + JSON.stringify(api))
 ok('⑦ 症状函数挂到 window 且严格单调（高辐射不会更轻）', api.hasFn && api.mono, JSON.stringify(api.labels))
 ok('⑦ HUD 短摘要不含 undefined', /掉血 3\/步/.test(api.brief) && !/undefined/.test(api.brief), api.brief)
