@@ -12,7 +12,7 @@
 
 ## [未发布] · v4.0.0-beta
 
-线上：<https://bobbychina.github.io/games/zombie-survival/>（单文件 692438 字节 / 2026-09-17）
+线上：<https://bobbychina.github.io/games/zombie-survival/>（单文件 697167 字节 / 2026-09-18）
 
 ### 新增
 - **M58 辐射的白天症状**：体内辐射不再只是"压体力上限 + 夜里掉血" —— 五档各有白天后果（口渴加速 / 体力消耗加速 /
