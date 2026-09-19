@@ -34,6 +34,8 @@ export interface LabSnap {
   veh: boolean;
   /** M60：真的跨过大区几次（第 5 章目标③的硬验证 —— "有车"证明不了会开过去） */
   crossings: number;
+  /** M62：真的用引诱器解围几次（第 2 章"打不过就用引诱器脱身"的硬验证 —— 买了/有货都不算） */
+  decoyUses: number;
   /** 背包里有几种东西（第 6 章） */
   invKinds: number;
 }
@@ -115,7 +117,7 @@ export function snapOf(S: any): LabSnap {
     ammoUsed: n(st.ammoUsed), apKills: n(st.apKills),
     loc: String((S && S.loc) || 'base'), over: !!(S && S.over), inv, load,
     injuries, base, steps: n(sw.steps), visited, regions, invKinds: kinds,
-    veh: !!sw.veh, crossings: n(sw.crossings),
+    veh: !!sw.veh, crossings: n(sw.crossings), decoyUses: n(st.decoyUses),
   };
 }
 
@@ -142,7 +144,8 @@ export const COMBAT_PRESET: LabPreset = {
   seed: 'lab-combat-01',
   day: 1, ap: 14, mat: 12,
   hp: 100, hun: 85, thi: 85, sta: 100,
-  inv: { pistol: 1, crowbar: 1, a9_fmj: 24, a9_ap: 40, kevlar: 1, bandage: 5, medkit: 2, can: 2, water: 2 },
+  /* M62：把 M56 的引诱器也发到这一章 —— 教学点"打不过就别硬打"（简易的赶普通丧尸、强力的连装甲丧尸也扛不住）。 */
+  inv: { pistol: 1, crowbar: 1, a9_fmj: 24, a9_ap: 40, kevlar: 1, bandage: 5, medkit: 2, decoy1: 2, decoy2: 1, can: 2, water: 2 },
   extraEnemies: ['armored'],
   foeHpMul: { armored: 0.55 },        // 训练靶：半个血条（打法照学，别让运气卡住教学章）
 };
@@ -200,7 +203,7 @@ export const LAB_CHAPTERS: LabChapter[] = [
   },
   {
     id: 'combat', icon: '🔫', name: '第 2 章 · 战斗与枪械',
-    desc: '把子弹打出去、也把撬棍用起来：招式槽（1~4 出招 / 5 逃跑 / 6 换武器）、噪音、装甲丧尸与穿甲弹。四条目标全绿才算通关。',
+    desc: '把子弹打出去、也把撬棍用起来：招式槽（1~4 出招 / 5 逃跑 / 6 换武器）、噪音、装甲丧尸与穿甲弹、打不过就丢引诱器脱身。五条目标全绿才算通关。',
     ready: true,
     preset: COMBAT_PRESET,
     objectives: [
@@ -210,6 +213,10 @@ export const LAB_CHAPTERS: LabChapter[] = [
       /* M48：光"点过换弹"证明不了会用 —— 这条要真拿打得动装甲的弹种杀掉一只装甲目标。
          判定口径 pen ≥ armor（装甲丧尸 armor 5）：普通弹 pen 2 打出来不算，近战也不算。 */
       { id: 'apKill', text: '🛡️ 用穿甲弹打死 1 只装甲丧尸（各区都会刷；它很硬：用「连发」、该包扎就包扎、别舍不得穿甲弹）', need: s => s.apKills >= 1 },
+      /* M62：避战也是战术的一半。判定要"真的引走了"—— 引擎只在引诱器**被消耗**（至少引走一只）时才记数，
+         引不走（比如拿简易引诱器去赶装甲丧尸）不消耗、也不记账。 */
+      { id: 'decoyUse', text: '🧪 打不过就用引诱器脱身一次（战斗里点「🧪 引诱器」槽：简易的赶普通丧尸、强力的连装甲丧尸也扛不住；引不走的不消耗）',
+        need: s => s.decoyUses >= 1 },
     ],
   },
   {

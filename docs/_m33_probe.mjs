@@ -301,7 +301,7 @@ const swap2 = await clickBtn('button[onclick*="setLoaded"]', 5)
 await sleep(900)
 const done2 = JSON.parse(await ev(`JSON.stringify(window.V4Lab.status())`))
 ok('第 2 章：背包「弹药」区手动装填一次（目标③绿）', swap2 && Object.keys(done2.snap.load || {}).length > 0 && done2.eval.items.find(i => i.id === 'loadSwap').done === true, JSON.stringify({ load: done2.snap.load, click: swap2 }))
-ok('第 2 章三条绿了但没通关（M48 的第④条还没做，3/4）', done2.eval.passed === false && done2.eval.green === 3, JSON.stringify({ green: done2.eval.green, total: done2.eval.total }))
+ok('第 2 章三条绿了但没通关（M48/M62 的第④⑤条还没做，3/5）', done2.eval.passed === false && done2.eval.green === 3, JSON.stringify({ green: done2.eval.green, total: done2.eval.total }))
 
 /* ── 6a) M48：目标④要真拿穿甲弹打死一只装甲丧尸（换弹那一步只证明"点过切换"） ──
    注意：上一步为了验证"近战击杀"把武器换成了撬棍，这里必须**换回手枪**再打 ——
@@ -360,7 +360,48 @@ const doneAp = JSON.parse(await ev(`JSON.stringify(window.V4Lab.status())`))
 ok('第 2 章：换上穿甲弹真的打死一只装甲丧尸（apKills 记账 → 目标④绿）',
   doneAp.snap.apKills >= 1 && doneAp.eval.items.find(i => i.id === 'apKill').done === true,
   JSON.stringify({ before: armedBefore, apKills: doneAp.snap.apKills }))
-ok('第 2 章四条全绿 → 判定通关（4/4）', doneAp.eval.passed === true && doneAp.eval.green === 4, JSON.stringify({ green: doneAp.eval.green, total: doneAp.eval.total }))
+
+/* ── 6b) M62：第 5 条目标「打不过就用引诱器脱身」—— 硬验证，两半都要测 ──
+   ① 反例：拿简易引诱器去赶暴君（tier 3）→ **不消耗、不记账**（不然"点一下就算会避战"了）；
+   ② 正例：拿简易引诱器赶普通丧尸 → 真引走（清场 = 脱离接触）→ 消耗 1 个、`decoyUses` +1、目标绿。 */
+const slotFor = (kw) => lab(`const s = [...D.querySelectorAll('#v4b-overlay .mv-slot')].find(x => ${kw});
+  if (!s) return 'NO-SLOT'; if (s.disabled) return 'DISABLED'; s.click(); return 'CLICKED';`)
+/** 等战斗界面开起来（慢一帧就点不到槽） */
+const waitBattle = async () => { for (let i = 0; i < 20; i++) { if ((await lab(`return !!(W.V4UI && W.V4UI.isOpen())`)) === true) return true; await sleep(400) } return false }
+const bstate = async () => JSON.parse(String(await lab(`const st = W.V4UI.state() || { foes: [] };
+  return JSON.stringify({ over: st.over || null, driven: (st.foes || []).filter(f => f.driven).length, uses: W.S.stats.decoyUses || 0,
+    d1: W.S.inv.decoy1 || 0, d2: W.S.inv.decoy2 || 0, slot: [...D.querySelectorAll('#v4b-overlay .mv-slot')].some(x => /decoy/.test(x.getAttribute('onclick') || '')) });`)))
+
+await lab(`(() => { if (W.V4UI.isOpen()) W.V4UI.close();
+  W.S.stats.decoyUses = 0; W.S.inv.decoy1 = 2; W.S.inv.decoy2 = 0; W.S.inv.decoy3 = 0; W.S.hp = W.S.hpMax;
+  W.DEV.battle(['tyrant']); return 1; })()`)
+await waitBattle(); await sleep(700)
+const negBefore = await bstate()
+const negClick = await slotFor(`/decoy/.test(x.getAttribute('onclick') || '') || /引诱器/.test(x.textContent || '')`)
+await sleep(700)
+const negAfter = await bstate()
+await lab(`if (W.V4UI.isOpen()) W.V4UI.close(); return 1;`)
+await sleep(500)
+ok('第 2 章：引诱器槽在战斗里真的出现（有货才有这个槽）', negBefore.slot === true && negClick === 'CLICKED', JSON.stringify({ slot: negBefore.slot, click: negClick }))
+ok('第 2 章：拿简易引诱器赶暴君 → 引不走、**不消耗也不记账**（不白扔道具）',
+  negAfter.driven === 0 && negAfter.d1 === 2 && negAfter.uses === 0 && !negAfter.over,
+  JSON.stringify({ before: { d1: negBefore.d1 }, after: { driven: negAfter.driven, d1: negAfter.d1, uses: negAfter.uses, over: negAfter.over } }))
+
+await lab(`(() => { W.S.inv.decoy1 = 2; W.S.hp = W.S.hpMax; W.DEV.battle(['walker', 'walker']); return 1 })()`)
+await waitBattle(); await sleep(700)
+const posClick = await slotFor(`/decoy/.test(x.getAttribute('onclick') || '') || /引诱器/.test(x.textContent || '')`)
+await sleep(900)
+const posAfter = await bstate()
+await lab(`if (W.V4UI.isOpen()) W.V4UI.close(); return 1;`)
+await sleep(700)
+const doneDecoy = JSON.parse(await ev(`JSON.stringify(window.V4Lab.status())`))
+ok('第 2 章：简易引诱器赶普通丧尸 → 真引走（清场即脱离）且消耗 1 个、`decoyUses` +1',
+  posClick === 'CLICKED' && posAfter.driven === 2 && posAfter.d1 === 1 && posAfter.uses === 1 && posAfter.over === 'flee',
+  JSON.stringify({ click: posClick, driven: posAfter.driven, d1: posAfter.d1, uses: posAfter.uses, over: posAfter.over }))
+ok('第 2 章：目标⑤绿（`snap.decoyUses` 与 stats 同步）',
+  doneDecoy.snap.decoyUses >= 1 && doneDecoy.eval.items.find(i => i.id === 'decoyUse').done === true,
+  JSON.stringify({ snap: doneDecoy.snap.decoyUses, green: doneDecoy.eval.green }))
+ok('第 2 章五条全绿 → 判定通关（5/5）', doneDecoy.eval.passed === true && doneDecoy.eval.green === 5, JSON.stringify({ green: doneDecoy.eval.green, total: doneDecoy.eval.total }))
 const prog2 = JSON.parse(await ev(`JSON.stringify({ raw: localStorage.getItem('zsv-lab-v1') || '', badges: [...document.querySelectorAll('#v4lab-chapters .lab-ch')].map(c => c.textContent.replace(/\\s+/g, ' ').slice(0, 46)) })`))
 ok('两章的通关都记在本机进度里', /"combat":\d+/.test(prog2.raw) && /"survival":\d+/.test(prog2.raw), prog2.raw)
 ok('章节列表里两章都挂上「已通关」徽章', (prog2.badges.join('|').match(/已通关/g) || []).length >= 2, JSON.stringify(prog2.badges))

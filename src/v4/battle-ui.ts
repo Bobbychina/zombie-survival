@@ -16,6 +16,8 @@ const OV = 'v4b-overlay';
 /* M38：战斗「重复上次」—— 记住上一次成功出招（招式 id + 当时的目标），一键再打一次。
    连打十只丧尸不用每次都点两下（选招 + 选目标）。 */
 let lastAct: { id: string; target: number } | null = null;
+/* M62：这一场已经落库过几个引诱器（按增量同步，避免重复记账） */
+let decoySynced = 0;
 
 function esc(s: unknown) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] ?? c)); }
 
@@ -188,6 +190,10 @@ export const V4UI = {
     }
     b.events.length = 0;
     syncBack(p);
+    /* M62：引诱器"真的把敌人引开"要写进存档统计（教学第 2 章的目标、未来的生涯统计都读它）。
+       引擎在 b.stats.decoys 里数，这里按**增量**落库 —— 引不走（不消耗）时引擎不加，也就不会记账。 */
+    const used = b.stats.decoys || 0;
+    if (used > decoySynced) { L.S.stats.decoyUses = (L.S.stats.decoyUses || 0) + (used - decoySynced); decoySynced = used; }
     lastAct = { id, target: tgt };              // M38：成功出招才记（失败的点击不覆盖）
     render();
   },
@@ -305,6 +311,7 @@ export function startV4Combat(foes: any[], opts: any = {}) {
   });
   cur = { b: battle, p, srcs, opts };
   lastAct = null;                               // M38：新战斗没有"上次动作"
+  decoySynced = 0;                              // M62：引诱器记账按场归零
   // 守夜战的"提前准备回报"：legacy 是在 startCombat 之后自己改 battle.foes 的，那套现在够不到 v4 的战场，
   // 所以在这里按同样的数值补上（警报器/钉刺/燃烧各消耗一次）。
   if (opts.siege) applySiegeTraps(battle);

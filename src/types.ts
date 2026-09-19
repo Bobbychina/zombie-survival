@@ -123,7 +123,7 @@ export interface Battle {
   target: number;
   /** 玩家的先手值：playerAct 内部要用它推进到下一轮 */
   playerSpeed: number;
-  stats: { dealt: number; taken: number; clean: boolean };
+  stats: { dealt: number; taken: number; clean: boolean; /** M62：这场用掉几个引诱器（真的引走敌人才算） */ decoys?: number };
   /** M56：这一场已经逃跑失败过几次（每失败一次更难跑，失败还挨白打） */
   fleeTries?: number;
 }

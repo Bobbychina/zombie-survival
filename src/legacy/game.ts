@@ -526,7 +526,7 @@ function newState(){
     quest:{ stage:0, keycards:0, data:0 },
     lore:[], comp:null, compHp:0, compMax:0,
     ach:[], stats:{ kills:0, meleeKills:0, scav:0, crafted:0, hordes:0, nights:0, dmgDealt:0, dmgTaken:0, multiKill:0,
-                    deep:0, ammoUsed:0, cleanWins:0, elites:0, bounties:0, apKills:0, zoneCnt:{}, killBy:{} },   // v2.2：悬赏板与精英统计要用的计数器；apKills=M48 穿甲击杀
+                    deep:0, ammoUsed:0, cleanWins:0, elites:0, bounties:0, apKills:0, decoyUses:0, zoneCnt:{}, killBy:{} },   // v2.2：悬赏板与精英统计要用的计数器；apKills=M48 穿甲击杀；decoyUses=M62 引诱器解围
     flags:{ gotGun:false, labOpen:false, won:false, endless:false, cured:false,
             tips:{},                                // C04/C06 触发式提示去重
             rescueUsed:false, everDied:false },      // C05 濒死救援：整档唯一、落盘不可重置
@@ -2259,6 +2259,7 @@ function combatResolve(kind, arg, staged){
     const plan = planDecoy(S.inv, b.foes, { noFlee: !!b.opts.noFlee });
     if(!plan.item){ cbLog(plan.text, 'hurt'); drawCombat(); return; }
     takeItem(plan.item, 1);
+    S.stats.decoyUses = (S.stats.decoyUses || 0) + 1;   // M62：真的引走了才记一笔（教学第 2 章读它）
     plan.driven.forEach(i => { const f = b.foes[i]; f.dead = true; f.hp = 0; f.driven = true; });   // 引走 ≠ 击杀：不掉战利品、不给经验
     cbLog(plan.text, 'good');
     if(plan.clears){ endCombat('flee'); return; }

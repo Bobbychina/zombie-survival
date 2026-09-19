@@ -66,7 +66,7 @@ export function createBattle(foes: Foe[], player: PlayerProfile, opts: Battle['o
     player: { hp: player.hp, sta: player.sta, ammo: player.ammo, guard: 0, critUp: 0, weak: false, statuses: [] },
     queue: [], idx: 0, round: 0, events: [], log: [], over: null, opts, target: 0,
     playerSpeed: playerSpeed(player),
-    stats: { dealt: 0, taken: 0, clean: true },
+    stats: { dealt: 0, taken: 0, clean: true, decoys: 0 },
   };
   startRound(b, b.playerSpeed);
   logLine(b, opts.title ? `${opts.title}：${foes.map(f => f.name).join('、')} 挡住了你。` : '遭遇：' + foes.map(f => f.name).join('、'), 'sys');
@@ -162,6 +162,7 @@ export function playerAct(b: Battle, p: PlayerProfile, moveId: string, targetIdx
     const plan = planDecoy(p.inventory, b.foes, { noFlee: !!b.opts.noFlee });
     if (!plan.item) { push(b, { kind: 'info', text: plan.text }); return; }     // 不消耗、不占回合
     p.inventory[plan.item] = (p.inventory[plan.item] ?? 0) - 1;
+    b.stats.decoys = (b.stats.decoys || 0) + 1;      // M62：真的引走了才记一笔（教学第 2 章的目标读它）
     for (const i of plan.driven) { const f = b.foes[i]; f.hp = 0; (f as Foe & { driven?: boolean }).driven = true; }
     push(b, { kind: 'effect', text: plan.text });
     if (plan.clears) { push(b, { kind: 'end', text: '🚪 你趁着它们被引开，脱离了接触。' }); finish(b, 'flee'); return; }

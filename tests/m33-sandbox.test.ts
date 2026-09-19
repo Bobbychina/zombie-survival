@@ -12,7 +12,7 @@ const CHAPTER_NAMES = LAB_CHAPTERS.map(c => c.name);
 const snap = (over: Partial<LabSnap> = {}): LabSnap => ({
   day: 1, hp: 100, hun: 62, thi: 58, ap: 14, scav: 0, deep: 0, crafted: 0, kills: 0, meleeKills: 0, ammoUsed: 0, apKills: 0,
   loc: 'base', over: false, inv: {}, load: {}, injuries: [], base: {}, steps: 0, visited: 1, regions: 1, invKinds: 1,
-  veh: false, crossings: 0,
+  veh: false, crossings: 0, decoyUses: 0,
   ...over,
 });
 
@@ -64,12 +64,19 @@ describe('章节表', () => {
     expect(a(0)).toBe(false);
     expect(a(1)).toBe(true);
     expect(evalChapter(CH2, snap({ kills: 1, ammoUsed: 3, meleeKills: 1, load: { c9: 'a9_fmj' } })).passed).toBe(false);   // 少一条不算通关
-    expect(evalChapter(CH2, snap({ kills: 1, ammoUsed: 3, meleeKills: 1, load: { c9: 'a9_ap' }, apKills: 1 })).passed).toBe(true);
-    expect(CH2.objectives.length).toBe(4);
+    /* M62：第 5 条"用引诱器脱身"——判定读 decoyUses（引擎只在真引走时才记） */
+    const d = (n: number) => evalChapter(CH2, snap({ decoyUses: n })).items.find(i => i.id === 'decoyUse')!.done;
+    expect(d(0)).toBe(false);
+    expect(d(1)).toBe(true);
+    expect(evalChapter(CH2, snap({ kills: 1, ammoUsed: 3, meleeKills: 1, load: { c9: 'a9_ap' }, apKills: 1 })).passed).toBe(false);   // 五条里还差引诱器
+    expect(evalChapter(CH2, snap({ kills: 1, ammoUsed: 3, meleeKills: 1, load: { c9: 'a9_ap' }, apKills: 1, decoyUses: 1 })).passed).toBe(true);
+    expect(CH2.objectives.length).toBe(5);
   });
 
-  it('第 2 章的预设够打通这一章：穿甲弹 ≥40 发 + 防弹衣 + 急救 + 装甲丧尸（训练靶半个血条）', () => {
+  it('第 2 章的预设够打通这一章：穿甲弹 ≥40 发 + 防弹衣 + 急救 + 引诱器 + 装甲丧尸（训练靶半个血条）', () => {
     expect(COMBAT_PRESET.inv.a9_ap).toBeGreaterThanOrEqual(40);   // 装甲丧尸 hp62/armor5：一下只有 3~9 点（M54 实测过一次"打得对但弹尽"的倒霉局）
+    expect(COMBAT_PRESET.inv.decoy1).toBeGreaterThanOrEqual(1);   // M62：第 5 条目标要真的丢一次引诱器
+    expect(COMBAT_PRESET.inv.decoy2).toBeGreaterThanOrEqual(1);   // 装甲丧尸是 tier 2：简易的赶不走，强力的才行
     expect(COMBAT_PRESET.extraEnemies).toContain('armored');
     expect(COMBAT_PRESET.inv.medkit).toBeGreaterThanOrEqual(2);   // 这一场要边打边包扎（它一巴掌 17）
     expect(COMBAT_PRESET.inv.kevlar).toBeGreaterThanOrEqual(1);   // 裸装玩家会先倒下（探针实测）
