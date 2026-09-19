@@ -3231,7 +3231,8 @@ function renderBase(){
     const can = !miss.length && S.ap >= 1 && n < cap;
     return '<div class="card" style="padding:10px"><h3 style="font-size:12px">' + t.icon + ' ' + t.n + ' <span class="sub">×' + n + (cap > 1 ? '/' + cap : '') + '</span></h3>' +
       '<div class="hint" style="min-height:34px">' + t.desc + '</div>' +
-      '<div class="row" style="margin:6px 0">' + Object.keys(t.cost).map(m => '<span class="tag ' + (itemCount(m) >= t.cost[m] ? 'eq' : '') + '">' + itemName(m) + ' ' + itemCount(m) + '/' + t.cost[m] + '</span>').join('') + '</div>' +
+      '<div class="row" style="margin:6px 0">' + needTags(t.cost) + '</div>' +
+      (miss.length && n < cap ? missLine(miss) : '') +
       '<button class="btn sm block ' + (can ? 'warn' : '') + '" ' + (can ? '' : 'disabled') + ' onclick="buildTrap(\'' + k + '\')">' + (n >= cap ? '已布满' : miss.length ? '还差 ' + miss.map(m => itemName(m.mat)).join('、') : '布置 (1 AP)') + '</button></div>';
   }).join('') + '</div>';
   h += '<div class="hint" style="margin-top:8px">守不住就得弃守：今晚弃守大约 <b>掉 ' + drag.hpLoss + ' 点生命 + 丢 ' + drag.matLoss + ' 材料</b>（门窗/围墙等级越高越轻；有围墙再减半）。' +
