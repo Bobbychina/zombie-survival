@@ -3072,6 +3072,31 @@ function renderMods(){
   h += '</div>';
   return h;
 }
+/* ── M61：材料/等级缺口的统一视觉（用户：「还差…太暗了」「缺什么材料、几级工作台不够明显」）──
+   制作页与据点页共用这三只：缺的打红黄徽章 + 一条高亮缺口行，够的走绿色 .eq。
+   以前缺口只写在灰字 .hint 里或塞进禁用按钮文案，扫一眼分不出"够"和"不够"。 */
+/** 材料清单：够 → 绿 ✅，不够 → 红 ⛔（have/need 一起给，省得玩家自己减） */
+function needTags(need){
+  return Object.keys(need).map(k => {
+    const have = itemCount(k), want = need[k], ok = have >= want;
+    return '<span class="tag ' + (ok ? 'eq' : 'short') + '">' + (ok ? '✅' : '⛔') + ' ' + itemName(k) + ' ' + have + '/' + want + '</span>';
+  }).join(' ');
+}
+/** 高亮缺口行：「⛔ 还差 铁钉 ×2、胶带 ×1」/「✅ 材料够」 */
+function missLine(miss, okText){
+  if(!miss || !miss.length) return '<div class="reqmiss ok">✅ ' + (okText || '材料够') + '</div>';
+  return '<div class="reqmiss">⛔ 还差 ' + miss.map(m => '<b>' + itemName(m.mat) + ' ×' + m.short + '</b>').join('、') + '</div>';
+}
+/** 配方站的等级门槛：够了绿 ✅ / 没建或等级不够 → 黄锁（写清"当前 Lv.N"） */
+function stationChip(icon, name, lv, need){
+  if(lv >= need) return '<span class="tag eq">' + icon + ' ' + name + ' Lv.' + need + ' ✅</span>';
+  if(lv === 0) return '<span class="tag gate">🔒 需要先建 ' + icon + ' ' + name + '</span>';
+  return '<span class="tag gate">🔒 ' + icon + ' ' + name + ' Lv.' + need + '（当前 Lv.' + lv + '）</span>';
+}
+/** 缺口文字（不带标签）："铁片 ×3、电子元件 ×1" */
+function missTextOf(need){
+  return Object.keys(need).filter(k => itemCount(k) < need[k]).map(k => itemName(k) + ' ×' + (need[k] - itemCount(k))).join('、');
+}
 function renderCraft(){
   /* M25：制作页按"工作站"分区（藏身处那套）——工作台 / 弹药台 / 医疗台 / 灶台。
      每个站显示自己的等级与该站配方；没有的站直接告诉你它还没建。 */
@@ -3090,7 +3115,7 @@ function renderCraft(){
     const lv = S.base[st.k] || 0;
     const list = RECIPES.map((r, i) => ({r, i})).filter(x => (x.r.st || 'bench') === st.k);
     h += '<div class="sect-title" style="margin-top:12px">' + st.icon + ' ' + st.n +
-      ' <span class="badge">' + (lv > 0 ? 'Lv.' + lv : '还没建') + '</span>' +
+      ' <span class="badge' + (lv > 0 ? '' : ' heavy') + '">' + (lv > 0 ? 'Lv.' + lv : '🔒 还没建') + '</span>' +
       '<span class="badge">' + list.filter(x => lv >= x.r.lv).length + ' / ' + list.length + ' 配方</span></div>';
     h += '<div class="hint" style="margin-bottom:6px">' + st.desc + (lv === 0 ? '　→ 在<b>据点 → 建设</b>里花材料建起来（' + buildCostText(st.k) + '）。' : '') + '</div>';
     h += '<div class="grid g2">';
@@ -3098,12 +3123,16 @@ function renderCraft(){
       const okSt = lv >= r.lv;
       const okMat = Object.keys(r.need).every(k => (S.inv[k] || 0) >= r.need[k]);
       const out = ITEMS[r.out] || { n: r.out };
-      const need = Object.keys(r.need).map(k => '<span class="tag ' + (itemCount(k) >= r.need[k] ? 'eq' : '') + '">' + itemName(k) + ' ' + itemCount(k) + '/' + r.need[k] + '</span>').join(' ');
+      const need = needTags(r.need);                       // M61：缺的红 ⛔、够的绿 ✅
       const ammoTag = out.t === 'ammo' ? '<span class="tag ' + (out.pen >= 4 ? 'wpn' : '') + '">穿透 ' + out.pen + '</span>' : '';
+      /* M61：缺口单独一行高亮（材料缺什么 / 几级什么站），不再只靠灰字按钮 */
+      const why = (okSt && okMat) ? '' : '<div class="reqmiss">' + (!okSt
+        ? (lv === 0 ? '🔒 需要先建 ' + st.icon + ' ' + st.n + '（据点 → 建设）' : '🔒 ' + st.n + ' 等级不够：需要 Lv.' + r.lv + '，现在 Lv.' + lv)
+        : '⛔ 材料不够：还差 <b>' + missTextOf(r.need) + '</b>') + '</div>';
       h += '<div class="lrow" style="flex-direction:column;align-items:stretch;gap:6px">' +
-        '<div class="row"><span class="nm">' + out.n + ' ×' + r.n + '</span>' + ammoTag + '<span class="spacer"></span><span class="tag">' + st.n + ' Lv.' + r.lv + '</span></div>' +
+        '<div class="row"><span class="nm">' + out.n + ' ×' + r.n + '</span>' + ammoTag + '<span class="spacer"></span>' + stationChip(st.icon, st.n, lv, r.lv) + '</div>' +
         '<div class="ds">' + r.desc + '</div>' +
-        '<div class="row">' + need + '</div>' +
+        '<div class="row">' + need + '</div>' + why +
         '<button class="btn sm ' + (okSt && okMat ? 'ok' : '') + '" ' + (okSt && okMat ? '' : 'disabled') + ' onclick="craft(' + i + ')">' +
           (okSt ? (okMat ? '制作 (1 AP)' : '材料不足') : (lv === 0 ? '需要先建' + st.n : '需要' + st.n + ' Lv.' + r.lv)) + '</button></div>';
     }
@@ -3193,7 +3222,9 @@ function renderBase(){
   const needFix = S.def.doorHp < dm.door || S.def.wallHp < dm.wall;
   const canFix = !fixMiss.length && S.ap >= 1 && needFix;
   h += '<div class="row" style="margin-top:8px"><button class="btn sm ok" ' + (canFix ? '' : 'disabled') + ' onclick="repairDefense()">🔨 抢修防线 (1 AP + 铁片2/木料2)</button>' +
-    '<span class="hint">' + (!needFix ? '防线是满的，不用修。' : S.ap < 1 ? '没有行动力了。' : fixMiss.length ? '还差 ' + fixMiss.map(m => itemName(m.mat) + '×' + m.short).join('、') : '尸潮期间也能在战斗里抢修（更贵，但救命）。') + '</span></div>';
+    (needFix && fixMiss.length
+      ? missLine(fixMiss)
+      : '<span class="hint">' + (!needFix ? '防线是满的，不用修。' : S.ap < 1 ? '没有行动力了。' : '尸潮期间也能在战斗里抢修（更贵，但救命）。') + '</span>') + '</div>';
   h += '<div class="grid g3" style="margin-top:10px">' + Object.keys(TRAPS).map(k => {
     const t = TRAPS[k], n = S.def.traps[k], cap = trapCap(k);
     const cost = stk(t.cost), miss = missingFor(t.cost, cost);
@@ -3228,7 +3259,7 @@ function renderBase(){
       '<span class="badge ' + (a.urgent ? 'heavy warnpulse' : '') + '">' + (i + 1) + '</span>' +
       '<div style="flex:1;min-width:0"><div><b>' + u.icon + ' ' + u.n + '</b> <span class="sub">Lv.' + lv + '/' + u.max + ' → Lv.' + (lv + 1) + '：' + facilityDelta(a.key, lv + 1, { powerLv: S.base.power || 0 }) + '</span></div>' +
       '<div class="hint">' + a.why + '</div>' +
-      '<div class="hint">' + (miss.length ? '还差 ' + miss.map(m => itemName(m.mat) + '×' + m.short).join('、') : '材料够' + (S.ap < 1 ? '，但没有行动力' : '')) + '</div></div>' +
+      missLine(miss, S.ap < 1 ? '材料够，但没有行动力' : '材料够，可以开工') + '</div>' +
       '<button class="btn sm ' + (can ? 'ok' : '') + '" ' + (can ? '' : 'disabled') + ' onclick="build(\'' + a.key + '\')">建造 (1 AP)</button></div>';
   }).join('');
   h += '</div>';
@@ -3243,14 +3274,15 @@ function renderBase(){
       const u = BASE_UP[k], lv = S.base[k] || 0, maxed = lv >= u.max;
       const cost = maxed ? null : costOf(k);
       const miss = cost ? missingFor(cost, stk(cost)) : [];
-      const costTxt = cost ? Object.keys(cost).map(c => '<span class="tag ' + (itemCount(c) >= cost[c] ? 'eq' : '') + '">' + itemName(c) + ' ' + itemCount(c) + '/' + cost[c] + '</span>').join(' ') : '';
+      const costTxt = cost ? needTags(cost) : '';
       const can = cost && !miss.length && S.ap >= 1;
       h += '<div class="card"><h3>' + u.icon + ' ' + u.n + ' <span class="sub">Lv.' + lv + '/' + u.max + '</span></h3>' +
         '<div class="ds hint" style="min-height:32px">' + u.desc + '</div>' +
         (maxed ? '' : '<div class="hint" style="margin-top:2px;color:#cfd2d6">升级后：<b>' + facilityDelta(k, lv + 1, { powerLv: S.base.power || 0 }) + '</b></div>') +
-        '<div class="row" style="margin:8px 0 6px">' + (maxed ? '<span class="tag eq">已满级</span>' : costTxt) + '</div>' +
+        (maxed ? '<div class="row" style="margin:8px 0 4px"><span class="tag eq">已满级</span></div>'
+          : '<div class="row" style="margin:8px 0 4px">' + costTxt + '</div>' + missLine(miss, S.ap < 1 ? '材料够，但没有行动力' : '材料够，可以开工')) +
         '<button class="btn sm block ' + (can ? 'ok' : '') + '" ' + (can ? '' : 'disabled') + ' onclick="build(\'' + k + '\')">' +
-        (maxed ? '已完工' : S.ap < 1 ? '没有行动力' : miss.length ? '还差 ' + miss.map(m => itemName(m.mat) + '×' + m.short).join('、') : '建造 / 升级 (1 AP)') + '</button></div>';
+        (maxed ? '已完工' : can ? '建造 / 升级 (1 AP)' : '暂不能建') + '</button></div>';
     }
     h += '</div>';
   }
