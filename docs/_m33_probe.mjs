@@ -306,41 +306,56 @@ ok('第 2 章三条绿了但没通关（M48 的第④条还没做，3/4）', don
 /* ── 6a) M48：目标④要真拿穿甲弹打死一只装甲丧尸（换弹那一步只证明"点过切换"） ──
    注意：上一步为了验证"近战击杀"把武器换成了撬棍，这里必须**换回手枪**再打 ——
    拿着撬棍打死装甲丧尸只会记近战击杀（第一次跑就是这么红的）。 */
-await lab(`W.equipWeapon('pistol'); W.setLoaded('c9','a9_ap'); W.S.hp = W.S.hpMax; W.DEV.battle(['armored']); return 1;`)
-await sleep(1500)
+/* M61 硬化：这一条打的是**真随机战斗**，偶发"没打死 / 被打断"会假红（M61 那轮跑红过一次，
+  本地与线上 M60 各复跑一次都是绿的 → 是探针的运气问题，不是产品问题）。
+   给它最多 3 次重开机会，判据只看 apKills 有没有涨。 */
+const armoredAttempt = async () => {
+  await lab(`W.equipWeapon('pistol'); W.setLoaded('c9','a9_ap'); W.S.hp = W.S.hpMax; W.DEV.battle(['armored']); return 1;`)
+  await sleep(1500)
+  /* 先等战斗界面真的开起来：慢一帧就判 'OVER' 会把整场战斗跳过（第一次跑就是这么"0 击杀"的） */
+  let open = false
+  for (let i = 0; i < 24 && !open; i++) {
+    open = (await lab(`return !!(W.V4UI && W.V4UI.isOpen())`)) === true
+    if (!open) await sleep(500)
+  }
+  if (!open) return { open: false, kills: 0 }
+  for (let i = 0; i < 40; i++) {
+    /* 用**威力最大的**那一招（第 2 格「连发」），血低了点「包扎」—— 装甲丧尸 hp62/armor5：
+       点射一下只有 3~9 点，而它一巴掌 17，不回血硬打会先倒下（第一次跑就是这么红的）。 */
+    const st = await lab(`if (!W.V4UI || !W.V4UI.isOpen()) return 'OVER';
+      const ov = D.getElementById('v4b-overlay');
+      const txt = ov ? ov.textContent.replace(/\\s+/g, ' ') : '';
+      const hp = (txt.match(/生命(\\d+)\\/(\\d+)/) || [0, '999', '999']);
+      const low = (+hp[1]) < 55;
+      const all = [...(ov ? ov.querySelectorAll('.mv-slot') : [])];
+      const heal = all.find(x => /包扎/.test(x.textContent || '') && !x.disabled);
+      const shot = (all[1] && !all[1].disabled) ? all[1] : all.find(x => !x.disabled);
+      const pick = (low && heal) ? heal : shot;
+      if (!pick) return 'WAIT';
+      pick.click();
+      const ov2 = D.getElementById('v4b-overlay');
+      const t2 = ov2 ? ov2.textContent.replace(/\\s+/g, ' ') : '';
+      /* 打死了：结算面板上点「继续」收工（不然下一轮又变成没招可点的 WAIT，空转十几秒） */
+      const doneBtn = ov2 ? [...ov2.querySelectorAll('button')].find(b => /继续/.test(b.textContent || '')) : null;
+      if (doneBtn) { doneBtn.click(); return 'END'; }
+      return JSON.stringify({ foe: (t2.match(/HP \\d+\\/\\d+/) || ['?'])[0], myHp: hp[1], healed: !!(low && heal), ammo: W.S.ammo, apKills: W.S.stats.apKills });`)
+    if (st === 'OVER' || st === 'END') break
+    await sleep(700)
+  }
+  await sleep(900)
+  const st2 = JSON.parse(await ev(`JSON.stringify(window.V4Lab.status())`))
+  return { open: true, kills: st2.snap ? st2.snap.apKills : 0 }
+}
+let armed = { open: false, kills: 0 }
+for (let attempt = 1; attempt <= 3; attempt++) {
+  const r = await armoredAttempt()
+  if (r.open || attempt === 1) armed = { open: armed.open || r.open, kills: r.kills }
+  if (attempt > 1) console.log('    装甲战第 ' + attempt + ' 次尝试：apKills=' + r.kills)
+  if (r.kills >= 1) break
+}
 const armedBefore = await lab(`return JSON.stringify({ wpn: W.S.eq.wpn, loaded: (W.S.load || {}).c9 || null, ammo: W.S.ammo, apKills: W.S.stats.apKills || 0, hp: W.S.hp });`)
-/* 先等战斗界面真的开起来：慢一帧就判 'OVER' 会把整场战斗跳过（第一次跑就是这么"0 击杀"的） */
-let armedOpen = false
-for (let i = 0; i < 24 && !armedOpen; i++) {
-  armedOpen = (await lab(`return !!(W.V4UI && W.V4UI.isOpen())`)) === true
-  if (!armedOpen) await sleep(500)
-}
-ok('第 2 章：装甲丧尸遭遇真的开打了（战斗界面打开）', armedOpen, JSON.stringify(armedBefore))
-for (let i = 0; i < 40 && armedOpen; i++) {
-  /* 用**威力最大的**那一招（第 2 格「连发」），血低了点「包扎」—— 装甲丧尸 hp62/armor5：
-     点射一下只有 3~9 点，而它一巴掌 17，不回血硬打会先倒下（第一次跑就是这么红的）。 */
-  const st = await lab(`if (!W.V4UI || !W.V4UI.isOpen()) return 'OVER';
-    const ov = D.getElementById('v4b-overlay');
-    const txt = ov ? ov.textContent.replace(/\\s+/g, ' ') : '';
-    const hp = (txt.match(/生命(\\d+)\\/(\\d+)/) || [0, '999', '999']);
-    const low = (+hp[1]) < 55;
-    const all = [...(ov ? ov.querySelectorAll('.mv-slot') : [])];
-    const heal = all.find(x => /包扎/.test(x.textContent || '') && !x.disabled);
-    const shot = (all[1] && !all[1].disabled) ? all[1] : all.find(x => !x.disabled);
-    const pick = (low && heal) ? heal : shot;
-    if (!pick) return 'WAIT';
-    pick.click();
-    const ov2 = D.getElementById('v4b-overlay');
-    const t2 = ov2 ? ov2.textContent.replace(/\\s+/g, ' ') : '';
-    /* 打死了：结算面板上点「继续」收工（不然下一轮又变成没招可点的 WAIT，空转十几秒） */
-    const doneBtn = ov2 ? [...ov2.querySelectorAll('button')].find(b => /继续/.test(b.textContent || '')) : null;
-    if (doneBtn) { doneBtn.click(); return 'END'; }
-    return JSON.stringify({ foe: (t2.match(/HP \\d+\\/\\d+/) || ['?'])[0], myHp: hp[1], healed: !!(low && heal), ammo: W.S.ammo, apKills: W.S.stats.apKills });`)
-  if (st === 'OVER' || st === 'END') break
-  if (i < 16) console.log('    装甲战第' + (i + 1) + '轮：' + st)
-  await sleep(700)
-}
-await sleep(1000)
+ok('第 2 章：装甲丧尸遭遇真的开打了（战斗界面打开）', armed.open, JSON.stringify(armedBefore))
+await sleep(400)
 const doneAp = JSON.parse(await ev(`JSON.stringify(window.V4Lab.status())`))
 ok('第 2 章：换上穿甲弹真的打死一只装甲丧尸（apKills 记账 → 目标④绿）',
   doneAp.snap.apKills >= 1 && doneAp.eval.items.find(i => i.id === 'apKill').done === true,

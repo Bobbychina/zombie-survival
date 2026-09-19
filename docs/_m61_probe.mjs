@@ -55,7 +55,7 @@ await send('Page.navigate', { url: BOOT }); await bootWait(); await sleep(900)
 await ev(`(() => {
   try { localStorage.setItem('dsh.tutorial.done','1'); localStorage.removeItem('zsv-lab-v1'); localStorage.removeItem('dsh.mapmode'); } catch(e){}
   closeAllModals(); S.over = false; S.day = 9; S.tab = 'craft';
-  S.base = Object.assign({}, S.base, { bench: 0, loading: 1, medlab: 0, kitchen: 0, power: 0, filter: 0, garden: 0, storage: 1, trap: 0 });
+  S.base = Object.assign({}, S.base, { bench: 1, loading: 0, medlab: 0, kitchen: 0, power: 0, filter: 0, garden: 0, storage: 1, trap: 0 });
   S.mat = 4; S.ap = 12;
   S.inv = { cloth: 2, wood: 2, metal: 1, chem: 0, bottle: 0, fuel: 0, bandage: 0, water: 2, can: 1 };
   render(); return 1
@@ -79,9 +79,10 @@ const craft = JSON.parse(await ev(`(() => {
     missCount: miss.length, shortCount: shorts.length, gateCount: gates.length, eqCount: eqs.length,
     shortText: shorts.slice(0, 3).map(e => e.textContent.trim()), gateText: gates.slice(0, 3).map(e => e.textContent.trim()),
     missText: miss.slice(0, 3).map(e => e.textContent.trim()),
+    missAllKinds: Array.from(new Set(miss.map(e => e.textContent.trim().replace(/[^：:]*$/, '')))).slice(0, 6),
     hasShortWord: /还差/.test(t) && /材料不够/.test(t),
     hasGateWord: /需要先建/.test(t),
-    lvGate: /等级不够：需要 Lv\.\d+，现在 Lv\.\d+/.test(t),
+    lvGate: /等级不够：需要 Lv\\.\\d+，现在 Lv\\.\\d+/.test(t),
     btnDisabled: btnDisabled.slice(0, 4),
     missColor: cs1 ? cs1.color : null, missBg: cs1 ? cs1.backgroundColor : null, missBorder: cs1 ? cs1.borderLeftColor : null,
     shortColor: cs2 ? cs2.color : null, shortBg: cs2 ? cs2.backgroundColor : null,
