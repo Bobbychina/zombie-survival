@@ -16,6 +16,9 @@
 #v4lab .lab-ch:hover{border-color:var(--accent,#5cc8ff)}
 #v4lab .lab-ch.on{border-color:var(--accent,#5cc8ff);box-shadow:inset 0 0 0 1px rgba(92,200,255,.25)}
 #v4lab .lab-ch.soon{opacity:.55}
+/* M60：被「按顺序解锁」挡住的章节也压暗一点，但鼠标形状仍然是"可点"（点了会告诉你为什么锁着） */
+#v4lab .lab-ch.locked{opacity:.62}
+#v4lab .lab-ch.locked .nm::after{content:' 🔒';font-size:11px;opacity:.8}
 #v4lab .lab-ch .ds{font-size:11.5px;color:var(--dim,#8b93a0);margin-top:4px;line-height:1.5}
 #v4lab .lab-obj{display:flex;gap:8px;padding:6px 8px;border:1px solid var(--line,#232830);border-radius:6px;margin-bottom:6px;
   font-size:12.5px;line-height:1.5;background:#0f1216}

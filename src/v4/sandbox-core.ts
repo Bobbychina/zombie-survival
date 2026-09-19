@@ -32,6 +32,8 @@ export interface LabSnap {
   steps: number; visited: number; regions: number;
   /** 有没有车（第 5 章：跨大区的前置条件） */
   veh: boolean;
+  /** M60：真的跨过大区几次（第 5 章目标③的硬验证 —— "有车"证明不了会开过去） */
+  crossings: number;
   /** 背包里有几种东西（第 6 章） */
   invKinds: number;
 }
@@ -113,7 +115,7 @@ export function snapOf(S: any): LabSnap {
     ammoUsed: n(st.ammoUsed), apKills: n(st.apKills),
     loc: String((S && S.loc) || 'base'), over: !!(S && S.over), inv, load,
     injuries, base, steps: n(sw.steps), visited, regions, invKinds: kinds,
-    veh: !!sw.veh,
+    veh: !!sw.veh, crossings: n(sw.crossings),
   };
 }
 
@@ -234,13 +236,17 @@ export const LAB_CHAPTERS: LabChapter[] = [
   },
   {
     id: 'world', icon: '🌐', name: '第 5 章 · 地图与大区',
-    desc: '危险度是从家往外涨的：走远一点、深搜一次，再在修车点弄一辆车（跨大区的前提）。三条目标全绿就算通关。',
+    desc: '危险度是从家往外涨的：走远一点、深搜一次，再修辆车**真的开去别的区**（跨大区的前提是车 + 油）。三条目标全绿就算通关。',
     ready: true,
     preset: WORLD_PRESET,
     objectives: [
       { id: 'walk8', text: '🥾 走过 8 个区块（走路 1 行动力/格，越往外危险度越高）', need: s => s.visited >= 8 },
       { id: 'deep5', text: '🔦 深度搜索 1 次（2 行动力：更容易出稀有物，但更危险）', need: s => s.deep >= 1 },
-      { id: 'cross5', text: '🚗 弄到一辆车（地图上带 🔧 的修车点 → 12 材料 + 2 汽油）：跨大区得开车，两条腿走不到', need: s => s.veh },
+      /* M60：原来这条只要求"有车"（`s.veh`）—— 弄到车不等于会跨区，用户要的是"真的走一遍"。
+         现在判定改成**真的搬过大区**（worldstate.switchRegion 里的 crossings 计数）：
+         得先修车（🔧 修车点：12 材料 + 2 汽油），再在大区地图上点一个别的区、按「出发」。 */
+      { id: 'cross5', text: '🚗 修辆车，真的开去另一个大区（大区地图 → 点别的区域 → 「出发」；一箱油 + 一天体力最多 4 格）',
+        need: s => s.crossings >= 1 },
     ],
   },
   {
@@ -288,29 +294,61 @@ export function mergeSticky(ev: LabEval, sticky: ReadonlySet<string>): { ev: Lab
 /* ── 进度（存父页面，不进 iframe、不进存档） ── */
 export const LAB_KEY = 'zsv-lab-v1';
 
-export interface LabProgress { done: Record<string, number> }   // 章节 id → 首次通关时间戳
+/** M60：`seq` = 「按顺序解锁」开关。**默认关**（六章都直接可玩、只给软建议顺序）——
+ *  用户口径：「硬解锁只在菜单里手动打开，不能让想练第 6 章的人被第 1 章卡住」。 */
+export interface LabProgress { done: Record<string, number>; seq: boolean }
 
 export function parseProgress(raw: string | null): LabProgress {
-  const out: LabProgress = { done: {} };
+  const out: LabProgress = { done: {}, seq: false };
   if (!raw) return out;
   try {
     const j = JSON.parse(raw);
     const src = (j && typeof j === 'object' && j.done && typeof j.done === 'object') ? j.done : {};
     for (const k in src) { const v = n(src[k]); if (v > 0) out.done[k] = v; }
+    out.seq = !!(j && typeof j === 'object' && j.seq === true);      // 坏偏好当"关"，不抛
   } catch { /* 坏偏好当没进度，不抛 */ }
   return out;
 }
 
-export const serializeProgress = (p: LabProgress): string => JSON.stringify({ v: 1, done: p.done });
+export const serializeProgress = (p: LabProgress): string => JSON.stringify({ v: 2, done: p.done, seq: !!p.seq });
+
+/** 切换「按顺序解锁」（只动这个开关，不动通关记录） */
+export const toggleSeq = (p: LabProgress): LabProgress => ({ done: p.done, seq: !p.seq });
 
 /** 标记通关（已通关的不覆盖时间戳，保留"第一次过"的时刻） */
 export function markDone(p: LabProgress, chId: string, now: number): LabProgress {
   const done = { ...p.done };
   if (!done[chId]) done[chId] = now;
-  return { done };
+  return { done, seq: p.seq };
 }
 
 export const isDone = (p: LabProgress, chId: string): boolean => !!p.done[chId];
+
+/**
+ * M60：这一章现在能不能进。
+ * 默认（`seq=false`）**全部可进** —— 软建议顺序只体现在卡上的「👉 建议从这里开始」；
+ * 打开「按顺序解锁」后要**前面所有可玩章节都通关**才放行（这才叫硬解锁）。
+ */
+export function chapterUnlocked(id: string, p: LabProgress): boolean {
+  if (!p.seq) return true;
+  const idx = LAB_CHAPTERS.findIndex(c => c.id === id);
+  if (idx < 0) return false;
+  return LAB_CHAPTERS.slice(0, idx).filter(c => c.ready).every(c => isDone(p, c.id));
+}
+
+/** 锁着的话，先该做哪一章（排在它前面、还没通关的第一个） */
+export function lockGateOf(id: string, p: LabProgress): LabChapter | null {
+  const idx = LAB_CHAPTERS.findIndex(c => c.id === id);
+  if (idx < 0) return null;
+  return LAB_CHAPTERS.slice(0, idx).find(c => c.ready && !isDone(p, c.id)) || null;
+}
+
+/** 锁定原因（含"怎么关掉"的出口，别让玩家卡在门上找不到开关） */
+export function lockReason(id: string, p: LabProgress): string {
+  const gate = lockGateOf(id, p);
+  return '「按顺序解锁」开着：先通关 ' + (gate ? gate.icon + ' ' + gate.name : '前面几章') +
+    '；只想练这一章就把沙盒右上角的开关关掉。';
+}
 
 /** 进度摘要（章节列表上那行小字） */
 export function progressLine(p: LabProgress): string {
@@ -320,19 +358,21 @@ export function progressLine(p: LabProgress): string {
 }
 
 /**
- * M33.1 入门动线：**第一个还没通关的可玩章节**。
- * 六章之间没有硬解锁（都直接可玩），但新手需要一个"从哪开始"的答案：
+ * M33.1 入门动线：**第一个还没通关的可玩章节**（M60：还要是"已解锁"的）。
+ * 六章默认没有硬解锁（都直接可玩），但新手需要一个"从哪开始"的答案：
  * 章节卡上给它挂「👉 建议从这里开始」，打开沙盒时也默认选中它。
  * 全通关了就回第一章（复看/重练）。
  */
 export function firstOpenChapter(p: LabProgress): string {
-  const next = LAB_CHAPTERS.find(c => c.ready && !isDone(p, c.id));
-  return next ? next.id : (LAB_CHAPTERS.find(c => c.ready) || LAB_CHAPTERS[0]).id;
+  const open = LAB_CHAPTERS.filter(c => c.ready && chapterUnlocked(c.id, p));
+  const next = open.find(c => !isDone(p, c.id));
+  return (next || open[0] || LAB_CHAPTERS[0]).id;
 }
 
 /** 章节卡右上角那枚徽章（文案在这里，UI 只负责贴） */
 export function chapterBadge(ch: LabChapter, p: LabProgress): { text: string; cls: string } {
   if (!ch.ready) return { text: '下一批', cls: 'wpn' };
+  if (!chapterUnlocked(ch.id, p)) return { text: '🔒 按顺序解锁中', cls: 'wpn' };
   if (isDone(p, ch.id)) return { text: '✅ 已通关', cls: 'key' };
   return ch.id === firstOpenChapter(p) ? { text: '👉 建议从这里开始', cls: 'ok' } : { text: '可玩', cls: '' };
 }

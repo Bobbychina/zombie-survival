@@ -12,7 +12,7 @@ const CHAPTER_NAMES = LAB_CHAPTERS.map(c => c.name);
 const snap = (over: Partial<LabSnap> = {}): LabSnap => ({
   day: 1, hp: 100, hun: 62, thi: 58, ap: 14, scav: 0, deep: 0, crafted: 0, kills: 0, meleeKills: 0, ammoUsed: 0, apKills: 0,
   loc: 'base', over: false, inv: {}, load: {}, injuries: [], base: {}, steps: 0, visited: 1, regions: 1, invKinds: 1,
-  veh: false,
+  veh: false, crossings: 0,
   ...over,
 });
 
@@ -110,16 +110,18 @@ describe('章节表', () => {
     expect(d({ filter: 1, bench: 1 }, 2).passed).toBe(true);
   });
 
-  it('第 5 章「地图与大区」：走 8 格 / 深搜 1 次 / 弄到一辆车（跨区得开车）', () => {
+  it('第 5 章「地图与大区」：走 8 格 / 深搜 1 次 / 真的跨一次大区（M60 起是硬验证）', () => {
     expect(WORLD_PRESET.skills?.fitness).toBeGreaterThanOrEqual(9);   // 9 级 → 行动力上限 +3（17 点）
     expect(WORLD_PRESET.ap).toBeGreaterThanOrEqual(16);
     expect(WORLD_PRESET.mat).toBeGreaterThanOrEqual(12);              // 修车要 12 材料
     expect(WORLD_PRESET.inv.fuel).toBeGreaterThanOrEqual(2);          // 修车要 2 汽油
-    const w = (visited: number, deep = 0, veh = false) => evalChapter(CH5, snap({ visited, deep, veh }));
+    const w = (visited: number, deep = 0, crossings = 0) => evalChapter(CH5, snap({ visited, deep, crossings }));
     expect(w(1).green).toBe(0);
     expect(w(8).items.find(i => i.id === 'walk8')!.done).toBe(true);
-    expect(w(8, 0, true).items.find(i => i.id === 'cross5')!.done).toBe(true);
-    expect(w(8, 1, true).passed).toBe(true);
+    expect(w(8, 0, 1).items.find(i => i.id === 'cross5')!.done).toBe(true);
+    /* M60：只有车、"点过目标是另一回事" —— 计数到 1 才算跨过（真正的硬验证在 m60-lab.test.ts） */
+    expect(w(8, 0, 0).items.find(i => i.id === 'cross5')!.done).toBe(false);
+    expect(w(8, 1, 1).passed).toBe(true);
   });
 
   it('第 6 章「背包与制作」：做一件 / 手动装填 / 背包 6 种', () => {
@@ -210,10 +212,10 @@ describe('快照清洗（iframe 里出来的东西一律当不可信输入）', 
 });
 
 describe('进度（存父页面，不进 iframe、不进存档）', () => {
-  it('坏偏好/空偏好 → 空进度', () => {
-    expect(parseProgress(null)).toEqual({ done: {} });
-    expect(parseProgress('not json')).toEqual({ done: {} });
-    expect(parseProgress('{"done":{"survival":0,"x":-2}}')).toEqual({ done: {} });
+  it('坏偏好/空偏好 → 空进度（M60 起多一个默认关的"按顺序解锁"开关）', () => {
+    expect(parseProgress(null)).toEqual({ done: {}, seq: false });
+    expect(parseProgress('not json')).toEqual({ done: {}, seq: false });
+    expect(parseProgress('{"done":{"survival":0,"x":-2}}')).toEqual({ done: {}, seq: false });
   });
 
   it('往返 + 第一次通关的时间戳不被覆盖', () => {

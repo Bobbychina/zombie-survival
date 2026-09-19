@@ -1318,6 +1318,7 @@ export const V4World = {
       seenRegions: Object.keys(s.seenRegions),
       frozenRegions: Object.keys(s.regions),
       visitedKeys: Object.keys(s.visited).length,
+      crossings: Number((s as any).crossings) || 0,      // M60：真的跨过大区几次（教学第 5 章目标③）
       veh: s.veh ? { fuel: s.veh.fuel, hp: s.veh.hp } : null,
       ap: L.S.ap,
     };

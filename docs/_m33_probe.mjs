@@ -1,4 +1,4 @@
-﻿// M33 取证：教程沙盒（章节壳 + 独立 iframe + 第 1 章目标清单全绿才算过）
+// M33 取证：教程沙盒（章节壳 + 独立 iframe + 第 1 章目标清单全绿才算过）
 //   ① 入口在 ☰ 菜单里 ② 章节列表 6 章 / 只第 1 章可玩 ③ iframe 带 ?sandbox=1 且不读主档（day=1、固定种子）
 //   ④ 父页面收到快照 ⑤ 照着目标做真实操作 → 目标逐条判绿 → 全绿通关（记进本机进度）
 //   ⑥ **隔离**：玩了一整轮之后主档密文一个字节没变、父页面自己的进度也没变 ⑦ 重来/关闭 ⑧ 无报错
@@ -93,8 +93,7 @@ ok('章节壳列出 6 章、全部可玩（没有"下一批"占位）', shell.ch
 ok('目标清单有 4 条（开局全空）', shell.objs.length === 4 && shell.objs.every(o => !o.done), JSON.stringify(shell.objs.map(o => o.id)))
 await shot('01_lab_ch1')
 
-/* ── 1b) M33.1 入门动线：默认选中"第一个没通关的章" + 章节卡上的"建议从这里开始" ── */
-const onboarding = JSON.parse(await ev(`(() => {
+/* ── 1b) M33.1 入门动线：默认选中"第一个没通关的章" + 章节卡上的"建议从这里开始" ── */const onboarding = JSON.parse(await ev(`(() => {
   const cards = [...document.querySelectorAll('#v4lab-chapters .lab-ch')];
   const onCard = cards.find(c => c.classList.contains('on'));
   return JSON.stringify({
@@ -106,6 +105,38 @@ const onboarding = JSON.parse(await ev(`(() => {
 })()`))
 ok('首次打开沙盒默认落在第一个没通关的章（第 1 章）', onboarding.cur === 'survival' && /第 1 章/.test(onboarding.title || ''), JSON.stringify({ cur: onboarding.cur, title: onboarding.title }))
 ok('只有"下一个该做的章"带「👉 建议从这里开始」标记', onboarding.next.join() === 'survival' && /建议从这里开始/.test(onboarding.badges[0]) && !/建议从这里开始/.test(onboarding.badges[1]), JSON.stringify(onboarding.badges.slice(0, 3)))
+
+/* ── 1c) M60「按顺序解锁」开关：**默认关**（六章都能直接练），手动打开才按 1→6 硬解锁 ── */
+const gate0 = JSON.parse(await ev(`(() => {
+  const b = document.getElementById('v4lab-seq');
+  const st = window.V4Lab.status();
+  return JSON.stringify({ btn: b ? b.textContent.trim() : null, seq: st.seq, locked: (st.chapters || []).filter(c => !c.unlocked).map(c => c.id) });
+})()`))
+ok('开关默认关：文案「🔓 按顺序解锁：关」，六章没有一个被锁', /按顺序解锁：关/.test(gate0.btn || '') && gate0.seq === false && gate0.locked.length === 0,
+  JSON.stringify(gate0))
+const gateOn = JSON.parse(await ev(`(() => {
+  document.getElementById('v4lab-seq').click();
+  const st = window.V4Lab.status();
+  const cards = [...document.querySelectorAll('#v4lab-chapters .lab-ch')].map(c => ({ id: c.dataset.ch, locked: c.classList.contains('locked'), tag: (c.querySelector('.tag') || {}).textContent || '' }));
+  const before = document.getElementById('v4lab-frame').getAttribute('src');
+  const locked6 = [...document.querySelectorAll('#v4lab-chapters .lab-ch')].find(c => c.dataset.ch === 'bag');
+  if (locked6) locked6.click();                       // 点锁着的第 6 章 → 不该换 iframe
+  const after = document.getElementById('v4lab-frame').getAttribute('src');
+  return JSON.stringify({ seq: st.seq, btn: (document.getElementById('v4lab-seq') || {}).textContent, cards: cards.filter(c => c.locked).map(c => c.id),
+    tag6: (cards.find(c => c.id === 'bag') || {}).tag, changed: before !== after, title: (document.getElementById('v4lab-frametitle') || {}).textContent });
+})()`))
+await sleep(700)
+ok('打开开关：后面几章立刻上锁（卡上是 🔒 + 压暗）且点不动（iframe 不换）',
+  gateOn.seq === true && gateOn.cards.length === 5 && /🔒/.test(gateOn.tag6 || '') && gateOn.changed === false && /第 1 章/.test(gateOn.title || ''),
+  JSON.stringify(gateOn))
+const gateOff = JSON.parse(await ev(`(() => {
+  document.getElementById('v4lab-seq').click();
+  const st = window.V4Lab.status();
+  const locked = (st.chapters || []).filter(c => !c.unlocked).length;
+  return JSON.stringify({ seq: st.seq, locked, btn: (document.getElementById('v4lab-seq') || {}).textContent });
+})()`))
+await sleep(400)
+ok('再点一下关掉：六章立刻全部解锁（想练第 6 章永远有出口）', gateOff.seq === false && gateOff.locked === 0 && /按顺序解锁：关/.test(gateOff.btn || ''), JSON.stringify(gateOff))
 
 /* ── 2) 沙盒真的没读主档：day=1、固定种子、预设背包 ── */
 let boot = null
@@ -419,7 +450,38 @@ await sleep(1100)
 const carOk = await clickBtn('button[onclick*="V4World.fixCar"]', 6)
 await sleep(900)
 const st5c = await statusNow()
-ok('第 5 章：修车点修好一辆车（跨大区的前提）→ 目标③绿、3/3 通关', carOk && st5c.snap.veh === true && st5c.eval.passed === true, JSON.stringify({ carAt, carOk, veh: st5c.snap.veh, green: st5c.eval.green, ap: st5c.snap.ap }))
+ok('第 5 章：修车点修好一辆车（跨大区的前提）→ 目标③仍未绿（M60 起要"真的开过去"）',
+  carOk && st5c.snap.veh === true && st5c.eval.items.find(i => i.id === 'cross5').done === false && st5c.eval.green === 2,
+  JSON.stringify({ carAt, carOk, veh: st5c.snap.veh, green: st5c.eval.green }))
+
+/* ── M60：真的跨一次大区（目标③的硬验证）—— 选一个开得到的邻区，报价、出发、核对到账 ── */
+const crossPlan = JSON.parse(String(await lab(`const s = W.S.world;
+  const list = (W.DEV && W.DEV.regions ? W.DEV.regions.REGIONS : []) || [];
+  let best = null;
+  for (const r of list) { if (r.id === s.region) continue; const t = W.V4World.trip(r.id); if (t && t.ok && (!best || t.ap < best.trip.ap)) best = { id: r.id, name: r.name, trip: t }; }
+  if (!best) return JSON.stringify({ ok: false, why: '没有开得到的邻区', from: s.region, fuel: s.veh && s.veh.fuel, ap: W.S.ap });
+  return JSON.stringify({ ok: true, from: s.region, to: best.id, name: best.name, ap: best.trip.ap, fuel: best.trip.fuel,
+    steps: best.trip.steps, fuelBefore: s.veh.fuel, apBefore: W.S.ap, crossingsBefore: s.crossings || 0 });`)))
+ok('第 5 章：大区地图给出可开的邻区（有车有油才点得动「出发」）', crossPlan.ok === true, JSON.stringify(crossPlan).slice(0, 160))
+const crossAt = await lab(`W.V4World.travelRegion(${JSON.stringify(crossPlan.to)}); return 1;`)
+void crossAt
+await sleep(1100)
+const crossDone = JSON.parse(String(await lab(`const s = W.S.world;
+  return JSON.stringify({ region: s.region, crossings: s.crossings || 0, fuel: s.veh ? s.veh.fuel : null, ap: W.S.ap,
+    cur: s.cur, home: { x: W.DEV.localWorld().home.x, y: W.DEV.localWorld().home.y }, trail: (s.trail || []).slice(-1)[0] || '' });`)))
+const st5d = await statusNow()
+console.log('  跨区: ' + JSON.stringify({ ...crossDone, plan: { to: crossPlan.to, ap: crossPlan.ap, fuel: crossPlan.fuel } }))
+ok('第 5 章：真的跨过去了（大区变了、落在该区的入口、车没油也能回来）',
+  crossPlan.ok && crossDone.region === crossPlan.to && crossDone.region !== crossPlan.from &&
+  crossDone.cur.x === crossDone.home.x && crossDone.cur.y === crossDone.home.y,
+  JSON.stringify({ from: crossPlan.from, to: crossDone.region, cur: crossDone.cur, home: crossDone.home }))
+ok('第 5 章：油耗与行动力按地图上的报价扣（不是"随便扣一点"）',
+  crossDone.fuel === crossPlan.fuelBefore - crossPlan.fuel && crossDone.ap === crossPlan.apBefore - crossPlan.ap,
+  `油 ${crossPlan.fuelBefore}→${crossDone.fuel}（-${crossPlan.fuel}）· ⚡ ${crossPlan.apBefore}→${crossDone.ap}（-${crossPlan.ap}）`)
+ok('第 5 章：跨区计数 +1（硬验证的口径），目标③绿、3/3 通关',
+  crossDone.crossings === crossPlan.crossingsBefore + 1 && st5d.snap.crossings >= 1 &&
+  st5d.eval.items.find(i => i.id === 'cross5').done === true && st5d.eval.passed === true,
+  JSON.stringify({ before: crossPlan.crossingsBefore, after: crossDone.crossings, green: st5d.eval.green, snap: st5d.snap.crossings }))
 await shot('06_lab_chapter5')
 
 /* 第 6 章 · 背包与制作：制作 1 件 → 手动装填 → 背包 6 种 */

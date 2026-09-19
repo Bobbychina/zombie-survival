@@ -8,8 +8,9 @@
  */
 import { L } from '../main';
 import {
-  LAB_CHAPTERS, LAB_KEY, chapterBadge, chapterById, evalChapter, firstOpenChapter, isDone, markDone, mergeSticky,
-  nextChapterHint, parseProgress, progressLine, sandboxUrl, serializeProgress, type LabChapter, type LabEval, type LabSnap,
+  LAB_CHAPTERS, LAB_KEY, chapterBadge, chapterById, chapterUnlocked, evalChapter, firstOpenChapter, isDone, lockReason,
+  markDone, mergeSticky, nextChapterHint, parseProgress, progressLine, sandboxUrl, serializeProgress, toggleSeq,
+  type LabChapter, type LabEval, type LabSnap,
 } from './sandbox-core';
 
 let root: HTMLElement | null = null;
@@ -41,11 +42,15 @@ export const labChapter = (): string | null => cur ? cur.id : null;
 /** 探针/调试：一次性把沙盒状态交出去（不含 DOM 细节） */
 export function labStatus() {
   const ev: LabEval | null = evalNow();
+  const p = readProg();
   return {
     open: !!root, ch: cur ? cur.id : null, hasFrame: !!frame,
     frameSrc: frame ? frame.getAttribute('src') : null,
     snapAgeMs: snapAt ? Date.now() - snapAt : null,
-    snap, eval: ev, done: readProg().done, finished,
+    snap, eval: ev, done: p.done, finished,
+    /* M60：按顺序解锁开关的当前状态 + 每一章的"锁没锁/通没通"（探针与排障用） */
+    seq: p.seq,
+    chapters: LAB_CHAPTERS.map(c => ({ id: c.id, ready: c.ready, done: isDone(p, c.id), unlocked: chapterUnlocked(c.id, p) })),
   };
 }
 
@@ -70,12 +75,23 @@ function ensureListener() {
 /* ── 渲染 ── */
 function chapterCard(c: LabChapter): string {
   const on = cur && cur.id === c.id;
-  const b = chapterBadge(c, readProg());
-  const isNext = c.ready && !isDone(readProg(), c.id) && c.id === firstOpenChapter(readProg());
-  return '<div class="lab-ch' + (on ? ' on' : '') + (c.ready ? '' : ' soon') + (isNext ? ' next' : '') + '" data-ch="' + c.id + '"' + (c.ready ? '' : ' aria-disabled="true"') + '>' +
+  const p = readProg();
+  const b = chapterBadge(c, p);
+  const locked = !c.ready || !chapterUnlocked(c.id, p);          // M60：没做出来 / 被"按顺序解锁"挡住
+  const isNext = c.ready && !isDone(p, c.id) && c.id === firstOpenChapter(p);
+  return '<div class="lab-ch' + (on ? ' on' : '') + (c.ready ? '' : ' soon') + (locked ? ' locked' : '') + (isNext ? ' next' : '') +
+    '" data-ch="' + c.id + '"' + (locked ? ' aria-disabled="true"' : '') + '>' +
     '<div class="row"><span class="nm">' + c.icon + ' ' + c.name + '</span><span class="spacer"></span>' +
     '<span class="tag ' + b.cls + '">' + b.text + '</span></div>' +
     '<div class="ds">' + c.desc + '</div></div>';
+}
+
+/** M60：「按顺序解锁」开关（默认关 = 六章都直接可玩，只在手动打开后才按章硬解锁） */
+function seqSwitchHtml(): string {
+  const on = readProg().seq;
+  return '<button class="btn sm' + (on ? ' ok' : '') + '" id="v4lab-seq" onclick="V4Lab.toggleSeq()" title="' +
+    (on ? '现在必须按 1→6 的顺序过章；点一下改成"任意章都能练"' : '现在任意章都能练；点一下改成"必须按 1→6 的顺序过章"') +
+    '">' + (on ? '🔒 按顺序解锁：开' : '🔓 按顺序解锁：关') + '</button>';
 }
 
 function objectivesHtml(): string {
@@ -126,6 +142,11 @@ function bindChapters() {
     box.onclick = () => {
       const c = chapterById(id);
       if (!c || !c.ready) { try { L.toast('这一章还没做', '其余章节会在后续批次补齐。', 'info'); } catch { /* 忽略 */ } return; }
+      /* M60：开了「按顺序解锁」就挡住，并明确告诉玩家怎么关掉这个开关 */
+      if (!chapterUnlocked(c.id, readProg())) {
+        try { L.toast('这一章还锁着', lockReason(c.id, readProg()), 'info'); } catch { /* 忽略 */ }
+        return;
+      }
       openChapter(c);
     };
   });
@@ -143,10 +164,17 @@ function openChapter(c: LabChapter) {
   ping();
 }
 
-/** 打开沙盒：默认落在**第一个还没通关的章**（六章没有硬解锁，但新手需要"从哪开始"的答案） */
+/** 打开沙盒：默认落在**第一个还没通关的（且已解锁的）章**（默认没有硬解锁，但新手需要"从哪开始"的答案） */
 export function openLab(chId?: string) {
-  const target = chId || firstOpenChapter(readProg());
-  const c = chapterById(target) || LAB_CHAPTERS[0];
+  const p = readProg();
+  let want = chId && chapterById(chId) && chapterById(chId)!.ready ? chId : firstOpenChapter(p);
+  /* M60：开着「按顺序解锁」时点到了锁着的章 → 落到该做的那一章，并把原因说清楚 */
+  if (!chapterUnlocked(want, p)) {
+    const why = lockReason(want, p);
+    want = firstOpenChapter(p);
+    try { L.toast('这一章还锁着', why, 'info'); } catch { /* 还没 boot 完 */ }
+  }
+  const c = chapterById(want) || LAB_CHAPTERS[0];
   if (root) { openChapter(c); return; }
   cur = c;                    // M33.1：先定当前章节再拼 HTML —— 否则首次打开时"当前章"没有任何高亮
   finished = false;
@@ -159,13 +187,15 @@ export function openLab(chId?: string) {
         '<span class="hint" style="margin:0">独立 iframe 里的平行世界：怎么玩都<b>不会写进你的主档</b>（不存档、不上传）。死了不惩罚，点「重来」就行。</span>' +
         '<span class="spacer"></span>' +
         '<span class="hint" style="margin:0" id="v4lab-progress">' + progressLine(readProg()) + '</span>' +
+        seqSwitchHtml() +
         '<button class="btn sm" onclick="V4Lab.reset()">↻ 重来这一章</button>' +
         '<button class="btn sm" onclick="V4Lab.close()">✕ 关闭沙盒</button>' +
       '</div>' +
       '<div class="labbody">' +
         '<div class="labside"><div class="sect-title" style="margin-top:0">章节</div><div id="v4lab-chapters">' +
           LAB_CHAPTERS.map(chapterCard).join('') +
-        '</div><div class="hint" style="margin-top:10px">六章都直接可玩、没有硬解锁；建议按 1→6 的顺序走（卡上那枚 <b>👉 建议从这里开始</b> 就是下一个该做的）。' +
+        '</div><div class="hint" style="margin-top:10px">默认六章都直接可玩（卡上的 <b>👉 建议从这里开始</b> 就是下一个该做的）；' +
+        '想按 1→6 硬性过章，就打开上面的 <b>🔒 按顺序解锁</b> —— 那是给想从头顺一遍的人用的，想练哪章就练哪章的人别开。' +
         '每章三条目标全绿才算过，进度只记在本机。</div></div>' +
         '<div class="labmain">' +
           '<div class="row" style="padding:4px 2px"><span class="nm" id="v4lab-frametitle">' + c.icon + ' ' + c.name + '</span>' +
@@ -198,6 +228,21 @@ export function resetLab() {
   try { L.toast('重来', c.name + ' 的沙盒已重置。', 'info'); } catch { /* 忽略 */ }
 }
 
-export const V4Lab = { open: openLab, close: closeLab, reset: resetLab, status: labStatus, resetProgress };
-/** 只清本机进度（章节徽章），不动任何游戏数据 */
-function resetProgress(): void { writeProg({ done: {} }); if (root) { const l = root.querySelector('#v4lab-chapters'); if (l) l.innerHTML = LAB_CHAPTERS.map(chapterCard).join(''); bindChapters(); paintObjectives(); } }
+/** M60：切换「按顺序解锁」（只动开关，不动通关记录）—— 重画章节卡、开关文案与当前章的目标区 */
+export function toggleSeqMode(): void {
+  const p = toggleSeq(readProg());
+  writeProg(p);
+  const btn = root?.querySelector('#v4lab-seq');
+  if (btn) { btn.outerHTML = seqSwitchHtml(); }
+  const list = root?.querySelector('#v4lab-chapters');
+  if (list) { list.innerHTML = LAB_CHAPTERS.map(chapterCard).join(''); bindChapters(); }
+  try { L.toast(p.seq ? '按顺序解锁已打开' : '按顺序解锁已关闭',
+    p.seq ? '现在要一章一章过；想跳章就再点一下开关。' : '六章都可以直接练了。', 'info'); } catch { /* 忽略 */ }
+}
+
+export const V4Lab = { open: openLab, close: closeLab, reset: resetLab, status: labStatus, resetProgress, toggleSeq: toggleSeqMode };
+/** 只清本机进度（章节徽章），不动任何游戏数据、也不动开关（开关是设置，不是进度） */
+function resetProgress(): void {
+  writeProg({ done: {}, seq: readProg().seq });
+  if (root) { const l = root.querySelector('#v4lab-chapters'); if (l) l.innerHTML = LAB_CHAPTERS.map(chapterCard).join(''); bindChapters(); paintObjectives(); }
+}

@@ -54,6 +54,9 @@ export interface SaveWorld extends RegionProgress {
   veh: VehState | null;
   steps: number;                 // 累计走过多少区块
   fights: number;                // 路上打过多少场
+  /** M60：累计跨过大区几次（**真的搬过去**才 +1，不是"有车"或"点了目标"）——
+      教学第 5 章的目标③与生涯统计都读它。 */
+  crossings: number;
   trail: string[];               // 最近若干条旅行/搜刮记录（地图面板显示用）
 }
 
@@ -135,7 +138,7 @@ export function defaultSaveWorld(seed: string): SaveWorld {
     cur: { x: w.home.x, y: w.home.y },
     visited: {}, firstPoi: {}, left: {}, stock: {}, frag: {}, forage: {}, salvage: {}, fish: {}, chop: {}, intel: false,
     debt: 0, lastNight: null, lastRaidDay: 0, evac: null,
-    veh: null, steps: 0, fights: 0, trail: [],
+    veh: null, steps: 0, fights: 0, crossings: 0, trail: [],
   };
   markVisited(w, sw, w.home.x, w.home.y);
   return sw;
@@ -174,6 +177,7 @@ export function switchRegion(S: any, sw: SaveWorld, toRegion: string): SwitchRes
   if (def.id === sw.region) return { ok: true, region: sw.region, home: sw.cur };
   stashCurrent(sw);
   sw.region = def.id;
+  sw.crossings = (num((sw as any).crossings) || 0) + 1;      // M60：跨区计数（教学/生涯用）
   const first = !sw.seenRegions[def.id];
   sw.seenRegions[def.id] = 1;
   sw.regionVisits[def.id] = (sw.regionVisits[def.id] || 0) + 1;    // M13：跨区委托"跑一趟"要能数出来
@@ -270,6 +274,7 @@ export function ensureSaveWorld(S: any): SaveWorld {
   sw.evac = sw.evac && typeof sw.evac === 'object' && isPos(sw.evac.x) && isPos(sw.evac.y) ? sw.evac : null;
   sw.trail = Array.isArray(sw.trail) ? sw.trail.slice(-24) : [];
   sw.steps = num(sw.steps); sw.fights = num(sw.fights);
+  sw.crossings = num((sw as any).crossings);          // M60：老档没有这个字段 → 补 0
   sw.veh = sw.veh && typeof sw.veh === 'object' ? { fuel: num(sw.veh.fuel), hp: num(sw.veh.hp) || 60 } : null;
   // C11：只有指纹变了才重放迷雾（否则每次 render 都要重放 576 格）。
   // 指纹里必须含**世界实例本身**：实例被挤掉重建过（quests 扫别区 POI 等）时，
