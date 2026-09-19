@@ -454,13 +454,18 @@ ok('第 5 章：修车点修好一辆车（跨大区的前提）→ 目标③仍
   carOk && st5c.snap.veh === true && st5c.eval.items.find(i => i.id === 'cross5').done === false && st5c.eval.green === 2,
   JSON.stringify({ carAt, carOk, veh: st5c.snap.veh, green: st5c.eval.green }))
 
-/* ── M60：真的跨一次大区（目标③的硬验证）—— 选一个开得到的邻区，报价、出发、核对到账 ── */
+/* ── M60：真的跨一次大区（目标③的硬验证）—— 选一个开得到的邻区，报价、出发、核对到账 ──
+   区域 id 从**大区图的格子**上取（onclick 里的 pickRegion('rX-Y')）：沙盒 iframe 里的 DEV 钩子
+   没有 regions 那一份（DEV 形状与父页面不同），拿 DEV 查会得到空列表 → 假红一次。 */
+await lab(`W.V4World.mapMode('region'); W.render(); return 1;`)
+await sleep(800)
 const crossPlan = JSON.parse(String(await lab(`const s = W.S.world;
-  const list = (W.DEV && W.DEV.regions ? W.DEV.regions.REGIONS : []) || [];
+  const ids = [...D.querySelectorAll('#v4world .rcell2')]
+    .map(c => (/pickRegion\\('([^']+)'\\)/.exec(c.getAttribute('onclick') || '') || [])[1]).filter(Boolean);
   let best = null;
-  for (const r of list) { if (r.id === s.region) continue; const t = W.V4World.trip(r.id); if (t && t.ok && (!best || t.ap < best.trip.ap)) best = { id: r.id, name: r.name, trip: t }; }
-  if (!best) return JSON.stringify({ ok: false, why: '没有开得到的邻区', from: s.region, fuel: s.veh && s.veh.fuel, ap: W.S.ap });
-  return JSON.stringify({ ok: true, from: s.region, to: best.id, name: best.name, ap: best.trip.ap, fuel: best.trip.fuel,
+  for (const id of ids) { if (id === s.region) continue; const t = W.V4World.trip(id); if (t && t.ok && (!best || t.ap < best.trip.ap)) best = { id: id, trip: t }; }
+  if (!best) return JSON.stringify({ ok: false, why: '没有开得到的邻区', cells: ids.length, from: s.region, fuel: s.veh && s.veh.fuel, ap: W.S.ap });
+  return JSON.stringify({ ok: true, cells: ids.length, from: s.region, to: best.id, ap: best.trip.ap, fuel: best.trip.fuel,
     steps: best.trip.steps, fuelBefore: s.veh.fuel, apBefore: W.S.ap, crossingsBefore: s.crossings || 0 });`)))
 ok('第 5 章：大区地图给出可开的邻区（有车有油才点得动「出发」）', crossPlan.ok === true, JSON.stringify(crossPlan).slice(0, 160))
 const crossAt = await lab(`W.V4World.travelRegion(${JSON.stringify(crossPlan.to)}); return 1;`)
@@ -483,6 +488,11 @@ ok('第 5 章：跨区计数 +1（硬验证的口径），目标③绿、3/3 通
   st5d.eval.items.find(i => i.id === 'cross5').done === true && st5d.eval.passed === true,
   JSON.stringify({ before: crossPlan.crossingsBefore, after: crossDone.crossings, green: st5d.eval.green, snap: st5d.snap.crossings }))
 await shot('06_lab_chapter5')
+/* 探针卫生：地图视图是存在 localStorage 的（`dsh.mapmode`），同一个 origin 后面的探针会继承它 ——
+   不清掉的话 m37/m43 拿"本地图格子"当判据时会读到 0 个格子 → 一片假红（M60 实测踩到一次）。 */
+await lab(`W.V4World.mapMode('local'); W.render(); return 1;`)
+await sleep(400)
+await ev(`localStorage.removeItem('dsh.mapmode'); 1`)
 
 /* 第 6 章 · 背包与制作：制作 1 件 → 手动装填 → 背包 6 种 */
 const boot6 = await switchChapter('bag', 'lab-bag-01')
