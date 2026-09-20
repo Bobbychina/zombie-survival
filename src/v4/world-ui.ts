@@ -1128,9 +1128,13 @@ function fitMap() {
 function fitRegion(view: HTMLElement, card: HTMLElement, rgrid: HTMLElement) {
   const col = rgrid.parentElement as HTMLElement | null;
   /* M21.1：卡片不够宽就"详情在上、地图在下"（<880px 时并排放不下两张东西），
-     这样点完格子立刻看到路程报价与「出发」，不用先滚过整张地图。 */
+     这样点完格子立刻看到路程报价与「出发」，不用先滚过整张地图。
+     M65：这个 880 的**本意是屏幕宽度**（窄卡片才堆叠），而 `clientWidth` 是布局像素 ——
+     160% 字号下 760 布局 = 1216 屏幕其实并排放得下，以前却照样堆叠，白白多占一整块高度
+     （实测就是它让大区卡片顶出窗口、窗内要滚 123px）。乘 z 折成屏幕宽度再比。 */
   const main = card.querySelector('.rmain') as HTMLElement | null;
-  if (main) main.classList.toggle('stack', card.clientWidth < 880);
+  const z0 = uiZoom();
+  if (main) main.classList.toggle('stack', card.clientWidth * z0 < 880);
   const z = uiZoom();                                   // M32.1：同样的"下限按渲染像素算"（见 fitMap）
   const minRCell = Math.max(8, Math.round(18 / z));
   const maxRCell = Math.max(minRCell, Math.round(72 / z));
