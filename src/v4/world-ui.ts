@@ -1138,35 +1138,41 @@ function fitRegion(view: HTMLElement, card: HTMLElement, rgrid: HTMLElement) {
      inline = #view 底边（网格轨道）；悬浮窗 = min(#view 底边, 窗口自己的 max-height 底边, 视口底)。
      —— 窗口是"固定右上角、按内容长高到 max-height 为止"，上限写在 CSS 里，所以同样稳定；
      再跟 #view 底边取小是因为"整张卡一屏装下"一直是按 #view 量的（M21.1 用户报障"这边也溢出了"）。
-     窗口头部（.mwhead）不是卡片的地盘，要扣掉。 */
+     窗口头部（.mwhead）不是卡片的地盘，要扣掉。
+     ⚠️ M65：**全部换回布局像素**（拿到的矩形/innerHeight 都要 ÷z）。宿主带 `zoom: var(--fs)`，
+     矩形与 `innerHeight` 是屏幕像素，而 `offsetHeight`、常量 40/12/33 与内联列宽都是布局像素 ——
+     以前混着减：① 预算偏小成 1/z（160% 下白缩一档）；② 窗口上限那块也一样混，
+     160% 下反而算出"放得下"→ 卡片顶出窗口、窗内要滚 404px（M65 探针实测）。 */
+  const px = (v: number) => v / z;                       // 屏幕像素 → 布局像素
   const inlineHost = card.parentElement === view;
-  let stableBottom = view.getBoundingClientRect().bottom;
+  let stableBottom = px(view.getBoundingClientRect().bottom);
   if (!inlineHost) {
     const win = document.getElementById('v4mapwin');
-    const maxH = win ? parseFloat(getComputedStyle(win).maxHeight) : NaN;
+    const maxH = win ? parseFloat(getComputedStyle(win).maxHeight) : NaN;      // 已经是布局像素
     const headH = win ? ((win.querySelector('.mwhead') as HTMLElement | null)?.offsetHeight || 0) : 0;
-    const winBottom = (win && isFinite(maxH)) ? win.getBoundingClientRect().top + maxH - headH - 6 : Infinity;
-    stableBottom = Math.min(stableBottom, winBottom, window.innerHeight - 12);
+    const winBottom = (win && isFinite(maxH)) ? px(win.getBoundingClientRect().top) + maxH - headH - 6 : Infinity;
+    stableBottom = Math.min(stableBottom, winBottom, px(window.innerHeight - 12));
   }
-  /* M65 修：**单位要统一**。`getBoundingClientRect()` / `innerHeight` 是**屏幕像素**，而
-     `offsetHeight`、常量 40/12/33 与内联的 `grid-template-columns` 都是**布局像素**（宿主带 `zoom: var(--fs)`）。
-     以前把两者直接相减 —— 160% 字号下预算会偏小成 1/z → 格子白缩一档（不溢出，但"一屏装下"永远算不准）。
-     这里把可用高度折回布局像素再算。 */
-  const avail = (stableBottom - card.getBoundingClientRect().top - 8) / z;
-  if (avail < 280) return;
-  /* 除网格以外的开销：标题行/图层条/说明/图例/详情/内边距 —— details 开合会变，但**与格子边长无关**。 */
-  const chrome = Math.max(0, card.offsetHeight - rgrid.offsetHeight);
-  const byBox = Math.floor((avail - chrome - 40) / 12);
-  const byW = Math.floor(((col ? col.clientWidth : card.clientWidth) - 33) / 12);
-  const cell0 = Math.max(minRCell, Math.min(maxRCell, byBox, byW));
+  /** 按当前实测算一次（chrome 与卡片都随字号/详情开合变，所以算两遍：先摆一次、再按新布局修一次） */
+  const decide = (): number => {
+    const avail = stableBottom - px(card.getBoundingClientRect().top) - 8;
+    if (avail < 280) return 0;                                                // 太窄就不折腾，交给容器自己滚
+    /* 除网格以外的开销：标题行/图层条/说明/图例/详情/内边距 —— details 开合会变，但与格子边长无关 */
+    const chrome = Math.max(0, card.offsetHeight - rgrid.offsetHeight);
+    const byBox = Math.floor((avail - chrome - 40) / 12);
+    const byW = Math.floor(((col ? col.clientWidth : card.clientWidth) - 33) / 12);
+    return Math.max(minRCell, Math.min(maxRCell, byBox, byW));
+  };
+  const cell0 = decide();
+  if (!cell0) return;
   apply(cell0);
-  /* 兜底**一次**：CSS 里 `.rcell2{min-height:34px}` 会让"边长 30px"的行实际排到 34px（非 tiny 档），
-     光按列宽推会低估 ~4px/行 —— 所以再按**真实溢出量**收一次。只收一次、不再回环，
-     否则又会变成"越量越小"的振荡（M59 的原始 bug）。 */
-  const overScreen = card.getBoundingClientRect().bottom - (stableBottom + 2);
-  if (overScreen > 0 && cell0 > minRCell) {
-    apply(Math.max(minRCell, cell0 - Math.ceil(overScreen / z / 12)));   // M65：屏幕像素 → 布局像素再折格子
-  }
+  /* 第二遍：apply 之后 chrome 可能变了（详情换行、图例折行），按新布局再定一次；
+     然后按**真实溢出量**收一次（补 `.rcell2{min-height:34px}` 那 ~4px/行）。都只做一次、不回环 ——
+     这正是 M59 的教训：任何"循环到收敛"的写法配上 ResizeObserver 都会变成永动机。 */
+  const cell1 = decide() || cell0;
+  if (cell1 !== cell0) apply(cell1);
+  const over = px(card.getBoundingClientRect().bottom) - (stableBottom + 2);  // 布局像素溢出量
+  if (over > 0 && cell1 > minRCell) apply(Math.max(minRCell, cell1 - Math.ceil(over / 12)));
 
   function apply(c: number): void {
     const tpl = 'repeat(12, ' + c + 'px)';
