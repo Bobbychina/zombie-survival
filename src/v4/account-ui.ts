@@ -510,6 +510,9 @@ export function applySave(data: unknown): boolean {
     }
     const clean = L.sanitizeSave(data as never);
     if (!clean) return false;
+    /* M64：换档前先把 v4 战斗收掉 —— 否则战斗界面的 `cur` 还指着旧档的玩家档案，
+       下一次出招会把旧档的血/弹写进刚载入的新档（legacy 这边 L.battle 一直是置空的，v4 漏了）。 */
+    try { (window as any).V4UI?.close?.(); } catch { /* 没开战斗就不用管 */ }
     L.S = clean;
     L.battle = null;
     L.closeAllModals();

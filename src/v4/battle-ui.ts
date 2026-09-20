@@ -51,6 +51,10 @@ function repeatBtn(waitPlayer: boolean): string {
   return `<div class="row" style="margin-top:8px"><button class="btn sm ok" ${chk.ok && waitPlayer ? '' : 'disabled'} onclick="V4UI.repeat()">${esc(label)}</button>${why}</div>`;
 }
 
+/** 招式槽的按键标签：前 4 个是 1~4，第 5 个（引诱器等道具槽）用 Q ——
+    M64 修：以前第 5 槽画成「5. 急救包」，而键盘 5 = 逃跑，玩家按 5 会跑而不是用道具。 */
+const SLOT_KEYS = ['1', '2', '3', '4', 'Q'];
+
 function render() {
   if (!cur) return;
   const { b, p, opts } = cur;
@@ -71,7 +75,7 @@ function render() {
     const typeCls = 't-' + (m.type === 'blunt' ? 'bone' : m.type === 'slash' ? 'flesh' : m.type === 'bullet' ? 'swift' : m.type === 'fire' ? 'toxic' : m.type === 'blast' ? 'hulk' : m.type === 'toxic' ? 'toxic' : 'armor');
     const cost = [m.cost.sta ? `⚡${m.cost.sta}` : '', m.cost.ammo ? `🔫${m.cost.ammo}` : '', m.cost.item ? `🎒${L.itemName(m.cost.item)}` : ''].filter(Boolean).join(' ');
     return `<button class="mv-slot${chk.ok ? '' : ' off'}" ${chk.ok && waitPlayer ? '' : 'disabled'} onclick="V4UI.move('${m.id}')" title="${esc(m.desc)}">
-      <span class="mv-name">${i + 1}. ${esc(m.name)}</span>
+      <span class="mv-name">${SLOT_KEYS[i] || String(i + 1)}. ${esc(m.name)}</span>
       <span class="mv-meta"><span class="type-chip ${typeCls}">${TYPE_NAME[m.type]}</span>${m.power ? `<span class="mono">威力 ${m.power}</span>` : '<span class="mono">辅助</span>'}${m.target === 'all' ? '<span class="mono">全体</span>' : ''}${m.priority ? `<span class="mono">先制+${m.priority}</span>` : ''}${cost ? `<span class="mono">${cost}</span>` : ''}</span>
       ${chk.ok ? '' : `<span class="mv-why">${chk.why}</span>`}
     </button>`;
@@ -218,6 +222,10 @@ export const V4UI = {
     if (owned.length < 2) { L.toast('没有别的武器', '背包里只有这一件武器。', 'bad'); return; }
     const idx = owned.indexOf(S.eq.wpn);
     S.eq.wpn = owned[(idx + 1) % owned.length];
+    /* M64 修：换枪后必须刷新 `S.ammo` 镜像。它是**旧口径**的弹数，而 syncBack 拿它去比 p.ammo（**新口径**的弹数），
+       差额被当成"这一回合打掉的子弹"从新口径里扣 —— 实测：手枪在手（S.ammo=24）+ 8 发 12 号弹，
+       战斗中按 6 换霰弹枪，8 发霰弹全被吞掉、ammoUsed 还虚增 8，然后 S.ammo=8 变成可以白打的幻影弹。 */
+    try { (L as any).syncAmmo?.(); } catch { /* 老存档没有这个函数也不该炸 */ }
     L.log('🔄 换上了 ' + L.ITEMS[S.eq.wpn].n + '（这一回合让给对方）。', 'info');
     cur.p = playerProfile();
     passTurn(cur.b, cur.p);
@@ -245,12 +253,15 @@ export const V4UI = {
     if (result === 'win') { L.log('🏁 战斗结束：你活下来了。', 'success'); L.sfx('ok'); }
     /* M27：第一场胜利后给一次"招式槽/噪音/装甲丧尸"的提示（战斗界面是模态，教程只能这样接） */
     if (result === 'win') { try { (window as any).__v4TutorialBattleTip?.(); } catch { /* 忽略 */ } }
-    onEnd(result);
+    /* M64：把这一场的"干净/敌人只数/选项"交给 onEnd —— legacy 的 endCombat 里有干净胜利计数、
+       两条成就与猎人队友奖励，v4 这条路以前把它们全漏了（悬赏「不受伤害赢一场」因此做不完）。 */
+    onEnd(result, { clean: !!b.stats.clean, foeCount: b.foes.length, opts });
   },
   key(e: KeyboardEvent) {
     if (!cur) return false;
     const k = e.key;
     if (k >= '1' && k <= '4') { const m = movesFor(cur.p)[+k - 1]; if (m) V4UI.move(m.id); return true; }
+    if (k === 'q' || k === 'Q') { const m = movesFor(cur.p)[4]; if (m) V4UI.move(m.id); return true; }   // M64：第 5 槽（道具）
     if (k === '5') { V4UI.flee(); return true; }
     if (k === '6') { V4UI.switchWeapon(); return true; }
     if (k === 'r' || k === 'R') { V4UI.repeat(); return true; }   // M38：重复上次
@@ -285,6 +296,9 @@ function flashFoe(i: number, e: any) {
 
 /** legacy 的 startCombat 签名：foes 可以是 id 字符串，也可以是完整的怪对象 */
 export function startV4Combat(foes: any[], opts: any = {}) {
+  /* M64：重复开战要先把上一场收掉 —— 以前没有这个守卫，第二次 startV4Combat 会直接覆盖 `cur`，
+     上一场的 onWin/onFlee 不再触发、旧覆盖层也留在 DOM 里（两个 #v4b-overlay，getElementById 拿到旧的那个）。 */
+  if (cur) { try { V4UI.close(); } catch { /* 忽略 */ } }
   // 守夜战但人不在家：不该开战（玩家在十公里外"守"据点说不通）。交给 night.ts 注册的处理函数结算成"据点被啃"。
   const away = (window as any).__v4AwaySiege;
   if (opts.siege && typeof away === 'function' && away(opts)) return null;
@@ -341,6 +355,12 @@ function applySiegeTraps(b: Battle) {
     b.foes.forEach(f => { if (f.hp > 0) f.hp = Math.max(1, Math.round(f.hp * 0.8)); });
     b.log.push({ text: '📡 警报器提前暴露了它们（全体 -20% 生命）。', cls: 'good' });
   }
-  if (tr.spike > 0) { tr.spike--; dmgAll(22, '🔺 钉刺陷阱撕开了最前面那只（-22）。'); }
+  if (tr.spike > 0) {
+    /* M64 修：钉刺只扎最前面那只（文案与 legacy 的实现都是这个口径），以前错用了 dmgAll → 全场 -22。 */
+    tr.spike--;
+    const front = b.foes.find(f => f.hp > 0);
+    if (front) front.hp = Math.max(0, front.hp - 22);
+    b.log.push({ text: '🔺 钉刺陷阱撕开了最前面那只（-22）。', cls: 'good' });
+  }
   if (tr.fire > 0) { tr.fire--; dmgAll(26, '🔥 燃烧陷阱烧成一片（全体 -26）。'); }
 }

@@ -285,7 +285,7 @@ function radHtml(): string {
       ' onclick="useConsumable(\'' + m.id + '\')" title="' + esc(L.itemName(m.id)) + '：体内辐射 -' + m.cut + '">💊 ' +
       esc(m.name) + ' ×' + have + '（-' + m.cut + '）</button>';
   }
-  h += '</div><div class="hint" style="margin-top:4px">这两样只压体内剂量；射线也拖慢伤口愈合，重度以上长得明显慢——先吃药再打架。</div>';
+  h += '</div><div class="hint" style="margin-top:4px">这两样只压体内剂量；射线还会打折**药效与包扎的治疗量**（重度档只剩一半），先吃药再打架。</div>';
   return h + '</div>';
 }
 

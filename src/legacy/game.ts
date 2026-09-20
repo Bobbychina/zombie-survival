@@ -1550,14 +1550,16 @@ function tickVitals(mult){
   if(sv) sv.step(1);
   /* M31：人体伤病的出血与康复也按步推进（medical.ts 内部有节流） */
   { const md = (typeof window.V4Medical === 'object' && window.V4Medical) ? window.V4Medical : null; if(md) md.stepBody(); }
-  if(S.hun <= 0){ S.hp -= 4; log('🍖 饥饿到了极限，身体在消耗自己。','danger'); }
+  if(S.hun <= 0){ S.hp = Math.max(0, S.hp - 4); log('🍖 饥饿到了极限，身体在消耗自己。','danger'); }
   else if(S.hun < 18) log('🍖 你饿得手在抖（伤害与命中下降）。','dim');
-  if(S.thi <= 0){ S.hp -= 5; log('💧 严重脱水，视线开始发黑。','danger'); }   // C08：归零掉血 6/8 → 4/5，别让饥饿单独构成死亡螺旋
+  if(S.thi <= 0){ S.hp = Math.max(0, S.hp - 5); log('💧 严重脱水，视线开始发黑。','danger'); }   // C08：归零掉血 6/8 → 4/5，别让饥饿单独构成死亡螺旋
   else if(S.thi < 18) log('💧 喉咙干得发疼（闪避下降）。','dim');
   if(S.infect >= 100){ S.hp = 0; log('🦠 病毒攻陷了中枢。你听见自己的呼吸变成了别人的。','danger'); }
-  /* M58：重度以上每走一步都在掉血；呕吐随机把刚吃的吐掉（都是"该去吃药了"的硬信号） */
+  /* M58：重度以上每走一步都在掉血；呕吐随机把刚吃的吐掉（都是"该去吃药了"的硬信号）
+     M64：这里（以及下面两条饥渴/感染）统一 clamp 到 0 —— 以前能让 HP 变负数写进存档与血条，
+     而且在没有行动结算的路径（如走路 tick）上会以 hp ≤ 0 继续跑。 */
   if(rs.hpPerStep > 0){
-    S.hp -= rs.hpPerStep;
+    S.hp = Math.max(0, S.hp - rs.hpPerStep);
     if(++radLogTick % 3 === 1) log('☢️ 辐射病：牙龈渗血、手脚发麻，每走一步都在消耗生命。','danger');
   }
   if(rs.vomitChance > 0 && Math.random() < Math.min(.9, rs.vomitChance * mult)){
@@ -3129,7 +3131,7 @@ function renderCraft(){
       /* M61：缺口单独一行高亮（材料缺什么 / 几级什么站），不再只靠灰字按钮 */
       const why = (okSt && okMat) ? '' : '<div class="reqmiss">' + (!okSt
         ? (lv === 0 ? '🔒 需要先建 ' + st.icon + ' ' + st.n + '（据点 → 建设）' : '🔒 ' + st.n + ' 等级不够：需要 Lv.' + r.lv + '，现在 Lv.' + lv)
-        : '⛔ 材料不够：还差 <b>' + missTextOf(r.need) + '</b>') + '</div>';
+        : '⛔ 材料不够：还差 <b>' + (missTextOf(r.need) || '材料') + '</b>') + '</div>';
       h += '<div class="lrow" style="flex-direction:column;align-items:stretch;gap:6px">' +
         '<div class="row"><span class="nm">' + out.n + ' ×' + r.n + '</span>' + ammoTag + '<span class="spacer"></span>' + stationChip(st.icon, st.n, lv, r.lv) + '</div>' +
         '<div class="ds">' + r.desc + '</div>' +

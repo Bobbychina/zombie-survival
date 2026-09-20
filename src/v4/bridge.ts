@@ -63,7 +63,10 @@ export function playerProfile(): PlayerProfile {
     /* M24 射击 Lv5 perk：暴击伤害 +30%（1.8 → 2.1）。纯逻辑的 combat.ts 不读全局存档，这里注入 */
     critMult: 1.8 + ((S.skills?.shoot ?? 0) >= 5 ? 0.3 : 0),
     dmgMult: mods.dmgMul,
-    dodge: Math.max(0, Math.min(0.5, (S.eq.feet && L.ITEMS[S.eq.feet]?.dodge ? L.ITEMS[S.eq.feet].dodge : 0) + L.skillBonus('stealth', 0.015, 0.2))),
+    /* M64 修：statMods 里的闪避/命中惩罚以前**没人读** —— 辐射病与部位伤在 HUD/人体页上写着
+       「命中 -18% · 闪避 -10%」，实际战斗数值一点没变（玩家看到的和打出来的不是一回事）。 */
+    dodge: Math.max(0, Math.min(0.5, (S.eq.feet && L.ITEMS[S.eq.feet]?.dodge ? L.ITEMS[S.eq.feet].dodge : 0) + L.skillBonus('stealth', 0.015, 0.2) + -(mods.dodge || 0))),
+    accPenalty: Math.max(0, -(mods.hit || 0)),
     armor: L.armorTotal(),
     speed: 2 + S.skills.fitness * 0.3 + S.skills.stealth * 0.2,
     inventory: inv,
@@ -148,10 +151,24 @@ export function onPlayerHit(dmg: number, foe: Foe) {
   L.sfx('hurt');
 }
 
-export function onEnd(result: 'win' | 'lose' | 'flee') {
+/** 战斗结束：与 legacy 的 endCombat 对齐（M64 补齐）
+ *  以前 v4 这条路只 checkQuest/checkAch，漏了三件事：干净胜利计数、两条成就、猎人队友的 +2 材料；
+ *  输的那条路还漏了 noRescue（尸潮守夜/决战死了不该触发"唯一救援"）。 */
+export function onEnd(result: 'win' | 'lose' | 'flee', info?: { clean?: boolean; foeCount?: number; opts?: any }) {
   const S = L.S;
-  if (result === 'lose') { L.gameOver('你在战斗里流干了最后一滴血。'); return; }
-  if (result === 'win') { L.checkQuest(); L.checkAch(); }
+  if (result === 'lose') {
+    L.gameOver('你在战斗里流干了最后一滴血。', { noRescue: !!(info?.opts?.final || info?.opts?.siege) });
+    return;
+  }
+  if (result === 'win') {
+    const clean = !!info?.clean;
+    const n = Number(info?.foeCount) || 0;
+    if (clean) S.stats.cleanWins = (S.stats.cleanWins || 0) + 1;      // C17 悬赏："不受伤害赢下一场"
+    if (clean && n >= 1) L.award('a_immune');
+    if (n >= 3) L.award('a_boom');
+    if (S.comp === 'hunter' && Math.random() < .35) S.mat += 2;       // 猎人队友偶尔多带回点材料
+    L.checkQuest(); L.checkAch();
+  }
   L.autosave();
   L.render();
 }

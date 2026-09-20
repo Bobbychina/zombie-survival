@@ -20,6 +20,8 @@ export interface PlayerProfile {
   critMult?: number;
   dmgMult: number;          // 来自状态与技能
   dodge: number;            // 0..0.5
+  /** M64：命中惩罚（辐射病 / 部位伤等，0~0.5）—— 由 bridge 从 statMods().hit 注入，命中判定里直接减 */
+  accPenalty?: number;
   armor: number;            // 平摊减伤
   speed: number;            // 先手基础值
   inventory: Record<string, number>;
@@ -203,7 +205,8 @@ export function playerAct(b: Battle, p: PlayerProfile, moveId: string, targetIdx
   let anyCrit = false;
   for (const ti of targets) {
     const foe = b.foes[ti];
-    if (rnd() > m.acc) { push(b, { kind: 'miss', text: `${foe.name} 闪开了 ${m.name}。` }); continue; }
+    const acc = Math.max(0.05, m.acc - (p.accPenalty || 0));   // M64：辐射病/部位伤的命中惩罚真的生效
+    if (rnd() > acc) { push(b, { kind: 'miss', text: `${foe.name} 闪开了 ${m.name}。` }); continue; }
     const mult = typeMult(m.type, foe.types);
     let dmg = m.power * (0.6 + 0.4 * (p.dmgMult || 1));
     dmg *= mult;
