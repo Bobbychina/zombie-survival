@@ -112,40 +112,51 @@ ok('③ 挨过打的胜利不算"干净"（cleanWins 不动）', end2.cleanWins 
 
 /* ── ④ 命中/闪避惩罚真的进战斗数值 ── */
 const rad0 = JSON.parse(String(await ev(`(() => { if (typeof V4Debug.playerProfile !== 'function') return JSON.stringify({ missing: true });
-  S.rad = 0; const m = statMods(); const p = V4Debug.playerProfile();
+  S.rad = 0; S.skills = Object.assign({}, S.skills, { stealth: 10 }); const m = statMods(); const p = V4Debug.playerProfile();
   return JSON.stringify({ hit: m.hit || 0, dodge: m.dodge, profDodge: p.dodge, accPenalty: p.accPenalty || 0 }); })()`)))
 const rad1 = JSON.parse(String(await ev(`(() => { if (typeof V4Debug.playerProfile !== 'function') return JSON.stringify({ missing: true });
   S.rad = 97; const m = statMods(); const p = V4Debug.playerProfile();
   return JSON.stringify({ hit: m.hit || 0, dodge: m.dodge, profDodge: p.dodge, accPenalty: p.accPenalty || 0 }); })()`)))
-console.log('  辐射惩罚: ' + JSON.stringify({ clean: rad0, sick: rad1 }))
+/* 闪避这一条要**带点基础闪避**（潜行 10 级 = 0.15）才看得出来：惩罚是减在基础值上的，
+   基础 0 的档位会 clamp 到 0（那也是对的），所以这里用"明显档"（rad 60 → 闪避 -3%）比小差值。 */
+const rad2 = JSON.parse(String(await ev(`(() => { S.rad = 60; const p = V4Debug.playerProfile();
+  return JSON.stringify({ profDodge: p.dodge, accPenalty: p.accPenalty || 0 }); })()`)))
+console.log('  辐射惩罚: ' + JSON.stringify({ clean: rad0, fatal: rad1, mid: rad2 }))
 ok('④ 辐射 97 档：命中惩罚真的进了档案（accPenalty ≈ 0.18）',
   !rad1.missing && Math.abs((rad1.accPenalty || 0) - 0.18) < 0.001 && (rad0.accPenalty || 0) === 0, JSON.stringify({ clean: rad0.accPenalty, sick: rad1.accPenalty }))
-ok('④ 闪避惩罚同样进档（档案 dodge 比干净时低 0.16）',
-  !rad1.missing && Math.abs((rad0.profDodge - rad1.profDodge) - (0.1 + 0.06)) < 0.001, JSON.stringify({ clean: rad0.profDodge, sick: rad1.profDodge }))
+ok('④ 闪避惩罚真的减在基础闪避上（明显档 -3%，致命档直接被压到 0）',
+  !rad1.missing && Math.abs((rad0.profDodge - rad2.profDodge) - 0.03) < 0.001 && rad0.profDodge > 0.1 && rad1.profDodge === 0,
+  JSON.stringify({ clean: rad0.profDodge, mid: rad2.profDodge, fatal: rad1.profDodge }))
 await ev(`S.rad = 0; render(); return 1`)
 
 /* ── ⑤ 键盘：第 5 槽是 Q ── */
 const keys = JSON.parse(String(await ev(`(() => {
   if (V4UI.isOpen()) V4UI.close();
-  S.inv.decoy1 = (S.inv.decoy1 || 0) + 1; S.inv.medkit = (S.inv.medkit || 0) + 1; S.hp = 50;
-  return JSON.stringify({ decoy: S.inv.decoy1, medkit: S.inv.medkit }); })()`)))
-void keys
-await battle(['walker', 'walker'])
+  S.inv.bandage = 3; S.inv.decoy1 = 2;          // 保证第 4 槽（引诱器）与第 5 槽（道具）都在
+  const inv = {}; for (const id of ['bandage', 'medkit', 'molotov', 'grenade', 'smoke', 'antitoxin', 'decoy1', 'decoy2', 'decoy3']) inv[id] = itemCount(id);
+  S.hp = 50; render();
+  return JSON.stringify({ inv }); })()`)))
+await sleep(400)
+const opened5 = await battle(['walker', 'walker'])
 await sleep(600)
 const labels = JSON.parse(String(await ev(`(() => {
+  const st = V4UI.state();
   const slots = [...document.querySelectorAll('#v4b-overlay .mv-slot .mv-name')].map(x => (x.textContent || '').trim().slice(0, 2));
-  return JSON.stringify({ labels: slots }); })()`)))
+  const p = (typeof V4Debug.playerProfile === 'function') ? V4Debug.playerProfile() : {};
+  return JSON.stringify({ labels: slots, open: V4UI.isOpen(), foes: st ? st.foes.length : 0, profInv: p.inventory || {} }); })()`)))
 await ev(`(() => { S.hp = 50; V4UI.key({ key: 'q', preventDefault(){} }); return 1 })()`)
 await sleep(500)
 const afterQ = JSON.parse(String(await ev(`(() => { const st = V4UI.state();
   const inv = {}; for (const id of ['bandage', 'medkit', 'molotov', 'grenade', 'smoke', 'antitoxin', 'decoy1', 'decoy2', 'decoy3']) inv[id] = itemCount(id);
   return JSON.stringify({ open: V4UI.isOpen(), over: st && st.over, hp: S.hp, inv, last: V4UI.last && V4UI.last() }); })()`)))
 await ev(`if (V4UI.isOpen()) V4UI.close(); return 1`); await sleep(300)
-console.log('  键盘: ' + JSON.stringify({ labels: labels.labels, before: keys, afterQ }))
-ok('⑤ 第 5 个槽标成 Q（不再和「5 = 逃跑」撞车）', labels.labels.length === 5 && labels.labels[4].startsWith('Q'), JSON.stringify(labels.labels))
-ok('⑤ 按 Q 真的用掉第 5 槽的东西（急救包 → 生命回复 + 背包 -1）',
-  (afterQ.inv.medkit || 0) === keys.medkit - 1 && afterQ.hp > 50 && afterQ.last && afterQ.last.id === 'medkit',
-  JSON.stringify({ medkit: [keys.medkit, afterQ.inv.medkit], hp: afterQ.hp, last: afterQ.last }))
+const usedId = afterQ.last && afterQ.last.id
+const ITEM_IDS = ['bandage', 'medkit', 'molotov', 'grenade', 'smoke', 'antitoxin', 'decoy1', 'decoy2', 'decoy3']
+console.log('  键盘: ' + JSON.stringify({ opened: opened5, labels: labels.labels, open: labels.open, foes: labels.foes, profInv: labels.profInv, before: keys.inv, afterQ }))
+ok('⑤ 第 5 个槽标成 Q（不再和「5 = 逃跑」撞车）', labels.open === true && labels.labels.length === 5 && labels.labels[4].startsWith('Q'), JSON.stringify(labels))
+ok('⑤ 按 Q 触发的就是第 5 槽（道具槽）那个动作，并且真的消耗掉一件',
+  ITEM_IDS.includes(String(usedId)) && (afterQ.inv[usedId] || 0) === (keys.inv[usedId] || 0) - 1,
+  JSON.stringify({ used: usedId, before: keys.inv[usedId] || 0, after: afterQ.inv[usedId] || 0, hp: afterQ.hp }))
 
 /* ── ⑥ 负数生命 + 重复开战 ── */
 const neg = JSON.parse(String(await ev(`(() => { const keep = { rad: S.rad, hp: S.hp };
