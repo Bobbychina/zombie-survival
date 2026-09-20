@@ -91,7 +91,7 @@ const spikeAfter = JSON.parse(String(await ev(`(() => { const st = V4UI.state();
   hps: (st.foes || []).map(f => f.hp), spike: (S.def.traps || {}).spike,
   log: (document.getElementById('v4b-overlay') || {}).textContent ? 'ok' : 'none' }); })()`)))
 await ev(`if (V4UI.isOpen()) V4UI.close(); return 1`); await sleep(300)
-const damaged = spikeAfter.hps.filter(h => h < 100).length
+const damaged = spikeAfter.hps.filter(h => h < 24).length        // 普通丧尸 24 血：<24 才算被扎到
 console.log('  钉刺: ' + JSON.stringify({ before: spike, hps: spikeAfter.hps, damaged }))
 ok('② 钉刺只扎最前面那一只（另外两只满血）', damaged === 1 && spikeAfter.spike === 0, JSON.stringify(spikeAfter.hps))
 
@@ -137,12 +137,15 @@ const labels = JSON.parse(String(await ev(`(() => {
   return JSON.stringify({ labels: slots }); })()`)))
 await ev(`(() => { S.hp = 50; V4UI.key({ key: 'q', preventDefault(){} }); return 1 })()`)
 await sleep(500)
-const afterQ = JSON.parse(String(await ev(`(() => { const st = V4UI.state(); return JSON.stringify({ open: V4UI.isOpen(), over: st && st.over, hp: S.hp, medkit: S.inv.medkit || 0, focus: false }); })()`)))
+const afterQ = JSON.parse(String(await ev(`(() => { const st = V4UI.state();
+  const inv = {}; for (const id of ['bandage', 'medkit', 'molotov', 'grenade', 'smoke', 'antitoxin', 'decoy1', 'decoy2', 'decoy3']) inv[id] = itemCount(id);
+  return JSON.stringify({ open: V4UI.isOpen(), over: st && st.over, hp: S.hp, inv, last: V4UI.last && V4UI.last() }); })()`)))
 await ev(`if (V4UI.isOpen()) V4UI.close(); return 1`); await sleep(300)
-console.log('  键盘: ' + JSON.stringify({ labels: labels.labels, afterQ }))
+console.log('  键盘: ' + JSON.stringify({ labels: labels.labels, before: keys, afterQ }))
 ok('⑤ 第 5 个槽标成 Q（不再和「5 = 逃跑」撞车）', labels.labels.length === 5 && labels.labels[4].startsWith('Q'), JSON.stringify(labels.labels))
-ok('⑤ 按 Q 真的用掉第 5 槽的东西（急救包 → 生命回复）', afterQ.medkit === keys.medkit - 1 && afterQ.hp > 50,
-  JSON.stringify({ medkit: [keys.medkit, afterQ.medkit], hp: afterQ.hp }))
+ok('⑤ 按 Q 真的用掉第 5 槽的东西（急救包 → 生命回复 + 背包 -1）',
+  (afterQ.inv.medkit || 0) === keys.medkit - 1 && afterQ.hp > 50 && afterQ.last && afterQ.last.id === 'medkit',
+  JSON.stringify({ medkit: [keys.medkit, afterQ.inv.medkit], hp: afterQ.hp, last: afterQ.last }))
 
 /* ── ⑥ 负数生命 + 重复开战 ── */
 const neg = JSON.parse(String(await ev(`(() => { const keep = { rad: S.rad, hp: S.hp };

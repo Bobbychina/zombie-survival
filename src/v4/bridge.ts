@@ -64,8 +64,9 @@ export function playerProfile(): PlayerProfile {
     critMult: 1.8 + ((S.skills?.shoot ?? 0) >= 5 ? 0.3 : 0),
     dmgMult: mods.dmgMul,
     /* M64 修：statMods 里的闪避/命中惩罚以前**没人读** —— 辐射病与部位伤在 HUD/人体页上写着
-       「命中 -18% · 闪避 -10%」，实际战斗数值一点没变（玩家看到的和打出来的不是一回事）。 */
-    dodge: Math.max(0, Math.min(0.5, (S.eq.feet && L.ITEMS[S.eq.feet]?.dodge ? L.ITEMS[S.eq.feet].dodge : 0) + L.skillBonus('stealth', 0.015, 0.2) + -(mods.dodge || 0))),
+       「命中 -18% · 闪避 -10%」，实际战斗数值一点没变（玩家看到的和打出来的不是一回事）。
+       注意符号：statMods 里惩罚是**负数**（`m.dodge -= 0.2`），所以这里是 `+ mods.dodge`（加上那个负数）。 */
+    dodge: Math.max(0, Math.min(0.5, (S.eq.feet && L.ITEMS[S.eq.feet]?.dodge ? L.ITEMS[S.eq.feet].dodge : 0) + L.skillBonus('stealth', 0.015, 0.2) + (mods.dodge || 0))),
     accPenalty: Math.max(0, -(mods.hit || 0)),
     armor: L.armorTotal(),
     speed: 2 + S.skills.fitness * 0.3 + S.skills.stealth * 0.2,
