@@ -601,7 +601,19 @@ function writeSave(s){
   }catch(e){ return false; }
 }
 function saveGame(quiet){
+  const v = vault();
+  /* M65：手动保存要**等真的落盘**再说"已保存"。以前这里写完立刻 log，而加密落盘是异步的 ——
+     玩家点完保存马上关页面就可能丢最后一次写（实测窗口 200~400ms）。`flush()` 等写入队列排空
+     （队列在 save-vault 里已串行化，顺带修掉"两次快速保存可能乱序落盘、旧状态盖新状态"）。 */
   const ok = writeSave(S);
+  if(v && typeof v.flush === 'function'){
+    void v.flush().then((landed) => {
+      if(quiet) return;
+      if(landed && ok) log('💾 进度已保存（第 '+S.day+' 天，加密落盘）。','info');
+      else toast('保存失败','本地存储被拒绝或已满。','bad');
+    });
+    return ok;
+  }
   if(!quiet) ok ? log('💾 进度已保存（第 '+S.day+' 天，加密落盘）。','info') : toast('保存失败','本地存储被拒绝或已满。','bad');
   return ok;
 }
@@ -610,6 +622,14 @@ function autosave(){
   if(window.__renderErr) return;   // C01 熔断：渲染已崩，不把坏状态写死进唯一键位
   writeSave(S);
 }
+/* M65：页面被切走/关闭前把排队中的加密写 flush 掉（自动存档没有 await 的机会，这是它唯一的补救窗口）。
+   覆盖"切标签页、切 App、关窗口"三种情况：visibilitychange(hidden) 在两者都会先触发。 */
+function flushVaultSoon(){
+  const v = vault();
+  if(v && typeof v.flush === 'function') void v.flush();
+}
+document.addEventListener('visibilitychange', () => { if(document.visibilityState === 'hidden') flushVaultSoon(); });
+window.addEventListener('pagehide', flushVaultSoon);
 /** M29：读档走保险箱解密后的内存副本（boot 时已 hydrate）；没有就回退老路径 */
 function readSavedRaw(){
   const v = vault();

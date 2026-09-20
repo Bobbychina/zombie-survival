@@ -39,6 +39,9 @@ export interface VaultState {
 }
 
 const st: VaultState = { mode: 'none', ready: false, cached: null };
+/** M65：写入队列（串行化 + 可 flush）。所有落盘都排在这一条链上，保证"后写的状态一定在后面落盘"。 */
+let chain: Promise<boolean> = Promise.resolve(true);
+let chainPending = 0;
 
 /* 密钥自检位：一小段用同一把密钥加密的固定明文。
    为什么要它：AES-GCM 解不开可能是"密文被动过"，也可能是"密钥换了/丢了"，光看报错分不出来。
@@ -266,10 +269,14 @@ export const SaveVault = {
     try { return raw.startsWith(MAGIC) ? await decryptText(raw) : raw; } catch { return null; }
   },
 
-  /** 写（autosave / 手动保存）：内存缓存立刻更新，落盘是加密后的密文 */
-  write(plain: string, opts: { backup?: boolean; backupRaw?: string | null } = {}): void {
+  /** 写（autosave / 手动保存）：内存缓存立刻更新，落盘是加密后的密文。
+   *  M65：**串行 + 可等待** —— 以前是 `void run()`：① 两次快速保存可能乱序落盘（旧状态盖新状态）；
+   *  ② 调用方拿不到"到底写完了没"，玩家点完保存立刻关页面就可能丢最后一次写（实测窗口 200~400ms）。
+   *  现在返回 Promise（写入排队、前一个写完再写下一个），`saveGame()` 会等它落地才说"已保存"，
+   *  另外页面隐藏/卸载时也会 flush 一次（见 flush() 的调用点）。 */
+  write(plain: string, opts: { backup?: boolean; backupRaw?: string | null } = {}): Promise<boolean> {
     st.cached = plain;
-    const run = async () => {
+    const run = async (): Promise<boolean> => {
       try {
         const enc = await encryptText(plain);
         if (opts.backup && opts.backupRaw) {
@@ -279,12 +286,22 @@ export const SaveVault = {
           } catch { /* 备份写失败不影响主档 */ }
         }
         localStorage.setItem('zombie_survival_save_v2', enc);
+        st.lastError = undefined;
+        return true;
       } catch (e) {
         st.lastError = e instanceof Error ? e.message : String(e);
+        return false;
       }
     };
-    void run();
+    chainPending++;
+    const p = chain.then(run, run);
+    chain = p.then(ok => { chainPending--; return ok; }, () => { chainPending--; return false; });
+    return p;
   },
+  /** M65：等所有排队中的写入落盘（页面隐藏/关闭前调用；手动保存也会 await 它） */
+  flush(): Promise<boolean> { return chain.catch(() => false); },
+  /** 还有没有没落盘的写（探针/调试用） */
+  pending(): boolean { return chainPending > 0; },
 
   /** 加密一段文本（云存档上传前用） */
   async encrypt(plain: string): Promise<string> { return encryptText(plain); },

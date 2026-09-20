@@ -1148,7 +1148,11 @@ function fitRegion(view: HTMLElement, card: HTMLElement, rgrid: HTMLElement) {
     const winBottom = (win && isFinite(maxH)) ? win.getBoundingClientRect().top + maxH - headH - 6 : Infinity;
     stableBottom = Math.min(stableBottom, winBottom, window.innerHeight - 12);
   }
-  const avail = stableBottom - card.getBoundingClientRect().top - 8;
+  /* M65 修：**单位要统一**。`getBoundingClientRect()` / `innerHeight` 是**屏幕像素**，而
+     `offsetHeight`、常量 40/12/33 与内联的 `grid-template-columns` 都是**布局像素**（宿主带 `zoom: var(--fs)`）。
+     以前把两者直接相减 —— 160% 字号下预算会偏小成 1/z → 格子白缩一档（不溢出，但"一屏装下"永远算不准）。
+     这里把可用高度折回布局像素再算。 */
+  const avail = (stableBottom - card.getBoundingClientRect().top - 8) / z;
   if (avail < 280) return;
   /* 除网格以外的开销：标题行/图层条/说明/图例/详情/内边距 —— details 开合会变，但**与格子边长无关**。 */
   const chrome = Math.max(0, card.offsetHeight - rgrid.offsetHeight);
@@ -1159,9 +1163,9 @@ function fitRegion(view: HTMLElement, card: HTMLElement, rgrid: HTMLElement) {
   /* 兜底**一次**：CSS 里 `.rcell2{min-height:34px}` 会让"边长 30px"的行实际排到 34px（非 tiny 档），
      光按列宽推会低估 ~4px/行 —— 所以再按**真实溢出量**收一次。只收一次、不再回环，
      否则又会变成"越量越小"的振荡（M59 的原始 bug）。 */
-  const over = card.getBoundingClientRect().bottom - (stableBottom + 2);
-  if (over > 0 && cell0 > minRCell) {
-    apply(Math.max(minRCell, cell0 - Math.ceil(over / 12)));
+  const overScreen = card.getBoundingClientRect().bottom - (stableBottom + 2);
+  if (overScreen > 0 && cell0 > minRCell) {
+    apply(Math.max(minRCell, cell0 - Math.ceil(overScreen / z / 12)));   // M65：屏幕像素 → 布局像素再折格子
   }
 
   function apply(c: number): void {

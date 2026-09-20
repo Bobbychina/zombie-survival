@@ -274,7 +274,7 @@ export function ensureSaveWorld(S: any): SaveWorld {
   sw.evac = sw.evac && typeof sw.evac === 'object' && isPos(sw.evac.x) && isPos(sw.evac.y) ? sw.evac : null;
   sw.trail = Array.isArray(sw.trail) ? sw.trail.slice(-24) : [];
   sw.steps = num(sw.steps); sw.fights = num(sw.fights);
-  sw.crossings = num((sw as any).crossings);          // M60：老档没有这个字段 → 补 0
+  sw.crossings = Math.max(0, num((sw as any).crossings));   // M60：老档没有这个字段 → 补 0；M65：负值也夹回 0（手改存档不该让目标永远达不成）
   sw.veh = sw.veh && typeof sw.veh === 'object' ? { fuel: num(sw.veh.fuel), hp: num(sw.veh.hp) || 60 } : null;
   // C11：只有指纹变了才重放迷雾（否则每次 render 都要重放 576 格）。
   // 指纹里必须含**世界实例本身**：实例被挤掉重建过（quests 扫别区 POI 等）时，
