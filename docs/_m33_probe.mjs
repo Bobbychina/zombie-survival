@@ -261,7 +261,7 @@ const shell2 = JSON.parse(await ev(`(() => {
   return JSON.stringify({ src: f ? f.getAttribute('src') : null, objs, title });
 })()`))
 ok('点章节卡能切到第 2 章（iframe 换成 ch=combat，标题跟着换）', /[?&]ch=combat/.test(shell2.src || '') && /战斗/.test(shell2.title), JSON.stringify({ src: shell2.src, title: shell2.title }))
-ok('第 2 章的目标清单是 4 条（枪杀 / 近战杀 / 换弹 / 穿甲弹打装甲——M48）', shell2.objs.length === 4 && ['gunKill', 'meleeKill', 'loadSwap', 'apKill'].every(id => shell2.objs.includes(id)), JSON.stringify(shell2.objs))
+ok('第 2 章的目标清单是 5 条（枪杀 / 近战杀 / 换弹 / 穿甲弹打装甲——M48 / 引诱器脱身——M62）', shell2.objs.length === 5 && ['gunKill', 'meleeKill', 'loadSwap', 'apKill', 'decoyUse'].every(id => shell2.objs.includes(id)), JSON.stringify(shell2.objs))
 let boot2 = null
 for (let i = 0; i < 20; i++) {
   const r = await lab(`if (!W.S || W.S.seed !== 'lab-combat-01') return 'WAIT'; return JSON.stringify({ day: W.S.day, seed: W.S.seed, pistol: W.S.inv.pistol || 0, ap: W.S.inv.a9_ap || 0, wpn: W.S.eq.wpn, kills: W.S.stats.kills });`)
