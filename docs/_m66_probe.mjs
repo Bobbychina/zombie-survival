@@ -49,6 +49,13 @@ const nav = async () => { await send('Page.navigate', { url: BOOT }); await boot
 const dbg = () => j(`(() => JSON.stringify(V4Interior.debug()))()`)
 const dbgRooms = async () => (await dbg())?.rooms ?? []
 const stat = (id) => ev(`(() => { const d = V4Interior.debug(); return d ? (d.rooms.find(r => r.id === '${id}') || {}).status : '' })()`)
+const leftNow = () => ev(`(() => { const s = V4.worldstate.ensureSaveWorld(S); return Number(s.left['${spot.x},${spot.y}'] || 0) })()`)
+/** 埋伏会把平面图关掉：读状态/继续操作前先把覆盖层补回来 */
+const reopen = async () => {
+  const has = await ev(`(() => (document.getElementById('v4i-overlay') ? 1 : 0))()`)
+  if (has !== 1) { await ev(`(() => { V4Interior.open(); return 1 })()`); await sleep(180) }
+}
+const statStable = async (id) => { await reopen(); return stat(id) }
 /** 点平面图里某一间的按钮（DOM 真的点，不是直接调 API） */
 const clickRoom = (roomId) => ev(`(() => { const b = [...document.querySelectorAll('#v4i-overlay button')].find(x => (x.getAttribute('onclick')||'').indexOf("'${roomId}'") >= 0); if (!b) return 'NOBTN'; b.click(); return 'ok' })()`)
 const roomBtnText = (roomId) => ev(`(() => { const b = [...document.querySelectorAll('#v4i-overlay button')].find(x => (x.getAttribute('onclick')||'').indexOf("'${roomId}'") >= 0); return b ? b.textContent.replace(/\\s+/g,' ').trim() : 'NOBTN' })()`)
@@ -111,17 +118,18 @@ if (outDir) await shot('m66-interior')
 /* ③ 搜一间没锁的房间：1 行动力、账记进任务系统、房间变已搜 */
 const openRoom = rooms.find(r => r.status === 'open')
 const ap0 = Number(await ev(`S.ap`))
-const left0 = (await dbg()).left
+const left0 = await leftNow()
 const zoneCnt0 = Number(await ev(`(() => Number((S.stats.zoneCnt || {})['${spot.poi}'] || 0))()`))
 await clickRoom(openRoom.id)
-await sleep(300)
+await sleep(280)
+await clearBattle()                                   // 搜到一半被埋伏：先收掉这一场再看账
 const ap1 = Number(await ev(`S.ap`))
-const left1 = (await dbg()).left
+const left1 = await leftNow()
 const zoneCnt1 = Number(await ev(`(() => Number((S.stats.zoneCnt || {})['${spot.poi}'] || 0))()`))
 ok('③ 搜一间 = 1 行动力、这地方的可搜次数 -1', ap1 === ap0 - 1 && left1 === left0 - 1, 'ap ' + ap0 + '→' + ap1 + ' · left ' + left0 + '→' + left1)
 ok('③ 照样记进任务账（zoneCnt 往前走了 —— M35 那条"搜了但任务不动"的坑）', zoneCnt1 > zoneCnt0,
   'zoneCnt ' + zoneCnt0 + '→' + zoneCnt1 + '（zone 与 poi 同名时同一个 key 命中两次 = +2，与门口快搜同源）')
-ok('③ 搜过的房间变成"已搜空"', (await stat(openRoom.id)) === 'looted', openRoom.name)
+ok('③ 搜过的房间变成"已搜空"', (await statStable(openRoom.id)) === 'looted', openRoom.name)
 const ap2 = Number(await ev(`S.ap`))
 await clickRoom(openRoom.id)
 await sleep(250)
@@ -144,7 +152,7 @@ if (lockedRoom) {
   await clickRoom(lockedRoom.id)
   await sleep(300)
   await clearBattle()
-  ok('④ 撬开后门是开的、行动力 -1', (await stat(lockedRoom.id)) === 'open' && Number(await ev(`S.ap`)) === ap3 - 1, lockedRoom.name)
+  ok('④ 撬开后门是开的、行动力 -1', (await statStable(lockedRoom.id)) === 'open' && Number(await ev(`S.ap`)) === ap3 - 1, lockedRoom.name)
 }
 
 /* ⑤ 把这一栋楼搜完（开着门的搜、锁着的先开门/硬踹）→ 关掉再开、刷新页面都要能接着搜 */
@@ -159,6 +167,7 @@ while (steps++ < 16) {
   await sleep(240)
   await clearBattle()
 }
+await reopen()
 const done1 = (await dbg())?.summary || {}
 ok('⑤ 一间间搜完 → 全部房间都标记为已搜', done1.done === done1.total && done1.total >= 3, JSON.stringify(done1))
 await ev(`(() => { V4Interior.leave(); return 1 })()`)
