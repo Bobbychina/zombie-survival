@@ -12,6 +12,7 @@ import {
   META_COLS, META_ROWS, MAX_HOPS, REGIONS, REGION_TYPES as TYPES, TYPE_INFO, dangerColor, dangerLabel, homeRegion,  metaGrid, planRegionTrip, regionById, regionName, typeColor, typeLabel, type RegionDef,
 } from './regions-core';
 import { poiLeft, searchPoi } from './search';
+import { interiorHost, summary as interiorSummary, buildInterior } from './interior-core';   // M66：建筑内部（平面图）入口
 import { cellTargets, fitCellSize, CELL_HARD_FLOOR } from './ui-scale-core';   // M40/M41：地图格子的目标尺寸与"一屏装下"的取舍（纯函数）
 import { lastRegionEvent, onEnterRegion } from './region-events';
 import { regionHazardTitles } from './region-events-core';
@@ -651,6 +652,11 @@ function poiCard(): string {
   const hereFrag = !!frags[bkey(b.x, b.y)];
   const gh = ghostAt(localWorld(s), b.x, b.y);
   const radLv = radHere(localWorld(s));                    // M25：这一格的辐射等级
+  /* M66：这栋楼有没有"里面"（3~6 间的平面图）。平面图是确定性的，所以卡片上直接算出房间数/进度。 */
+  const ikey = bkey(b.x, b.y);
+  const iplan = poi && interiorHost(b.poi) ? buildInterior(poi, s.seed + '|' + s.region + '|' + ikey) : null;
+  const ist = iplan ? (s.interiors[ikey] || { rooms: {} }) : null;
+  const isum = iplan && ist ? interiorSummary(iplan, ist) : null;
   let body = '';
   if (radLv > 0) body += '<div class="hint" style="color:' + (radLv >= 2 ? '#e0736a' : '#e0b06a') + '">' +
     esc(geigerText(radLv, hasGeiger())) + '　待在这里每走一步都会累积。</div>';
@@ -660,9 +666,15 @@ function poiCard(): string {
       (poi.feat === 'npc' ? '<div class="hint" style="color:#7fd6a8">里面有活人：能换东西、买情报、也可能想抢你。</div>' : '') +
       (gh ? '<div class="hint" style="color:#c9a6ff">👻 ' + esc(gh.spec.owner) + ' 的幽灵据点就在这一格：搜刮＝打一场守卫战，赢了抢他仓库的一部分。</div>' : '') +
       '<div class="hint">可能遇上：' + poi.enemies.map(e => esc(L.ZOMBIES?.[e]?.n ?? e)).join('、') + '</div>' +
+      (iplan && isum ? '<div class="hint" style="color:#c9a6ff">🏠 里面有 ' + iplan.rooms.length + ' 间房：已搜 ' +
+        isum.done + '/' + isum.total +
+        (isum.lockedLeft + isum.sealedLeft ? ' · 还锁着 ' + (isum.lockedLeft + isum.sealedLeft) + ' 间' : '') +
+        '　锁着的那几间才出稀有货（撬棍能撬、别的房间会翻出钥匙、也能硬踹）。</div>' : '') +
       '<div class="row" style="margin-top:10px">' +
         '<button class="btn primary" onclick="V4World.search(0)">🔍 搜索 <span class="mono">(1 行动力)</span></button>' +
         '<button class="btn warn" onclick="V4World.search(1)">🔦 深度搜索 <span class="mono">(2 行动力 · 更危险 · 更多)</span></button>' +
+        (iplan ? '<button class="btn ok" onclick="V4Interior.open()">🚪 进楼搜房 <span class="mono">(' + iplan!.rooms.length +
+          ' 间 · 1 行动力/间' + (isum && isum.done ? ' · 已搜 ' + isum.done + '/' + isum.total : '') + ')</span></button>' : '') +
         (poi.feat === 'npc' ? '<button class="btn ok" onclick="V4Camp.open()">🚪 进去看看 <span class="mono">(幸存者)</span></button>' : '') +
         (poi.feat === 'vehicle' && !s.veh ? '<button class="btn ok" onclick="V4World.fixCar()">🔧 修车 <span class="mono">(12 材料 + 2 汽油)</span></button>' : '') +
         (poi.feat === 'vehicle' && s.veh && s.veh.hp < 100 ? '<button class="btn ok" onclick="V4World.repairCar()">🔧 修车况 <span class="mono">(6 材料 → +40%)</span></button>' : '') +
@@ -677,7 +689,8 @@ function poiCard(): string {
       '<div class="hint">在上面那张图里点一个亮着的格子就能走：走路 1 行动力/区块' + (s.veh ? ' · 开车 1 行动力/4 区块' : '') + '</div>';
   }
   return card('poi', '📍 格子详情 (' + b.x + ',' + b.y + ') · ' + esc(b.name), body,
-    [poi ? '危险 ' + (b.danger + poi.danger) : '危险 ' + b.danger, poi ? '可搜 ' + left + '/' + poi.searches + ' 次' : '空地']);
+    [poi ? '危险 ' + (b.danger + poi.danger) : '危险 ' + b.danger, poi ? '可搜 ' + left + '/' + poi.searches + ' 次' : '空地',
+      iplan && isum ? '里面 ' + isum.done + '/' + isum.total + ' 间' : '']);
 }
 
 /** C01/C02：今夜怎么睡（安全屋满额零风险；野睡打折 + 必掷夜袭）。

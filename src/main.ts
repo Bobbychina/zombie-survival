@@ -27,7 +27,7 @@ export const V4: Record<string, unknown> = {};
 (window as any).V4 = V4;
 
 async function main() {
-  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi, integrity, betaNotice, regionEventsCore, regionEvents, regionsCore, worldsUi, tutorial, saveVault, accountVault, survival, envCore, medical, uiScale, sandboxCore, tutorialLab, bridge] = await Promise.all([
+  const [worldgen, pois, combat, moves, battleUi, worldUi, worldState, camp, night, evac, env, farm, gather, water, accountUi, integrity, betaNotice, regionEventsCore, regionEvents, regionsCore, worldsUi, tutorial, saveVault, accountVault, survival, envCore, medical, uiScale, sandboxCore, tutorialLab, bridge, interiorCore, interiorUi] = await Promise.all([
     import('./v4/worldgen'),
     import('./v4/pois'),
     import('./v4/combat'),
@@ -59,6 +59,8 @@ async function main() {
     import('./v4/sandbox-core'),
     import('./v4/tutorial-lab'),
     import('./v4/bridge'),          // M64：探针出口要用（playerProfile / onEnd），顺带把模块提到这里的懒加载清单
+    import('./v4/interior-core'),   // M66：建筑内部（平面图 + 锁门 + 房间掉落）
+    import('./v4/interior-ui'),
   ]);
   /* M33：教程沙盒 —— iframe 里跑的就是这一份代码，靠 `?sandbox=1` 分岔：
      不读主档（boot 走沙盒分支）、不落盘（writeSave 直接 return）、不弹教程、菜单里没有世界/账号。
@@ -89,6 +91,7 @@ async function main() {
     battle: { startV4Combat: battleUi.startV4Combat, isOpen: battleUi.isV4BattleOpen },
     UI: battleUi.V4UI,
     world: worldUi.V4World,
+    interior: interiorUi.V4Interior,
     worldstate: worldState,
     camp: camp.V4Camp,
     night,
@@ -203,6 +206,8 @@ async function main() {
 
   // 大世界：把 legacy 的探索页接上 24×24 区块地图（地图卡插到 #view 最前面，并摘掉 legacy 的旧地图与区域列表）
   (window as any).V4World = worldUi.V4World;
+  /* M66：建筑内部（平面图）—— 格子详情卡的「🚪 进楼搜房」按这个名字走内联 onclick */
+  (window as any).V4Interior = interiorUi.V4Interior;
   /* M26：☰ 菜单（legacy 的 openMenu）要借 v4 的按钮 HTML 渲染「世界与账号」分区 —— 内联 onclick 只认 window 名字 */
   (window as any).__v4ToolsButtons = worldUi.toolsButtonsHtml;
   /* M27：新手教程 —— 第一次进游戏自动弹（看完了不再自动弹），菜单里也能重看 */
@@ -326,6 +331,9 @@ async function main() {
   (window as any).V4Debug = Object.assign((window as any).V4Debug || {}, {
     salvageYields: envCore.salvageYields, regionById: regionsCore.regionById,
     statMods: L.statMods, playerProfile: bridge.playerProfile, onEnd: bridge.onEnd,
+    // M66：建筑内部 —— 探针要能核对"平面图长什么样、房间锁/进度"而不去解析 DOM 文本
+    interiorHost: interiorCore.interiorHost, interiorPlan: interiorCore.buildInterior,
+    interiorSummary: interiorCore.summary, interiorOpen: interiorCore.openDecision,
   });
   /* M8：存档完整性——必须在 L.boot() 读档之前看原始 JSON（loadGame 会 sanitize，夹取之后就查不出越界了）。
      M33：沙盒 iframe 里不做这套（那里压根不读主档，指纹校验会读出一个"别人的档"来）。 */

@@ -4,6 +4,7 @@
 import { generateWorld, bkey, blockAt, revealAround, WORLD_W, WORLD_H } from './worldgen';
 import { fragSpots } from './quest4';
 import { HOME_REGION, regionById, regionSeed, setActiveRegions } from './regions-core';
+import type { InteriorState } from './interior-core';
 import type { Block, WorldState } from '../types';
 export interface VehState { fuel: number; hp: number }
 
@@ -18,6 +19,9 @@ export interface RegionProgress {
   salvage: Record<string, { left: number }>;
   fish: Record<string, { left: number; day: number }>;
   chop: Record<string, { left: number; day: number }>;
+  /** M66：建筑内部进度（按区块坐标记）—— 哪几间翻过、哪几扇门开过。
+      和 `left`/`firstPoi` 一样是**按坐标**的，所以必须跟着区域一起冻结/摊平。 */
+  interiors: Record<string, InteriorState>;
 }
 
 export interface SaveWorld extends RegionProgress {
@@ -136,7 +140,7 @@ export function defaultSaveWorld(seed: string): SaveWorld {
   const sw: SaveWorld = {
     v: 1, wv: WORLD_VER, seed, region: HOME_REGION, regions: {}, seenRegions: { [HOME_REGION]: 1 }, regionVisits: { [HOME_REGION]: 1 }, regionZones: {},
     cur: { x: w.home.x, y: w.home.y },
-    visited: {}, firstPoi: {}, left: {}, stock: {}, frag: {}, forage: {}, salvage: {}, fish: {}, chop: {}, intel: false,
+    visited: {}, firstPoi: {}, left: {}, stock: {}, frag: {}, forage: {}, salvage: {}, fish: {}, chop: {}, interiors: {}, intel: false,
     debt: 0, lastNight: null, lastRaidDay: 0, evac: null,
     veh: null, steps: 0, fights: 0, crossings: 0, trail: [],
   };
@@ -148,7 +152,7 @@ export function defaultSaveWorld(seed: string): SaveWorld {
 function stashCurrent(sw: SaveWorld): void {
   sw.regions[sw.region] = {
     visited: sw.visited, firstPoi: sw.firstPoi, left: sw.left, stock: sw.stock, frag: sw.frag,
-    forage: sw.forage, salvage: sw.salvage, fish: sw.fish, chop: sw.chop,
+    forage: sw.forage, salvage: sw.salvage, fish: sw.fish, chop: sw.chop, interiors: sw.interiors,
   };
 }
 function loadRegion(sw: SaveWorld, region: string): void {
@@ -165,6 +169,7 @@ function loadRegion(sw: SaveWorld, region: string): void {
   sw.salvage = p ? p.salvage : {};
   sw.fish = p ? p.fish : {};
   sw.chop = p ? p.chop : {};
+  sw.interiors = p && p.interiors ? p.interiors : {};
 }
 
 export interface SwitchResult { ok: boolean; why?: string; firstEnter?: string; region: string; home: { x: number; y: number } }
@@ -208,7 +213,7 @@ export function ensureSaveWorld(S: any): SaveWorld {
      （搜空的点变成满库存、营地库存错位、碎片落在水里）。BETA 阶段这样处理最干净。 */
   if (sw.wv !== WORLD_VER) {
     sw.visited = {}; sw.firstPoi = {}; sw.left = {}; sw.stock = {}; sw.frag = {};
-    sw.forage = {}; sw.salvage = {}; sw.fish = {}; sw.chop = {};
+    sw.forage = {}; sw.salvage = {}; sw.fish = {}; sw.chop = {}; sw.interiors = {};
     sw.regions = {};
     sw.seenRegions = { [sw.region]: 1 as const };
     sw.regionVisits = { [sw.region]: 1 };
@@ -267,6 +272,25 @@ export function ensureSaveWorld(S: any): SaveWorld {
   sw.fish = sw.fish && typeof sw.fish === 'object' ? sw.fish : {};
   // M8：伐木次数（老存档没有这张表，补空对象；每次伐木只写自己那一格）
   sw.chop = sw.chop && typeof sw.chop === 'object' ? sw.chop : {};
+  /* M66：建筑内部进度（老档没有 → 补空表）。形状不对的条目直接丢掉 —— 房间 id 对不上时
+     buildInterior 会重新生成同一张图（确定性），所以"丢一条"最多让玩家多搜一次，不会卡死。 */
+  const ints = sw.interiors && typeof sw.interiors === 'object' ? sw.interiors : {};
+  sw.interiors = {};
+  for (const k in ints) {
+    const v = ints[k];
+    if (!v || typeof v !== 'object') continue;
+    const rooms: InteriorState['rooms'] = {};
+    const src = (v as InteriorState).rooms && typeof (v as InteriorState).rooms === 'object' ? (v as InteriorState).rooms : {};
+    for (const id in src) {
+      const r = src[id];
+      if (!r || typeof r !== 'object') continue;
+      const st: InteriorState['rooms'][string] = {};
+      if (r.looted) st.looted = 1;
+      if (r.opened) st.opened = 1;
+      rooms[id] = st;
+    }
+    sw.interiors[k] = (v as InteriorState).seen ? { rooms, seen: 1 } : { rooms };
+  }
   sw.intel = !!sw.intel;
   sw.debt = Math.max(0, Math.min(3, typeof sw.debt === 'number' && isFinite(sw.debt) ? sw.debt : 0));
   sw.lastNight = sw.lastNight && typeof sw.lastNight === 'object' ? sw.lastNight : null;
