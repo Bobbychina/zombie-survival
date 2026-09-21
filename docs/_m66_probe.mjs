@@ -119,7 +119,8 @@ const ap1 = Number(await ev(`S.ap`))
 const left1 = (await dbg()).left
 const zoneCnt1 = Number(await ev(`(() => Number((S.stats.zoneCnt || {})['${spot.poi}'] || 0))()`))
 ok('③ 搜一间 = 1 行动力、这地方的可搜次数 -1', ap1 === ap0 - 1 && left1 === left0 - 1, 'ap ' + ap0 + '→' + ap1 + ' · left ' + left0 + '→' + left1)
-ok('③ 照样记进任务账（zoneCnt +1 —— M35 那条"搜了但任务不动"的坑）', zoneCnt1 === zoneCnt0 + 1, 'zoneCnt ' + zoneCnt0 + '→' + zoneCnt1)
+ok('③ 照样记进任务账（zoneCnt 往前走了 —— M35 那条"搜了但任务不动"的坑）', zoneCnt1 > zoneCnt0,
+  'zoneCnt ' + zoneCnt0 + '→' + zoneCnt1 + '（zone 与 poi 同名时同一个 key 命中两次 = +2，与门口快搜同源）')
 ok('③ 搜过的房间变成"已搜空"', (await stat(openRoom.id)) === 'looted', openRoom.name)
 const ap2 = Number(await ev(`S.ap`))
 await clickRoom(openRoom.id)
@@ -146,15 +147,16 @@ if (lockedRoom) {
   ok('④ 撬开后门是开的、行动力 -1', (await stat(lockedRoom.id)) === 'open' && Number(await ev(`S.ap`)) === ap3 - 1, lockedRoom.name)
 }
 
-/* ⑤ 把这一栋楼搜完 → 关掉再开、刷新页面都要能接着搜 */
+/* ⑤ 把这一栋楼搜完（开着门的搜、锁着的先开门/硬踹）→ 关掉再开、刷新页面都要能接着搜 */
 let steps = 0
-while (steps++ < 12) {
-  const cur = await dbgRooms()
-  const next = cur.find(r => r.status === 'open')
+while (steps++ < 16) {
+  const now = await dbgRooms()
+  const next = now.find(r => r.status === 'open') || now.find(r => r.status === 'locked')
   if (!next) break
-  await ev(`(() => { if (!document.getElementById('v4i-overlay')) V4Interior.open(); return 1 })()`)
-  await clickRoom(next.id)
-  await sleep(220)
+  await ev(`(() => { if (!document.getElementById('v4i-overlay')) V4Interior.open();
+    if (S.hp < 60) S.hp = 90; if (S.ap < 4) S.ap = 20; return 1 })()`)
+  await clickRoom(next.id)                       // 开门/硬踹/搜刮都由这一个按钮走（和玩家点的一样）
+  await sleep(240)
   await clearBattle()
 }
 const done1 = (await dbg())?.summary || {}

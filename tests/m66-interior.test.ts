@@ -152,4 +152,20 @@ describe('M66 存档', () => {
     w.interiors = { '1,1': { rooms: { a: { looted: 1 } } } };
     expect(ensureSaveWorld({ seed, world: w }).interiors).toEqual({});
   });
+
+  /* 这条是探针抓出来的真 bug 的钉子：ensureSaveWorld 每次 render 都会被调到，
+     第一版实现每次都**重建**一张清洗过的表 → 平面图 UI 手里那份 `st` 成了孤儿，
+     玩家刚搜过的房间在下一次 render 之后"复原"（实测连搜三间，关掉再进只剩两间）。 */
+  it('ensure 保留 interiors 的对象身份（清洗就地做，不重建）', () => {
+    const seed = 'm66-identity';
+    setActiveRegions(seed);
+    const S: any = { seed, world: { ...defaultSaveWorld(seed) } };
+    const sw1 = ensureSaveWorld(S);
+    const st: any = { rooms: {} };
+    sw1.interiors['9,9'] = st;
+    const sw2 = ensureSaveWorld(S);
+    expect(sw2.interiors['9,9']).toBe(st);
+    st.rooms.r0_1 = { looted: 1 };                 // UI 直接往手里的引用上写
+    expect(ensureSaveWorld(S).interiors['9,9'].rooms.r0_1).toEqual({ looted: 1 });
+  });
 });

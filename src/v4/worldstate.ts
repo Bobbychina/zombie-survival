@@ -272,24 +272,24 @@ export function ensureSaveWorld(S: any): SaveWorld {
   sw.fish = sw.fish && typeof sw.fish === 'object' ? sw.fish : {};
   // M8：伐木次数（老存档没有这张表，补空对象；每次伐木只写自己那一格）
   sw.chop = sw.chop && typeof sw.chop === 'object' ? sw.chop : {};
-  /* M66：建筑内部进度（老档没有 → 补空表）。形状不对的条目直接丢掉 —— 房间 id 对不上时
-     buildInterior 会重新生成同一张图（确定性），所以"丢一条"最多让玩家多搜一次，不会卡死。 */
-  const ints = sw.interiors && typeof sw.interiors === 'object' ? sw.interiors : {};
-  sw.interiors = {};
+  /* M66：建筑内部进度（老档没有 → 补空表）。坏形状的条目丢掉 —— 房间 id 对不上时
+     buildInterior 会重新生成同一张图（确定性），所以"丢一条"最多让玩家多搜一次，不会卡死。
+     **就地清洗、保留对象身份**：ensure 会被每次 render 调到，如果每次新建一张表，
+     UI 手里那份 `st` 引用就成了孤儿 —— 玩家在平面图里刚搜过的房间，下一次 render 之后就"复原"了
+     （M66 探针实测：连搜三间，关掉弹窗再进只剩两间）。 */
+  const ints = sw.interiors && typeof sw.interiors === 'object' ? sw.interiors : (sw.interiors = {});
+  sw.interiors = ints;
   for (const k in ints) {
-    const v = ints[k];
-    if (!v || typeof v !== 'object') continue;
-    const rooms: InteriorState['rooms'] = {};
-    const src = (v as InteriorState).rooms && typeof (v as InteriorState).rooms === 'object' ? (v as InteriorState).rooms : {};
-    for (const id in src) {
-      const r = src[id];
-      if (!r || typeof r !== 'object') continue;
-      const st: InteriorState['rooms'][string] = {};
-      if (r.looted) st.looted = 1;
-      if (r.opened) st.opened = 1;
-      rooms[id] = st;
+    const v = ints[k] as InteriorState;
+    if (!v || typeof v !== 'object') { delete ints[k]; continue; }
+    if (!v.rooms || typeof v.rooms !== 'object') v.rooms = {};
+    for (const id in v.rooms) {
+      const r = v.rooms[id];
+      if (!r || typeof r !== 'object') { delete v.rooms[id]; continue; }
+      if (r.looted) r.looted = 1; else delete r.looted;
+      if (r.opened) r.opened = 1; else delete r.opened;
     }
-    sw.interiors[k] = (v as InteriorState).seen ? { rooms, seen: 1 } : { rooms };
+    if (v.seen) v.seen = 1; else delete v.seen;
   }
   sw.intel = !!sw.intel;
   sw.debt = Math.max(0, Math.min(3, typeof sw.debt === 'number' && isFinite(sw.debt) ? sw.debt : 0));
