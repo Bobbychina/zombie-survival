@@ -5,6 +5,7 @@ import { generateWorld, bkey, blockAt, revealAround, WORLD_W, WORLD_H } from './
 import { fragSpots } from './quest4';
 import { HOME_REGION, regionById, regionSeed, setActiveRegions } from './regions-core';
 import type { InteriorState } from './interior-core';
+import { headVisionLoss } from './medical-core';
 import type { Block, WorldState } from '../types';
 export interface VehState { fuel: number; hp: number }
 
@@ -127,11 +128,14 @@ export function markVisited(w: WorldState, sw: SaveWorld, x: number, y: number):
 }
 
 /** M24 侦查技能：Lv3 视野 +1 圈、Lv6 再 +1 圈（默认 1 圈 = 3×3）。
-    这是"技能有没有用"里最直观的一条：技能面板写着「视野 2 圈」，地图上真的多亮一圈。 */
+    这是"技能有没有用"里最直观的一条：技能面板写着「视野 2 圈」，地图上真的多亮一圈。
+    M68：**头部伤再 −1 圈**（脑震荡或头 < 55%，见 medical-core.headVisionLoss）—— 下限永远是 1 圈（不能瞎）。
+    用户路线图原话：「头部受伤：视野缩小（迷雾探索范围减半）」。 */
 export function scoutRadius(): number {
   if (typeof window === 'undefined') return 1;              // 纯逻辑测试环境没有 window
   const lv = Number((window as any).S?.skills?.scout ?? 0);
-  return 1 + (lv >= 3 ? 1 : 0) + (lv >= 6 ? 1 : 0);
+  const base = 1 + (lv >= 3 ? 1 : 0) + (lv >= 6 ? 1 : 0);
+  return Math.max(1, base - headVisionLoss((window as any).S?.body));
 }
 
 export function defaultSaveWorld(seed: string): SaveWorld {

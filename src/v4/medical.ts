@@ -10,14 +10,16 @@
  */
 import { L } from '../main';
 import {
-  INJURIES, PARTS, PART_INFO, applyHit, bodyFromHp, bodyPenalty, bodySummary, hudLine, tickBody,
-  travelExtra, treat, treatOptions, type BodyPart, type BodyState,
+  INJURIES, PARTS, PART_INFO, applyHit, bodyFromHp, bodyPenalty, bodySummary, headVisionLoss, hudLine,
+  scavMulOf, tickBody, travelExtra, treat, treatOptions, type BodyPart, type BodyState,
 } from './medical-core';
 import { envOf, seasonNow, tempPenalty, weatherNow } from './env';
 import { SEASON_INFO, WEATHER, tempStateText, tempText } from './env-core';
 import { condRows, fireOk, humNow, riskLine, rotMul } from './survival';
 import { CONDS, COND_CURE, COND_IDS, condPenaltyText, humBand, humLine } from './survival-core';
 import { radSymptomTable, radSymptomText, radSymptoms } from './rad-core';
+/* M68：探针与 HUD 也要读这两条"伤 → 动作"的换算，从 medical 这一层透出去（V4Debug 用） */
+export { headVisionLoss, scavMulOf, scavYield } from './medical-core';
 
 let steps = 0;
 const STEPS_PER_BODY_TICK = 4;                 // 与 survival 同一个节奏：每 4 步走一次病程
@@ -308,6 +310,17 @@ export function renderBodyTab(): string {
     ' · 负重 ×' + pen.carryMul.toFixed(2) +
     ' · 走路 ' + (pen.moveMul > 1.05 ? '+' + travelExtra(b) + ' 行动力' : '正常') +
     (pen.bleed > 0 ? ' · <b style="color:#ef6f6f">持续流血 ' + pen.bleed.toFixed(1) + '/步</b>' : '') + '</div>';
+  /* M68：把"这条伤让你损失了什么"讲到底 —— 以前手臂/头的伤在 UI 上找不到任何后果说明 */
+  {
+    const scav = scavMulOf(b), vloss = headVisionLoss(b);
+    if (scav < 0.95 || vloss) {
+      h += '<div class="hint" style="color:#e0b45c">你现在干活更费劲：' +
+        (scav < 0.95 ? '<b>搜刮产出 -' + Math.round((1 - scav) * 100) + '%</b>（手臂伤：材料与额外掉落都会打折）' : '') +
+        (scav < 0.95 && vloss ? ' · ' : '') +
+        (vloss ? '<b>视野 -1 圈</b>（头部伤：走一步能点亮的格子变少，迷雾推得慢）' : '') +
+        '</div>';
+    }
+  }
   h += '<div class="row" style="flex-wrap:wrap;gap:6px;margin-top:8px">';
   for (const p of PARTS) {
     const inj = b.injuries.find(i => i.part === p);

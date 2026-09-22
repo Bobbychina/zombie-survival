@@ -334,6 +334,8 @@ async function main() {
     // M66：建筑内部 —— 探针要能核对"平面图长什么样、房间锁/进度"而不去解析 DOM 文本
     interiorHost: interiorCore.interiorHost, interiorPlan: interiorCore.buildInterior,
     interiorSummary: interiorCore.summary, interiorOpen: interiorCore.openDecision,
+    // M68：身体状态接到动作上 —— 探针要能量"手臂伤后搜刮产出打折、头伤后视野少一圈"
+    scavMulOf: medical.scavMulOf, headVisionLoss: medical.headVisionLoss, scoutRadius: worldState.scoutRadius,
   });
   /* M8：存档完整性——必须在 L.boot() 读档之前看原始 JSON（loadGame 会 sanitize，夹取之后就查不出越界了）。
      M33：沙盒 iframe 里不做这套（那里压根不读主档，指纹校验会读出一个"别人的档"来）。 */

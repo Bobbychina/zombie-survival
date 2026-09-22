@@ -214,11 +214,46 @@ export function applyHit(
 }
 
 /* ── 惩罚与走路成本 ── */
-export interface BodyPenalty { hit: number; dodge: number; dmgMul: number; carryMul: number; moveMul: number; bleed: number; note: string[] }
+export interface BodyPenalty {
+  hit: number; dodge: number; dmgMul: number; carryMul: number; moveMul: number; bleed: number;
+  /** M68：搜刮产出倍率（手臂越坏越少）—— 用户路线图「手臂受伤 → 搜刮产出下降」 */
+  scavMul: number;
+  note: string[];
+}
+
+/* ── M68：把"伤"接到动作上（用户 2026-09-22 的硬核化路线图 短期第 1 项）──
+   在此之前部位伤只影响命中/闪避/走路/负重/伤害，玩家在楼里翻东西、在野外探路时**感受不到**胳膊和脑袋的伤。
+   这两条都做成**平滑的**（按部位血量连续变化，不是"伤了就砍一半"），并且有下限：
+   手臂再烂也能翻到东西，头再晕也至少看得见 1 圈（见 scoutRadius）。 */
+/** 读部位血量：不是有限数就当**满血**（坏档/老档缺字段时不该反过来惩罚玩家） */
+function partVal(v: unknown, dflt = 100): number {
+  const n = Number(v);
+  return isFinite(n) ? Math.max(0, Math.min(100, n)) : dflt;
+}
+export function armFactor(b: BodyState): number {
+  return (partVal(b.parts.armL) + partVal(b.parts.armR)) / 200;
+}
+/** 搜刮产出倍率：双手满血 = 1.00，双手报废 = 0.45（下限） */
+export function scavMulOf(b: BodyState | null | undefined): number {
+  if (!b || !b.parts) return 1;
+  return Math.round(Math.max(0.45, Math.min(1, 0.45 + 0.55 * armFactor(b))) * 100) / 100;
+}
+/** 头部伤 → 视野少几圈：头 < 55 或有脑震荡 = 少 1 圈（不叠加，永远保留 1 圈） */
+export function headVisionLoss(b: BodyState | null | undefined): number {
+  if (!b || !b.parts) return 0;
+  const head = Number(b.parts.head);
+  const concuss = Array.isArray(b.injuries) && b.injuries.some(i => i && i.id === 'concuss' && !i.done);
+  return (isFinite(head) && head < 55) || concuss ? 1 : 0;
+}
+
+/** 搜刮产出落到整数：**至少 1**（"翻半天一无所获"应该由掷点决定，不该由手臂伤势决定） */
+export function scavYield(base: number, mul: number): number {
+  return Math.max(1, Math.round(base * (isFinite(mul) ? mul : 1)));
+}
 
 /** 合并所有伤病的惩罚（未处理的比处理过的更重：急救 −60%、手术 −80%） */
 export function bodyPenalty(b: BodyState): BodyPenalty {
-  const out: BodyPenalty = { hit: 0, dodge: 0, dmgMul: 1, carryMul: 1, moveMul: 1, bleed: 0, note: [] };
+  const out: BodyPenalty = { hit: 0, dodge: 0, dmgMul: 1, carryMul: 1, moveMul: 1, bleed: 0, scavMul: 1, note: [] };
   for (const i of b.injuries) {
     const d = INJURIES[i.id];
     if (!d) continue;
@@ -236,6 +271,7 @@ export function bodyPenalty(b: BodyState): BodyPenalty {
   out.dmgMul = Math.max(0.4, out.dmgMul);
   out.carryMul = Math.max(0.35, out.carryMul);
   out.moveMul = Math.min(2.2, out.moveMul);
+  out.scavMul = scavMulOf(b);
   return out;
 }
 
@@ -341,5 +377,7 @@ export function hudLine(b: BodyState): string {
   if (p.hit < -0.01) parts.push('命中 -' + Math.round(-p.hit * 100) + '%');
   if (p.dodge < -0.01) parts.push('闪避 -' + Math.round(-p.dodge * 100) + '%');
   if (p.moveMul > 1.05) parts.push('走路 +' + travelExtra(b) + ' 行动力');
+  if (p.scavMul < 0.95) parts.push('搜刮产出 -' + Math.round((1 - p.scavMul) * 100) + '%');   // M68：手臂
+  if (headVisionLoss(b)) parts.push('视野 -1 圈');                                            // M68：头部
   return b.injuries.map(i => INJURIES[i.id].icon + PART_INFO[i.part].name + INJURIES[i.id].name).join(' ') + '（' + parts.join(' · ') + '）';
 }

@@ -15,6 +15,7 @@ import {
   openDecision, roomState, roomStatus, rollRoomLoot, summary,
   type InteriorPlan, type InteriorState, type RoomDef,
 } from './interior-core';
+import { scavMulOf, scavYield } from './medical-core';      // M68：手臂伤 → 楼里也翻得更少
 
 const OV = 'v4i-overlay';
 let cur: { plan: InteriorPlan; st: InteriorState; key: string; poiId: string; danger: number; s: any; b: any } | null = null;
@@ -224,7 +225,7 @@ export const V4Interior = {
     L.addXP('survival', 2);
     if (L.S.hp <= 0) { close(); L.gameOver('你的身体先一步投降了。'); return false; }
     if (left <= 0) {                                     // 这地方被搜空了：只剩刮材料（与门口快搜同口径）
-      const d = Math.max(1, Math.round(L.ri(1, 2) + c.danger * 0.6));
+      const d = scavYield(Math.max(1, Math.round(L.ri(1, 2) + c.danger * 0.6)), scavMulOf((L.S as any).body));
       L.S.mat += d;
       L.log('🧹 ' + room.icon + esc(room.name) + '也早被翻空了，你只刮出 ' + d + ' 份材料。', 'loot');
       note('🧹 ' + room.name + '也被翻空了 —— 只刮出 ' + d + ' 份材料', 'dim');
@@ -249,7 +250,7 @@ export const V4Interior = {
         note('🔑 翻到一把楼门钥匙（加固门能开了）', 'success');
         continue;
       }
-      const n = id === 'ammo' ? L.ri(4, 10) : (Math.random() < 0.25 ? 2 : 1);
+      const n = id === 'ammo' ? L.ri(4, 10) : (Math.random() < 0.25 * scavMulOf((L.S as any).body) ? 2 : 1);   // M68：手臂伤 → 难得双份
       L.grant(id, n);
       L.sfx('loot');
       L.log('📦 ' + L.itemName(id) + ' ×' + n, 'loot');

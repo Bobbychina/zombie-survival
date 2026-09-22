@@ -6,11 +6,22 @@ import { POIS } from './pois';
 import { bkey } from './worldgen';
 import { zoneOfPoi, type SaveWorld } from './worldstate';
 import { foesFor, matYield, pickLoot, rollSearchKind, searchWeights, tallySearch } from './search-core';
+import { scavMulOf, scavYield } from './medical-core';        // M68：手臂伤 → 搜刮产出下降
 import { GEAR_HOSTS, MAT_MUL_DEEP, MAT_MUL_NORMAL, pickGear } from './env-core';
 import type { Block } from '../types';
 
 export { rollSearchKind, searchWeights, pickLoot, foesFor, matYield, tallySearch } from './search-core';
 export type { SearchKind, SearchWeights } from './search-core';
+
+/** M68：这件"手上有伤"的提示只发一次，别在日志里刷屏 */
+let lastScavNote = -1;
+function scavNote(scav: number): string {
+  if (scav >= 0.95) return '';
+  const pct = Math.round((1 - scav) * 100);
+  if (lastScavNote === pct) return '';
+  lastScavNote = pct;
+  return '（手臂有伤：翻东西的效率 -' + pct + '%）';
+}
 
 export function poiLeft(block: Block, sw: SaveWorld): number {
   const poi = block.poi ? POIS[block.poi] : null;
@@ -46,8 +57,8 @@ export function searchPoi(block: Block, sw: SaveWorld, deep: boolean): boolean {
      怎么搜都推不动「去药房翻一趟」的委托（用户报障：搜了药店但任务不完成）。 */
   tallySearch(S.stats, (sw.regionZones = sw.regionZones || {}), sw.region, block.poi!, zone, deep);
   if (left <= 0) {
-    // 搜空的 POI 不再产出好东西，但还能刮出一点材料（不让玩家白跑一趟）
-    const d = Math.max(1, Math.round(L.ri(1, 2) + block.danger * 0.6));
+    // 搜空的 POI 不再产出好东西，但还能刮出一点材料（不让玩家白跑一趟）；M68：同样受手臂伤影响
+    const d = scavYield(Math.max(1, Math.round(L.ri(1, 2) + block.danger * 0.6)), scavMulOf((L.S as any).body));
     S.mat += d; L.tickVitals(0.5); L.sfx('loot');
     L.log('🧹 ' + poi.icon + poi.name + '已经被翻得底朝天，你只刮出 ' + d + ' 份材料。' +
       '（这一趟照样记进任务进度）', 'loot');
@@ -97,6 +108,7 @@ export function searchPoi(block: Block, sw: SaveWorld, deep: boolean): boolean {
   }
 
   const stealth = L.skillBonus('stealth', 0.04, 0.32);
+  const scav = scavMulOf((L.S as any).body);          // M68：手臂伤 → 产出打折（下限 0.45，永远翻得到东西）
   const kind = rollSearchKind(Math.random, searchWeights(block.poi!, block.danger, deep, stealth));
   switch (kind) {
     case 'fight': {
@@ -108,8 +120,8 @@ export function searchPoi(block: Block, sw: SaveWorld, deep: boolean): boolean {
     }
     case 'item': {
       const id = pickLoot(Math.random, poi.loot, k => k === 'ammo' || !!L.ITEMS[k]);   // ammo 不在 ITEMS 里，是独立计数
-      if (!id) { const m = L.ri(3, 7); S.mat += m; L.log('🔩 只翻出一堆废料（+' + m + ' 材料）。', 'loot'); break; }
-      const n = id === 'ammo' ? L.ri(6, 14) : (Math.random() < 0.25 ? 2 : 1);
+      if (!id) { const m = scavYield(L.ri(3, 7), scav); S.mat += m; L.log('🔩 只翻出一堆废料（+' + m + ' 材料）。' + scavNote(scav), 'loot'); break; }
+      const n = id === 'ammo' ? L.ri(6, 14) : (Math.random() < 0.25 * scav ? 2 : 1);   // M68：手上有伤就难得翻到双份
       L.grant(id, n);
       L.sfx('loot');
       trail(sw, '📦 ' + poi.name + '：' + L.itemName(id) + ' ×' + n);
@@ -118,9 +130,10 @@ export function searchPoi(block: Block, sw: SaveWorld, deep: boolean): boolean {
     case 'mats': {
       // M6/P01：材料产出 ×1.3（普通）/ ×1.5（深搜）——深搜本身多花 1 AP 且更危险，这就是代价
       // M7.1：建材类 POI（家具城/五金建材城/建材市场/物流园…）额外多给 matBonus——用户反馈建材偏少
-      const m = matYield(Math.random, block.danger, deep, poi.matBonus ?? 0, MAT_MUL_NORMAL, MAT_MUL_DEEP);
+      // M68：再乘**手臂伤**的产出倍率（下限 0.45 —— 手断了也能翻出东西，只是少）
+      const m = scavYield(matYield(Math.random, block.danger, deep, poi.matBonus ?? 0, MAT_MUL_NORMAL, MAT_MUL_DEEP), scav);
       S.mat += m; L.sfx('loot');
-      L.log('🔩 你撬开一堆残骸，回收了 ' + m + ' 份材料。', 'loot');
+      L.log('🔩 你撬开一堆残骸，回收了 ' + m + ' 份材料。' + scavNote(scav), 'loot');
       break;
     }
     case 'food': {
