@@ -56,15 +56,18 @@ await ev(`(() => { try {
 await send('Page.navigate', { url: BOOT }); await bootWait(); await sleep(900)
 await ev(`(() => { try { localStorage.setItem('dsh.tutorial.done','1'); } catch(e){}; closeAllModals(); setTab('explore'); S.over = false; S.ap = 40; render(); return 1 })()`)
 
-/** 找一块能搜刮的空地/POI：优先 danger 0 的建材类（材料档收益稳定），找不到就用任意 POI */
+/** 找一块"没有 feat 加成、危险 ≤1"的点位：Math.random 钉成 0.5 时 rollSearchKind 会落到**材料档**
+    （weights: fight 0.28+0.045d / item 0.17 / mats 0.20 …；r=0.5×total 正好落进 mats 那一桶） */
 const spot = await j(`(() => {
   const ws = V4.worldstate, s = ws.ensureSaveWorld(S);
   const w = ws.worldOf(s.seed, s.region);
-  const all = Object.values(w.blocks).filter(b => b && b.poi);
-  const pick = all.find(b => b.poi === 'hardware' || b.poi === 'buildmart' || b.poi === 'warehouse') || all.find(b => b.danger <= 1) || all[0];
+  const okPoi = (id) => { const p = V4.POIS[id]; return p && !p.feat && p.danger <= 0 ? 2 : (p && !p.feat && p.danger === 1 ? 1 : 0) };
+  const all = Object.values(w.blocks).filter(b => b && b.poi && okPoi(b.poi));
+  all.sort((a, b) => okPoi(b.poi) - okPoi(a.poi) || a.danger - b.danger);
+  const pick = all[0];
   return JSON.stringify(pick ? { x: pick.x, y: pick.y, poi: pick.poi, danger: pick.danger } : null);
 })()`)
-if (!spot) { console.log('FAIL 这一局找不到可搜刮的点'); process.exit(1) }
+if (!spot) { console.log('FAIL 这一局找不到"无 feat 加成"的可搜刮点'); process.exit(1) }
 console.log('  目标点位: ' + JSON.stringify(spot))
 await ev(`(() => { V4World.teleport(${spot.x}, ${spot.y}); return 1 })()`)
 await sleep(400)
@@ -74,24 +77,25 @@ await sleep(400)
 const runSearch = async (arms, apTop) => j(`(() => {
   const real = Math.random;
   try {
-    Math.random = () => 0.5;                        // rollSearchKind 在 danger 0 时会落到 'mats'
+    Math.random = () => 0.5;                        // 钉住掷点：材料档 + 可复现的材料数量
     S.ap = ${apTop}; S.hp = S.hpMax;
     const b = (S.body = S.body || { parts: {}, injuries: [], bleedSince: 0 });
     b.parts.armL = ${arms}; b.parts.armR = ${arms};
     if (!Array.isArray(b.injuries)) b.injuries = [];
-    const before = S.mat;
+    const before = S.mat, logBefore = (S.logBuf || []).length;
     const ws = V4.worldstate, s = ws.ensureSaveWorld(S);
     s.left['${spot.x},${spot.y}'] = 9;              // 保证不是"搜空只剩材料"那条分支
     V4World.search(0);
-    return JSON.stringify({ mat: S.mat - before, ap: S.ap });
+    const lines = (S.logBuf || []).slice(logBefore).map(p => String(p[1]));
+    return JSON.stringify({ mat: S.mat - before, hit: lines.some(l => /回收了 \\d+ 份材料/.test(l)), msg: lines.find(l => /回收了|废料|引了过来|翻出/.test(l)) || '' });
   } finally { Math.random = real }
 })()`)
 
 const healthy = await runSearch(100, 40)
 const broken = await runSearch(0, 40)
 console.log('  同一掷点：健康 ' + JSON.stringify(healthy) + ' · 双手报废 ' + JSON.stringify(broken))
-ok('① 手臂报废时**同一次搜索**的材料产出确实更少', broken.mat < healthy.mat && healthy.mat > 0 && broken.mat >= 1,
-  '健康 ' + healthy.mat + ' → 手臂报废 ' + broken.mat)
+ok('① 同一次搜索里，手臂报废的材料产出确实更少（且走的是材料档）',
+  healthy.hit && broken.hit && broken.mat < healthy.mat, '健康 ' + healthy.mat + ' → 手臂报废 ' + broken.mat + '（' + (broken.msg || '') + '）')
 ok('③ 下限保护：手全废也翻得到东西（≥1 份材料）', broken.mat >= 1, 'broken=' + broken.mat)
 
 const muls = await j(`(() => JSON.stringify({
@@ -104,9 +108,9 @@ const muls = await j(`(() => JSON.stringify({
 }))()`)
 ok('① 公式：100%→1.00 / 50%→0.725 / 0%→0.45，坏档兜底 1.00', muls.healthy === 1 && muls.hurt === 0.45 && muls.half > 0.7 && muls.half < 0.75 && muls.junk === 1, JSON.stringify(muls))
 
-/* ② 视野：默认 1 圈 = 3×3；把侦查技能点到 Lv3（2 圈）再看头伤前后 */
-const revealCount = () => ev(`(() => { const ws = V4.worldstate, s = ws.ensureSaveWorld(S); const w = ws.worldOf(s.seed, s.region);
-  return Object.values(w.blocks).filter(b => b && b.revealed).length })()`)
+/* ② 视野：默认 1 圈 = 3×3；侦查 Lv3 = 2 圈（5×5）；头伤时掉回 1 圈。
+   量"点亮了多少格"必须在**同一个世界实例**里数，而且要换个中心 —— 否则第二次会数到上一次点亮的地盘
+   （第一版就是这么错判的：gain 出现负数）。 */
 const radiusProbe = async (head, skill, cx) => {
   await ev(`(() => { S.skills = S.skills || {}; S.skills.scout = ${skill};
     S.body = S.body || { parts: {}, injuries: [], bleedSince: 0 };
@@ -114,18 +118,26 @@ const radiusProbe = async (head, skill, cx) => {
     S.body.injuries = ${head < 55 ? "[{ part: 'head', id: 'concuss', day: S.day }]" : '[]'};
     return 1 })()`)
   const r = Number(await ev(`(() => V4Debug.scoutRadius())()`))
-  const before = Number(await revealCount())
-  await ev(`(() => { const ws = V4.worldstate, s = ws.ensureSaveWorld(S);
-    /* 直接走 markVisited 那条路：和玩家走一格点亮的效果一致（两块探针各自用不同的坐标，避免互相污染） */
-    ws.markVisited(V4.worldstate.worldOf(s.seed, s.region), s, ${cx}, 10); return 1 })()`)
-  const after = Number(await revealCount())
-  return { r, gain: after - before }
+  /* 走 markVisited 那条路（和玩家走一格点亮的效果一致），数**这一次新点亮**了多少格：
+     before/after 都在同一次调用里取，越界与永不点亮的格子两边都算 0，自动抵消（不依赖"点亮形状是正方形"这个假设） */
+  const lit = Number(await ev(`(() => {
+    const ws = V4.worldstate, s = ws.ensureSaveWorld(S), w = ws.worldOf(s.seed, s.region);
+    const cx = ${cx}, cy = 12;
+    const count = () => { let n = 0;
+      for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) {
+        const b = w.blocks[(cx + dx) + ',' + (cy + dy)]; if (b && b.revealed) n++;
+      } return n };
+    const before = count();
+    ws.markVisited(w, s, cx, cy);
+    return count() - before })()`))
+  return { r, lit }
 }
-const vHealthy = await radiusProbe(100, 3, 1)
-const vHurt = await radiusProbe(30, 3, 4)
+const vHealthy = await radiusProbe(100, 3, 10)
+const vHurt = await radiusProbe(30, 3, 17)
 console.log('  视野：健康 ' + JSON.stringify(vHealthy) + ' · 头伤 ' + JSON.stringify(vHurt))
-ok('② 头伤让视野少一圈（圈数 2→1，且新点亮的格子变少）',
-  vHealthy.r === 2 && vHurt.r === 1 && vHurt.gain < vHealthy.gain, JSON.stringify({ healthy: vHealthy, hurt: vHurt }))
+ok('② 头伤让视野少一圈（圈数 2→1，这一步新点亮的格子明显变少）',
+  vHealthy.r === 2 && vHurt.r === 1 && vHurt.lit > 0 && vHealthy.lit > vHurt.lit,
+  JSON.stringify({ healthy: vHealthy, hurt: vHurt }))
 await ev(`(() => { S.skills.scout = 0; return 1 })()`)
 ok('③ 下限：没点侦查技能（1 圈）+ 头伤，仍然是 1 圈（不能瞎）', Number(await ev(`(() => V4Debug.scoutRadius())()`)) === 1)
 
