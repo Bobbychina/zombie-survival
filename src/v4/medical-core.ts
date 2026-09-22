@@ -124,7 +124,9 @@ export const INJURIES: Record<InjuryId, InjuryDef> = {
 export const INJURY_IDS = Object.keys(INJURIES) as InjuryId[];
 
 /* ── 状态与生成 ── */
-export interface Injury { part: BodyPart; id: InjuryId; day: number; /** 已手术，正在康复 */ done?: boolean; /** 已急救（临时处理） */ field?: boolean }
+export interface Injury { part: BodyPart; id: InjuryId; day: number; /** 已手术，正在康复 */ done?: boolean; /** 已急救（临时处理） */ field?: boolean;
+  /** M69：这处感染伤口最近一次吃抗生素的日子（当天不再推进） */
+  suppressDay?: number }
 export interface BodyState {
   /** 部位 → 生命（0~100 的相对值；总 HP 换算成绝对血量时乘以 hpMax/100） */
   parts: Record<BodyPart, number>;
@@ -295,6 +297,14 @@ export function treat(b: BodyState, part: BodyPart, itemId: string, day: number,
   const next: BodyState = { parts: { ...b.parts }, injuries: b.injuries.map(i => ({ ...i })), bleedSince: b.bleedSince };
   const t = next.injuries.find(i => i.part === part)!;
 
+  /* M69：抗生素**不是**一次性的急救，而是"今天压住"——可以每天吃一次，一直吃到能上台清创为止 */
+  if (inj.id === 'infected' && itemId === 'anti') {
+    if (t.done) return { ok: false, why: '这处伤口已经清创了，不用再吃抗生素' };
+    if (t.suppressDay === day) return { ok: false, why: '今天已经吃过抗生素了（一天一次就够）' };
+    t.suppressDay = day;
+    return { ok: true, body: next, log: '💊 抗生素压住了' + PART_INFO[part].name + '的炎症：今晚伤口不会推进（根治仍要上消毒剂清创）。' };
+  }
+
   if (d.field === itemId) {
     if (t.field) return { ok: false, why: PART_INFO[part].name + '已经做过急救了' };
     t.field = true;
@@ -322,35 +332,100 @@ export function treatOptions(b: BodyState, part: BodyPart): { item: string; kind
   if (!inj) return [];
   const d = INJURIES[inj.id];
   const out: { item: string; kind: 'field' | 'surgery'; done: boolean }[] = [];
+  /* M69：感染伤口可以**每天**吃一次抗生素压制（不是一次性的急救），所以 done 永远 false */
+  if (inj.id === 'infected' && !inj.done) out.push({ item: 'anti', kind: 'field', done: false });
   if (d.field) out.push({ item: d.field, kind: 'field', done: !!inj.field });
   if (d.surgery) out.push({ item: d.surgery, kind: 'surgery', done: !!inj.done });
   return out;
+}
+
+/* ── M69：感染链（伤口 ↔ 全身感染咬合） ──
+   在此之前项目里有**两条互不相干**的感染：
+     ① legacy 的 `S.infect`（0~100：≥35 警戒 / ≥60 每晚 +2 / 满 100 死；抗生素 -25）
+     ② v4 部位伤里的「感染伤口」（要消毒剂清创手术，否则一直挂着减命中闪避）
+   带一处感染伤口过夜，全身感染值居然可以**照样自然消退** —— 这正是用户文档说的"系统之间不咬合"。
+   现在咬合：伤口在往血里灌（每晚 +4/处，且**不再消退**）；抗生素能压住当晚（伤口不推进），
+   感染到爆发期（≥60）则伤口康复暂停（见 tickBody）。 */
+export function openInfectedWounds(b: BodyState | null | undefined): Injury[] {
+  if (!b || !Array.isArray(b.injuries)) return [];
+  return b.injuries.filter(i => i && i.id === 'infected' && !i.done);
+}
+/** 今天是不是已经吃过抗生素压这处伤口（treat 里写的 suppressDay） */
+export function isSuppressedToday(b: BodyState | null | undefined, day: number): boolean {
+  if (!b || !Array.isArray(b.injuries)) return false;
+  return b.injuries.some(i => i && i.id === 'infected' && !i.done && i.suppressDay === day);
+}
+export interface InfectNightInput { infect: number; openWounds: number; hun: number; thi: number; medicLv: number; suppressedToday: boolean }
+export interface InfectNightResult { infect: number; logs: { text: string; kind: string }[]; woundPush: number }
+/** 过夜时全身感染值怎么变（纯函数，legacy 的夜晚结算通过 `window.__v4InfectNight` 调它） */
+export function infectNight(i: InfectNightInput): InfectNightResult {
+  const logs: { text: string; kind: string }[] = [];
+  let n = Math.max(0, Math.min(100, Number(i.infect) || 0));
+  const wounds = Math.max(0, Math.floor(i.openWounds) || 0);
+  if (n <= 0 && wounds === 0) return { infect: 0, logs, woundPush: 0 };   // 干净的身子：不留噪音日志
+  if (wounds > 0 && !i.suppressedToday) {
+    const push = 4 * wounds;
+    n = Math.min(100, n + push);
+    logs.push({ text: '🦠 ' + wounds + ' 处感染伤口在往血里灌：感染 +' + push + '（抗生素能压住当晚，清创才能根治）。', kind: 'danger' });
+    return { infect: n, logs, woundPush: push };
+  }
+  if (wounds > 0 && i.suppressedToday) {
+    logs.push({ text: '💊 抗生素压住了伤口炎症：今晚伤口没有推进（感染的消退照常）。', kind: 'info' });
+  }
+  if (n >= 60) {
+    n = Math.min(100, n + 2);
+    logs.push({ text: '🦠 感染进入爆发期（+2%）。你开始听见不属于自己的声音。', kind: 'danger' });
+  } else if (i.hun > 25 && i.thi > 25) {
+    const dec = 1 + Math.floor(Math.max(0, i.medicLv) / 3);
+    n = Math.max(0, n - dec);
+    logs.push({ text: '💉 身体在夜里压下了 ' + dec + ' 点感染。', kind: 'info' });
+  } else {
+    n = Math.min(100, n + 1);
+    logs.push({ text: '🦠 虚弱让感染又推进了 1 点。', kind: 'danger' });
+  }
+  return { infect: n, logs, woundPush: 0 };
+}
+/** 人体页/HUD 那一行的感染总览：两条链并排说清 */
+export function infectionLine(infect: number, b: BodyState | null | undefined): string {
+  const wounds = openInfectedWounds(b).length;
+  const n = Math.max(0, Math.min(100, Number(infect) || 0));
+  const tier = n >= 60 ? '爆发期' : n >= 35 ? '警戒' : '潜伏';
+  return '🦠 感染 ' + Math.round(n) + '%（' + tier + '）' +
+    (wounds ? ' · ' + wounds + ' 处伤口没清创（每晚 +' + 4 * wounds + '）' : '');
 }
 
 /* ── 推进：出血掉血 + 康复 ── */
 export interface TickResult { body: BodyState; hp: number; healed: string[]; logs: string[] }
 
 /** 每 tick（若干行动）走一次：出血扣血；手术过的伤按天数康复 */
-export function tickBody(b: BodyState, day: number, opts: { nutrition: number; resting?: boolean } = { nutrition: 100 }): TickResult {
+export function tickBody(
+  b: BodyState,
+  day: number,
+  opts: { nutrition: number; resting?: boolean; infect?: number } = { nutrition: 100 },
+): TickResult {
   const next: BodyState = { parts: { ...b.parts }, injuries: b.injuries.map(i => ({ ...i })), bleedSince: b.bleedSince };
   const logs: string[] = [], healed: string[] = [];
   let hp = 0;
   const p = bodyPenalty(next);
   if (p.bleed > 0) hp -= Math.max(1, Math.round(p.bleed));
+  /* M69：全身感染到爆发期（≥60%）时**康复暂停** —— 身体没余力长伤口。
+     这是"两条感染链咬合"的一半：伤口拖着全身感染，全身感染又让伤口好不了。 */
+  const tooSick = Number(opts.infect) >= 60;
+  if (tooSick && next.injuries.some(i => i.done)) logs.push('⚠️ 感染到了爆发期：伤口今晚没能长（先压住感染再养伤）。');
   for (const i of next.injuries.slice()) {
     const d = INJURIES[i.id];
     /* 部位血量随康复回一点（康复速度：营养 >70 才回；睡觉翻倍） */
     if (i.done) {
-      const rate = (opts.nutrition >= 70 ? 1 : 0) * (opts.resting ? 2 : 1);
+      const rate = tooSick ? 0 : (opts.nutrition >= 70 ? 1 : 0) * (opts.resting ? 2 : 1);
       if (rate > 0) next.parts[i.part] = Math.min(100, next.parts[i.part] + rate);
       const days = day - i.day;
-      if (days >= d.recoverDays) {
+      if (!tooSick && days >= d.recoverDays) {
         next.injuries = next.injuries.filter(x => x !== i);
         healed.push(PART_INFO[i.part].name + d.name);
       }
     } else if (i.field && !d.surgery) {
       /* 急救过的**非手术类**伤（小出血/烧伤）：时间够就自己长好（慢一点） */
-      if (day - i.day >= d.recoverDays + 2) { next.injuries = next.injuries.filter(x => x !== i); healed.push(PART_INFO[i.part].name + d.name); }
+      if (!tooSick && day - i.day >= d.recoverDays + 2) { next.injuries = next.injuries.filter(x => x !== i); healed.push(PART_INFO[i.part].name + d.name); }
     }
   }
   if (healed.length) logs.push('✅ 康复：' + healed.join('、'));

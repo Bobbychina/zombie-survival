@@ -10,7 +10,8 @@
  */
 import { L } from '../main';
 import {
-  INJURIES, PARTS, PART_INFO, applyHit, bodyFromHp, bodyPenalty, bodySummary, headVisionLoss, hudLine,
+  INJURIES, PARTS, PART_INFO, applyHit, bodyFromHp, bodyPenalty, bodySummary, headVisionLoss, hudLine, infectNight,
+  infectionLine, isSuppressedToday, openInfectedWounds,
   scavMulOf, tickBody, travelExtra, treat, treatOptions, type BodyPart, type BodyState,
 } from './medical-core';
 import { envOf, seasonNow, tempPenalty, weatherNow } from './env';
@@ -20,6 +21,11 @@ import { CONDS, COND_CURE, COND_IDS, condPenaltyText, humBand, humLine } from '.
 import { radSymptomTable, radSymptomText, radSymptoms } from './rad-core';
 /* M68：探针与 HUD 也要读这两条"伤 → 动作"的换算，从 medical 这一层透出去（V4Debug 用） */
 export { headVisionLoss, scavMulOf, scavYield } from './medical-core';
+/* M69：感染链的纯函数出口（legacy 夜晚结算、HUD、探针共用） */
+export { infectNight, infectionLine, openInfectedWounds } from './medical-core';
+/** M69 钩子：legacy 的 sleepNight 里那段感染涨落改走这里（拿不到就退回老逻辑） */
+export const infectNightHook = infectNightNow;
+if (typeof window !== 'undefined') (window as any).__v4InfectNight = () => infectNightNow();
 
 let steps = 0;
 const STEPS_PER_BODY_TICK = 4;                 // 与 survival 同一个节奏：每 4 步走一次病程
@@ -78,12 +84,32 @@ export function nightBody(): void {
   const S = L.S as any;
   steps = STEPS_PER_BODY_TICK;                 // 让下一次 stepBody 立刻结算（而不是被节流吞掉）
   const b = bodyNow();
-  const r = tickBody(b, Number(S.day) || 1, { nutrition: Number(S.hun) || 0, resting: true });
+  const r = tickBody(b, Number(S.day) || 1, { nutrition: Number(S.hun) || 0, resting: true, infect: Number(S.infect) || 0 });
   setBody(r.body);
   if (r.hp < 0) S.hp = Math.max(0, Number(S.hp) + r.hp);
   for (const line of r.logs) L.log(line, 'success');
   steps = 0;
 }
+
+/* ── M69：把"感染伤口"接到"全身感染值"上 ──
+   legacy 的夜晚结算（sleepNight 里那段 S.infect 的涨落）通过这个钩子走 v4 的纯函数：
+   带着没清创的伤口过夜 → 感染 +4/处且**不再自然消退**；吃过抗生素 → 当晚不推进。 */
+export function infectNightNow(): { infect: number; logs: { text: string; kind: string }[]; woundPush: number } {
+  const S = L.S as any;
+  const b = bodyNow();
+  const day = Number(S.day) || 1;
+  const r = infectNight({
+    infect: Number(S.infect) || 0,
+    openWounds: openInfectedWounds(b).length,
+    hun: Number(S.hun) || 0,
+    thi: Number(S.thi) || 0,
+    medicLv: Number(S.skills?.medic) || 0,
+    suppressedToday: isSuppressedToday(b, day),
+  });
+  S.infect = r.infect;
+  return r;
+}
+export const infectionStatus = (): string => infectionLine(Number((L.S as any).infect) || 0, bodyNow());
 
 /* ── 给 legacy / HUD / 探针用的查询 ── */
 export const bodyStatus = () => {
@@ -302,6 +328,8 @@ export function renderBodyTab(): string {
   h += '<div style="flex:1;min-width:260px">';
   h += '<h3>🩺 人体状态</h3>';
   h += '<div class="hint">' + esc(sum.text) + '</div>';
+  /* M69：把「全身感染值」和「没清创的伤口」并排写出来 —— 玩家才知道"再拖一晚要掉多少" */
+  h += '<div class="hint" style="color:#b98ad8">' + esc(infectionStatus()) + '</div>';
   /* 双轨制的说明：单条 HP 管生死、部位伤管能力（用户选的那条） */
   h += '<div class="hint">生命条决定<b>生死</b>（归零即倒）；下面的部位伤只影响<b>能力与行动</b>：' +
     '命中 ' + (pen.hit ? Math.round(pen.hit * 100) + '%' : '正常') +

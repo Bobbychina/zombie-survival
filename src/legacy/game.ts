@@ -1665,18 +1665,23 @@ function sleepNight(){
   S.hp = Math.min(S.hpMax, S.hp + bedHeal);
   log('😴 睡了 ' + (atBase ? (S.base.bed ? '行军床' : '地板') : '露天') + '，恢复 ' + bedHeal + ' 生命、全部体力。' +
     (sleepHealMul(S.hun, S.thi) < 1 ? '（空腹/脱水：只恢复四分之一）' : ''),'success');
-  // 感染自然消退 / 爆发
-  if(S.infect > 0){
-    if(S.infect >= 60){
-      S.infect = Math.min(100, S.infect + 2);
-      log('🦠 感染进入爆发期（+2%）。你开始听见不属于自己的声音。','danger');
-    } else if(S.hun > 25 && S.thi > 25){   // C08：消退阈值 45 → 25，拆掉 18~45 之间的纯惩罚区
-      const dec = 1 + Math.floor(S.skills.medic / 3);
-      S.infect = Math.max(0, S.infect - dec);
-      log('💉 身体在夜里压下了 ' + dec + ' 点感染。','info');
-    } else {
-      S.infect = Math.min(100, S.infect + 1);
-      log('🦠 虚弱让感染又推进了 1 点。','danger');
+  // 感染自然消退 / 爆发（M69：改走 v4 的钩子 —— 带着没清创的感染伤口过夜，感染**不再消退**而是 +4/处）
+  {
+    const im = (typeof window !== 'undefined' && window.__v4InfectNight) ? window.__v4InfectNight() : null;
+    if(im && im.logs){
+      for(const l of im.logs) log(l.text, l.kind);
+    } else if(S.infect > 0){
+      if(S.infect >= 60){
+        S.infect = Math.min(100, S.infect + 2);
+        log('🦠 感染进入爆发期（+2%）。你开始听见不属于自己的声音。','danger');
+      } else if(S.hun > 25 && S.thi > 25){   // C08：消退阈值 45 → 25，拆掉 18~45 之间的纯惩罚区
+        const dec = 1 + Math.floor(S.skills.medic / 3);
+        S.infect = Math.max(0, S.infect - dec);
+        log('💉 身体在夜里压下了 ' + dec + ' 点感染。','info');
+      } else {
+        S.infect = Math.min(100, S.infect + 1);
+        log('🦠 虚弱让感染又推进了 1 点。','danger');
+      }
     }
   }
   // 据点产出（v3.0：断水断电后净水器要烧燃料；菜园改为产新鲜蔬菜，会烂）

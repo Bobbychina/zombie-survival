@@ -305,6 +305,8 @@ async function main() {
     stepBody: medical.stepBody, nightBody: medical.nightBody, onPlayerHurt: medical.onPlayerHurt,
     status: medical.bodyStatus, penaltyNow: medical.bodyPenaltyNow, bodyPenaltyNow: medical.bodyPenaltyNow,
     travelExtra: medical.bodyTravelExtra, hudLine: medical.bodyHudLine, bodyNow: medical.bodyNow,
+    /* M69：感染链 —— 人体页/HUD/探针读同一行总览；夜晚结算走 window.__v4InfectNight（legacy 那边调） */
+    infection: medical.infectionStatus, infectNight: medical.infectNightHook,
     guideHtml: medical.guideHtml,                  // M50：治疗指南（图鉴 → 📘 治疗指南）
   };
   /* M50：图鉴里的「治疗指南」由 v4 渲染（legacy 的 renderCodex 只留一个调用点） */
@@ -336,6 +338,8 @@ async function main() {
     interiorSummary: interiorCore.summary, interiorOpen: interiorCore.openDecision,
     // M68：身体状态接到动作上 —— 探针要能量"手臂伤后搜刮产出打折、头伤后视野少一圈"
     scavMulOf: medical.scavMulOf, headVisionLoss: medical.headVisionLoss, scoutRadius: worldState.scoutRadius,
+    // M69：感染链 —— 探针要能核对"伤口过夜感染不消退而是 +4/处、抗生素能压住当晚"
+    infectNight: medical.infectNightHook, infectionLine: medical.infectionStatus,
   });
   /* M8：存档完整性——必须在 L.boot() 读档之前看原始 JSON（loadGame 会 sanitize，夹取之后就查不出越界了）。
      M33：沙盒 iframe 里不做这套（那里压根不读主档，指纹校验会读出一个"别人的档"来）。 */
