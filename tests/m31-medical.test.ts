@@ -112,7 +112,9 @@ describe('M31 人体：惩罚与治疗链', () => {
       const part = INJURIES[id].parts ? INJURIES[id].parts![0] : 'torso';
       b.injuries.push({ part, id, day: 1 });
       const opts = treatOptions(b, part);
-      expect(opts.length).toBe(INJURIES[id].field || INJURIES[id].surgery ? (INJURIES[id].field && INJURIES[id].surgery ? 2 : 1) : 0);
+      /* M69：感染伤口多一颗「💊 抗生素压制」（可反复点、每天一次），所以它的选项数比"字段/手术"那套多 1 */
+      const base = INJURIES[id].field || INJURIES[id].surgery ? (INJURIES[id].field && INJURIES[id].surgery ? 2 : 1) : 0;
+      expect(opts.length).toBe(base + (id === 'infected' ? 1 : 0));
       for (const o of opts) expect(o.item.length).toBeGreaterThan(2);
     }
   });

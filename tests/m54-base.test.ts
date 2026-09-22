@@ -37,10 +37,12 @@ describe('分区表', () => {
 });
 
 describe('scaledCost / defMaxOf', () => {
-  it('价目 = 基础价 ×(1+0.6×当前等级) 向上取整', () => {
+  /* M70：曲线从 ×(1+0.6×lv) 降到 ×(1+0.35×lv) —— 审计见 docs/BASE-REVIEW.md
+     （满级全设施的建材成本 2170 AP → 316 AP；第三级 2.2× → 1.7×） */
+  it('价目 = 基础价 ×(1+0.35×当前等级) 向上取整', () => {
     expect(scaledCost({ wood: 4, metal: 3 }, 0)).toEqual({ wood: 4, metal: 3 });
-    expect(scaledCost({ wood: 4, metal: 3 }, 1)).toEqual({ wood: 7, metal: 5 });
-    expect(scaledCost({ chip: 2 }, 3)).toEqual({ chip: 6 });
+    expect(scaledCost({ wood: 4, metal: 3 }, 1)).toEqual({ wood: 6, metal: 5 });     // ceil(5.4)=6 / ceil(4.05)=5
+    expect(scaledCost({ chip: 2 }, 3)).toEqual({ chip: 5 });                          // ceil(4.1)=5
   });
   it('升级只会更贵（不会出现"越升越便宜"这种反直觉）', () => {
     for (let lv = 0; lv < 3; lv++) {

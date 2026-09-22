@@ -448,7 +448,10 @@ await shot('04_lab_chapter3')
 
 /* 第 4 章 · 建造与据点：据点页建净水装置 + 工作台 → 睡一觉 */
 const boot4 = await switchChapter('base', 'lab-base-01')
-ok('第 4 章按预设开局：材料够、设施全空（要自己建）', boot4 && boot4.base && Object.values(boot4.base).every(v => !v), JSON.stringify({ base: boot4 && boot4.base }))
+/* M70：S.base 里多了回收台的记账字段（exDay/exUsed），不能再用 "所有值都为假" 来判断"设施全空" —— 只看设施键 */
+ok('第 4 章按预设开局：材料够、设施全空（要自己建）',
+  !!(boot4 && boot4.base) && ['door', 'bed', 'filter', 'garden', 'bench', 'storage', 'radio', 'wall'].every(k => !boot4.base[k]),
+  JSON.stringify({ base: boot4 && boot4.base }))
 await lab(`W.setTab('base'); W.render(); return 1;`); await sleep(1000)
 const bd = []
 for (const k of ['filter', 'bench']) {
