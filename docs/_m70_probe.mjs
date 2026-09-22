@@ -96,8 +96,8 @@ ok('③ 换 1：材料 -6、铁片 +1、当天额度记到 1/8',
 const bulk = await click('metal', 99)          // 界面上是「换满 (n)」；这里直接传一个足够大的数，验证服务端夹取
 await sleep(250)
 const afterBulk = await info()
-ok('③ 点「换满」会把额度一次顶到上限（8/8），不会超支', afterBulk.usedMetal === 8 && afterBulk.metal === before.mat - 6 * 8,
-  JSON.stringify({ used: afterBulk.usedMetal, mat: afterBulk.mat }))
+ok('③ 点「换满」会把额度一次顶到上限（8/8），不会超支', afterBulk.usedMetal === 8 && afterBulk.mat === before.mat - 6 * 8,
+  JSON.stringify({ used: afterBulk.usedMetal, okUsed: afterBulk.usedMetal === 8, mat: afterBulk.mat, expectMat: before.mat - 6 * 8, okMat: afterBulk.mat === before.mat - 6 * 8 }))
 const again = await click('metal', 1)
 ok('③ 额度用尽后按钮禁用（再说清楚是今天用完）', again === 'DISABLED' && String(await pageText()).indexOf('额度用完了') >= 0)
 
@@ -119,19 +119,36 @@ ok('⑤ 存档往返后额度还在（白名单 exDay/exUsed 真的生效）',
   afterLoad.usedMetal === beforeSave.usedMetal && afterLoad.usedMetal > 0 && afterLoad.exDay === afterLoad.day,
   JSON.stringify({ before: beforeSave.usedMetal, after: afterLoad.usedMetal }))
 
-/* ⑥ 升级曲线：门窗 Lv0 → Lv1 的价签 */
-const costText = async () => {
+/* ⑥ 升级曲线：门窗 Lv0 → Lv1 的价签（读卡片上的 .tag 元素，别猜文本形状） */
+const doorTags = async () => {
   await ev(`(() => { setTab('base'); render(); return 1 })()`); await sleep(250)
-  return String(await ev(`(() => { const card = [...document.querySelectorAll('#view .card')].find(c => /加固门窗/.test(c.textContent)); return card ? card.textContent.replace(/\\s+/g, ' ') : '' })()`))
+  return j(`(() => {
+    /* 要挑**设施卡**（标题就是「🚪 加固门窗 Lv.x/3」那张），不是上面「该建什么」的建议卡 ——
+       建议卡里也是纯文本、没有 .tag（第一版就挑错了，拿到空数组） */
+    const card = [...document.querySelectorAll('#view .card')].find(c => {
+      const h = c.querySelector('h3');
+      return h && /加固门窗/.test(h.textContent);
+    });
+    if (!card) return JSON.stringify([]);
+    return JSON.stringify([...card.querySelectorAll('.tag')].map(t => t.textContent.replace(/\\s+/g, ' ').trim()));
+  })()`)
+}
+/** 从价签里取"需要多少"：形状可能是「⛔ 木料 0/4」或「木料 ×4」 */
+const needOf = (tags, name) => {
+  const t = (tags || []).find(x => x.indexOf(name) >= 0);
+  if (!t) return NaN;
+  const slash = t.match(/(\d+)\s*\/\s*(\d+)/);
+  if (slash) return Number(slash[2]);
+  const times = t.match(/[×x]\s*(\d+)/);
+  return times ? Number(times[1]) : NaN;
 }
 await ev(`(() => { S.base.door = 0; render(); return 1 })()`)
-const d0 = await costText()
+const tags0 = await doorTags()
 await ev(`(() => { S.base.door = 1; render(); return 1 })()`)
-const d1 = await costText()
-const has = (s, re) => re.test(s)
-ok('⑥ 曲线放缓：门窗 Lv0 要 木料 4/铁片 3，Lv1 要 木料 6/铁片 5（×0.35 曲线；老曲线会是 7/5）',
-  has(d0, /木料 \d+\/4/) && has(d0, /铁片 \d+\/3/) && has(d1, /木料 \d+\/6/) && has(d1, /铁片 \d+\/5/),
-  (d1.match(/木料[^⛔✅]{0,20}/) || [d1.slice(0, 90)])[0])
+const tags1 = await doorTags()
+ok('⑥ 曲线放缓：门窗 Lv0 要 木料 4/铁片 3，Lv1 要 木料 6/铁片 5（×0.35 曲线；老曲线 Lv1 会是 木料 7/铁片 5）',
+  needOf(tags0, '木料') === 4 && needOf(tags0, '铁片') === 3 && needOf(tags1, '木料') === 6 && needOf(tags1, '铁片') === 5,
+  'Lv0=' + JSON.stringify(tags0) + ' Lv1=' + JSON.stringify(tags1))
 
 ok('⑦ 全程 0 未捕获异常', errs.length === 0, errs.slice(0, 3).join(' | '))
 console.log('')
