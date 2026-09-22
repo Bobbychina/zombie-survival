@@ -4195,7 +4195,7 @@ function openMerchant(){
     return '<div class="lrow"><div><div class="nm">' + it.n + ' ×' + n +
       ' <span class="tag ' + (left > 0 ? '' : 'wpn') + '">剩余 ' + left + '/' + (m.stock || 99) + '</span>' +
       (gate ? ' <span class="tag short">🔒</span>' : '') + '</div>' +
-      '<div class="ds">' + (it.desc || '') + '</div>' + (gate ? '<div class="hint" style="color:#e0b45c">' + gate + '</div>' : '') + '</div>' +
+      '<div class="ds">' + (it.desc || '') + '</div>' + (gate ? '<div class="hint" style="color:#e0b45c">' + esc(it.n) + '：' + gate + '</div>' : '') + '</div>' +
       '<div class="rt"><span class="tag ' + (can ? 'key' : '') + '">🔩 ' + cost + '</span>' +
       '<button class="btn xs ' + (can ? 'ok' : '') + '" ' + (can ? '' : 'disabled') + ' onclick="buyMerchant(' + i + ')">' + btnLabel + '</button>' +
       batch(maxPlan.max > 5 ? 5 : 0, '×5') +
