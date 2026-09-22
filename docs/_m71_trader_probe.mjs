@@ -49,6 +49,8 @@ const checks = []
 const ok = (n, c, extra = '') => { checks.push([n, !!c]); console.log((c ? 'PASS ' : 'FAIL ') + n + (extra ? '  ' + extra : '')) }
 const modalText = () => ev("(() => { const m = document.querySelector('#overlay-root .modal'); return m ? m.textContent.replace(/\\s+/g, ' ') : 'NOMODAL' })()")
 const openShop = async () => { await ev(`(() => { closeAllModals(); merchantTab = 'buy'; openMerchant(); return 1 })()`); await sleep(350) }
+/** 改完 S 之后重画弹窗（refreshMerchant 没挂到 window 上，用"关掉再开"达到同样效果） */
+const reopen = async () => { await ev(`(() => { closeAllModals(); openMerchant(); return 1 })()`); await sleep(350) }
 /** 某件货那一行的 DOM 状态（按钮是否禁用 / 按钮文案 / 整行文本） */
 const rowState = (goodsId) => j(`(() => {
   const idx = MERCHANT.findIndex(m => m.id === '${goodsId}');
@@ -57,11 +59,11 @@ const rowState = (goodsId) => j(`(() => {
   const b = row ? row.querySelector('button') : null;
   return JSON.stringify({ found: !!row, disabled: b ? !!b.disabled : null, label: b ? b.textContent.trim() : '', text: row ? row.textContent.replace(/\\s+/g, ' ') : '' });
 })()`)
-/** 那一行的价签（材料数） */
+/** 那一行的价签（材料数）：认 🔩 那个 tag —— 行里第一个 .tag 是"剩余 x/y"，别抓错 */
 const rowPrice = (goodsId) => ev(`(() => {
   const rows = [...document.querySelectorAll('#overlay-root .lrow')];
   const row = rows[MERCHANT.findIndex(m => m.id === '${goodsId}')];
-  const t = row ? row.querySelector('.tag') : null;
+  const t = row ? [...row.querySelectorAll('.tag')].find(x => String(x.textContent).indexOf('🔩') >= 0) : null;
   return t ? Number(String(t.textContent).replace(/[^0-9]/g, '')) : 0 })()`)
 const rep = () => ev(`(() => Number(repOf('peddler')))()`)
 
@@ -93,8 +95,8 @@ ok('② 好感 0：普通弹可买，穿甲弹「未解锁」+ 写清差什么',
   'a9_ap=' + ap0.label + ' / ' + (ap0.text.match(/好感不够[^🔒]{0,40}/) || [''])[0])
 
 /* ③ 好感 120（熟人）：穿甲弹解锁；军需官仍要无线电 */
-await ev(`(() => { S.rep.peddler = 120; refreshMerchant(); return 1 })()`)
-await sleep(400)
+await ev(`(() => { S.rep.peddler = 120; return 1 })()`)
+await reopen()
 const ap120 = await rowState('a9_ap')
 const quarter = await rowState('a308_ap')
 const head120 = String(await modalText())
@@ -107,32 +109,69 @@ await ev(`(() => { buyMerchant(MERCHANT.findIndex(m => m.id === 'a9_ap'), 1); re
 await sleep(450)
 const afterBuy = Number(await rep())
 ok('④ 买东西涨好感（+1~2）', afterBuy > beforeBuy, beforeBuy + ' → ' + afterBuy)
-await ev(`(() => { S.rep.peddler = 0; refreshMerchant(); return 1 })()`); await sleep(350)
+await ev(`(() => { S.rep.peddler = 0; return 1 })()`); await reopen()
 const priceLL1 = Number(await rowPrice('a9_fmj'))
-await ev(`(() => { S.rep.peddler = 700; refreshMerchant(); return 1 })()`); await sleep(350)
+await ev(`(() => { S.rep.peddler = 700; return 1 })()`); await reopen()
 const priceLL4 = Number(await rowPrice('a9_fmj'))
 ok('④ 忠诚折扣真的作用在价签上（LL4 比 LL1 便宜）', priceLL1 > 0 && priceLL4 > 0 && priceLL4 < priceLL1, priceLL1 + ' → ' + priceLL4)
 
 /* ⑤ 卖东西也涨好感 */
-await ev(`(() => { S.rep.peddler = 0; refreshMerchant(); return 1 })()`); await sleep(350)
+await ev(`(() => { S.rep.peddler = 0; return 1 })()`); await reopen()
 const beforeSell = Number(await rep())
 await ev(`(() => { sellMerchant('metal', 2); return 1 })()`)
 await sleep(450)
 const afterSell = Number(await rep())
 ok('⑤ 卖东西也涨好感（+1~3）', afterSell > beforeSell, beforeSell + ' → ' + afterSell)
 
-/* ⑥ 完成委托 +25：走 quests 的真实结算（造一张 need=0 的激活委托，然后 bountyTick） */
-const bountyRes = await j(`(() => {
+/* ⑥ 完成委托 +25：走 quests 的真实结算 —— 接一张委托，把它的**指标计数器**推过目标，再 tick
+   （不能直接改 c.need：ensureContracts 每次会归一化出新对象，外部改动会被丢掉 —— 诊断脚本里踩过） */
+const bumpCounter = `(c) => {
+  const need = Math.max(1, Number(c.need) || 1) + 1;
+  const m = String(c.metric || '');
+  if (m.indexOf('zone:') === 0) { S.stats.zoneCnt = S.stats.zoneCnt || {}; const k = m.slice(5); S.stats.zoneCnt[k] = (S.stats.zoneCnt[k] || 0) + need; return true; }
+  if (m.indexOf('rzone:') === 0) { const parts = m.split(':'); S.world.regionZones = S.world.regionZones || {}; const bag = (S.world.regionZones[parts[1]] = S.world.regionZones[parts[1]] || {}); bag[parts[2]] = (bag[parts[2]] || 0) + need; return true; }
+  if (m === 'kills' || m === 'kill') { S.stats.kills = (S.stats.kills || 0) + need; return true; }
+  if (m === 'scav') { S.stats.scav = (S.stats.scav || 0) + need; return true; }
+  if (m === 'deep') { S.stats.deep = (S.stats.deep || 0) + need; return true; }
+  return false;
+}`
+const bountyDone = await j(`(() => {
   S.rep.peddler = 0;
   const before = S.stats.bounties || 0;
   try {
-    S.ct = { day: 1, offers: [], active: [{ id: 'probe-' + Date.now(), title: '探针委托', metric: 'kill', need: 0, days: 3, until: S.day + 3, day: S.day, reward: { mat: 0, items: {} }, snap: {} }], done: [], seq: 1 };
-    bountyTick();
-    return JSON.stringify({ rep: Number(repOf('peddler')), before, after: S.stats.bounties || 0, logs: (S.logBuf || []).slice(-3).map(p => String(p[1])) });
+    window.V4Quest.newDay();
+    const ct = S.contracts;
+    if (!ct || !ct.board || !ct.board.length) return JSON.stringify({ err: '今天的委托板是空的' });
+    window.V4Quest.accept(0);
+    const c = (S.contracts.active || [])[0];
+    if (!c) return JSON.stringify({ err: '接单后没找到激活委托' });
+    const okBump = (${bumpCounter})(c);
+    if (!okBump) return JSON.stringify({ err: '这张委托的指标探针推不动', metric: c.metric });
+    window.V4Quest.tick();
+    return JSON.stringify({ rep: Number(repOf('peddler')), before, after: S.stats.bounties || 0, metric: c.metric,
+      logs: (S.logBuf || []).slice(-3).map(p => String(p[1])) });
   } catch (e) { return JSON.stringify({ err: String(e && e.message || e) }); }
 })()`)
-ok('⑥ 完成委托让好感 +25（真实结算：完成 → stats.bounties +1 → rep +25）',
-  bountyRes.rep === 25 && bountyRes.after > bountyRes.before, JSON.stringify(bountyRes).slice(0, 220))
+ok('⑥ 完成委托让好感 +25（真实结算：接单 → 指标达标 → tick → stats.bounties +1）',
+  bountyDone.rep === 25 && bountyDone.after > bountyDone.before, JSON.stringify(bountyDone).slice(0, 220))
+
+/* ⑥b 委托过期 −12（同样走真实结算：把日期推过 deadline） */
+const bountyExpired = await j(`(() => {
+  const before = Number(repOf('peddler'));
+  try {
+    window.V4Quest.newDay();
+    if (!(S.contracts.board || []).length) return JSON.stringify({ err: '板子空了' });
+    window.V4Quest.accept(0);
+    const c = (S.contracts.active || [])[0];
+    if (!c) return JSON.stringify({ err: '没接到委托' });
+    S.day = (c.deadlineDay || c.deadline || S.day) + 2;      // 推过期限
+    window.V4Quest.tick();
+    return JSON.stringify({ before, rep: Number(repOf('peddler')), failed: S.contracts.failed || 0,
+      logs: (S.logBuf || []).slice(-3).map(p => String(p[1])) });
+  } catch (e) { return JSON.stringify({ err: String(e && e.message || e) }); }
+})()`)
+ok('⑥b 委托过期掉好感 −12（掉得比涨得快）',
+  bountyExpired.rep === bountyExpired.before - 12, JSON.stringify(bountyExpired).slice(0, 200))
 
 /* ⑦ 存档往返：好感进白名单 */
 await ev(`(() => { S.rep.peddler = 260; saveGame(true); return 1 })()`); await sleep(700)
