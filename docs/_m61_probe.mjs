@@ -123,15 +123,21 @@ ok('② 据点设施卡都有高亮缺口行（写清还差什么 ×几）', bas
 ok('② 据点页缺料也是红徽章（同一套视觉语言）', base.shorts >= 2, 'short=' + base.shorts)
 await shot('02_base_gap')
 
-/* ── ②b 材料够 → 变绿 ✅（同一张卡的正反两态） ── */
+/* ── ②b 材料够 → 变绿 ✅（同一张卡的正反两态） ──
+   口径收紧：只数**据点设施卡**里的缺口行。M72 之后据点页多了「🧪 化学品转化链」区块，
+   那里也有自己的 ✅/⛔ 行（缺净水就会是 ⛔），按整页数会把这条断言带歪。 */
 const flip = JSON.parse(await ev(`(() => {
   S.mat = 60; S.inv = Object.assign({}, S.inv, { metal: 9, wood: 9, cloth: 9, chip: 6, tape: 6, chem: 4, bottle: 4, fuel: 4 });
   render();
   const view = document.getElementById('view');
-  const okRows = [...view.querySelectorAll('.reqmiss.ok')].map(e => e.textContent.trim());
-  const shorts = view.querySelectorAll('.reqmiss:not(.ok)').length;
-  const cs = okRows.length ? getComputedStyle(view.querySelector('.reqmiss.ok')) : null;
-  return JSON.stringify({ okRows: okRows.slice(0, 3), okCount: okRows.length, badCount: shorts, color: cs ? cs.color : null, bg: cs ? cs.backgroundColor : null });
+  const cards = [...view.querySelectorAll('.card')].filter(c => /净水装置|工作台|储物箱/.test(c.textContent || ''));
+  const scope = cards.length ? cards : [view];
+  const rows = scope.flatMap(c => [...c.querySelectorAll('.reqmiss')]);
+  const okEls = rows.filter(e => e.classList.contains('ok'));
+  const okRows = okEls.map(e => e.textContent.trim());
+  const shorts = rows.filter(e => !e.classList.contains('ok')).length;
+  const cs = okEls.length ? getComputedStyle(okEls[0]) : null;
+  return JSON.stringify({ okRows: okRows.slice(0, 3), okCount: okRows.length, badCount: shorts, cards: cards.length, color: cs ? cs.color : null, bg: cs ? cs.backgroundColor : null });
 })()`))
 console.log('  反转: ' + JSON.stringify(flip))
 ok('② 材料够了：同一位置变绿 ✅「材料够，可以开工」', flip.okCount >= 3 && flip.badCount === 0 && /材料够/.test(flip.okRows[0] || ''),

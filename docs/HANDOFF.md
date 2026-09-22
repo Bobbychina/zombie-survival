@@ -116,6 +116,20 @@ tests/*.test.ts          vitest 单测（385 条）
 
 ### 下一批
 
+0. **M72 前半「化学品转化链」已完成（2026-09-22；后半「传闻口径」还没做，别以为整条 M72 完了）**：
+   纯逻辑在 **`src/v4/chem-core.ts`**（4 行配方：⚗️ 抗生素 `chem2+chip1→anti×1`、消毒剂 `chem2+water1→antiseptic×2`；
+   🔩 手雷 `chem2+powder3+metal1→grenade×1`、5.56 穿甲弹 `chem2+powder4+metal3→a556_ap×8`）。
+   产能 = `cap + (站点等级 − 行等级)`（与 M70 回收台 `exDay/exUsed` 同构）→ `S.base.chemDay/chemUsed`，
+   **两行白名单在 `sanitizeSave` 里，漏了就变成"读档产能清零 = 无限合成"**（M70 同款坑）。
+   据点页新增「🧪 化学品转化链」区块（医疗台/弹药台各一个「合成」入口，按钮 disabled 时按 缺料/缺等级/缺产能 三种文案区分）。
+   两条守恒判据：① `chemAudit()` 按 `CHEM_COST`（获取成本当量，不是商人价 —— 商人把弹药卖到 9 材料/发，
+   按标价量连 legacy 复装都"赚钱"）算 产出 < 投入；② `chemCycle()` 找投入→产出的环（现为 null，且产出全是 med/thr/ammo 成品）。
+   证据：单测 **832/832**（`tests/m72-chem.test.ts` 12 例；`tests/legacy-tables.ts` 新增 `recipeRows()` 解析器，
+   用来钉"合成台的抗生素必须与制作页那行一模一样"）、`docs/_m72_probe.mjs` **13/13**（本地 8851 / 构建产物 737150 字节）。
+   ⚠️ 探针坑：**M53 会把非探索页按 `.sect-title` 原地包成 v4 卡片**，包完之后顶层就没有 `.sect-title` 了——
+   按 `.sect-title` 找锚点做 `scrollIntoView` 会拿到"没找到"，截图停在页顶；改成"从 `button[onclick^=synthChem]`
+   往上找最近那一段"。另：视觉 OCR 配额本会话用完，截图复查走了零配额 CLI `node E:\Files\myagent\ocr-vision.mjs <图> --tile 4`。
+
 0. **M71 已完成（用户：「商人系统你不如参考塔科夫的好感度/做任务解锁购买特定道具」）**：纯逻辑在 **`src/v4/trader-core.ts`**
    （2 个商人 / LL1~4 档位 / 门槛判定 / 好感涨落），货架行加了 `trader / ll / quests` 三个标注字段（`shop-core.ts`）。
    好感度：卖 +1~3、买 +1~2、**完成委托 +25**、过期 **−12**（`quests.ts` 的 tickQuiet 里结算）；档位 LL2/3/4 = 120/320/700，

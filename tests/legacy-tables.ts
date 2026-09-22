@@ -65,6 +65,27 @@ export function itemTable(): Record<string, { n: string; t: string; unique: bool
   return out;
 }
 
+export interface LegacyRecipe { out: string; n: number; need: Record<string, number>; st: string; lv: number }
+
+/** legacy 的制作配方（主表 + RECIPES.push 那批）。两批的字段名不一样：
+ *  主表写 `st:'medlab', lv:2`，push 的那批写 `bench:1`（normalizeRecipes 再归一化）—— 这里一次抹平。
+ *  M72 用它钉住"合成台与制作页对同一件成品的投入产出必须一模一样"。 */
+export function recipeRows(): LegacyRecipe[] {
+  const text = src();
+  const out: LegacyRecipe[] = [];
+  const re = /\{out:'([a-z_][a-z0-9_]*)',\s*n:(\d+),\s*need:\{([^}]*)\},\s*(?:st:'(\w+)',\s*lv:(\d+)|bench:(\d+))/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text))) {
+    const need: Record<string, number> = {};
+    m[3].split(',').forEach(pair => {
+      const [k, v] = pair.split(':');
+      if (k && v) need[k.trim()] = Number(v);
+    });
+    out.push({ out: m[1], n: Number(m[2]), need, st: m[4] || 'bench', lv: m[5] !== undefined ? Number(m[5]) : Number(m[6]) });
+  }
+  return out;
+}
+
 /** legacy ITEMS 里的弹药条目：{ id: {cal, pen} }（M32b：货架/掉落的口径核对要用） */
 export function ammoItems(): Record<string, { cal: string; pen: number; dmgMul: number }> {
   const text = src();

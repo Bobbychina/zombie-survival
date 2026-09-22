@@ -14,6 +14,7 @@ import { backupLabel, BACKUP_SLOTS } from '../v4/backup-core';   // M39：备份
 import { snapshotScroll, restoreScroll, keepOffsets, shouldStickToBottom, nextLogFollow, isAwayKey, isBackKey } from '../v4/scroll-keep';   // M43：刷新时保住滚动位置；M49：日志跟随按玩家意图判
 import { BASE_SECTIONS, scaledCost as coreScaledCost, defMaxOf, raidChance, raidGuaranteed, abandonCost, waterYield, nightlyYield, trapCap, verdictOf, missingFor, adviseBuilds, facilityDelta } from '../v4/base-core';   // M54：据点系统的算式与建议（纯逻辑，唯一真值）
 import { EXCHANGE_ROWS, EX_MIN_BENCH, exCapBonus, exLine, rowOf } from '../v4/exchange-core';   // M70：回收台（材料 → 建材）
+import { CHEM_ROWS, CHEM_STATIONS, chemCapBonus, chemLine, chemRow, chemRowsOf, chemBatch } from '../v4/chem-core';   // M72：化学品转化链（化学品 → 抗生素/爆炸物）
 import { starvationTick, sleepHealMul, nightConsumption, sleepWarning } from '../v4/hunger-core';   // M55：饥饿/脱水的夜间结算（堵住"只睡觉速通"）
 import { fleeChanceOf, fleeFailPlan } from '../v4/flee-core';     // M56：逃跑成功率（连试递减）与失败代价
 import { DECOYS, planDecoy } from '../v4/decoy-core';             // M56：避战道具（气味引诱器三档）
@@ -525,7 +526,7 @@ function newState(){
     inv:{ can:2, water:2, bandage:1, crowbar:1 },
     store:{},
     eq:{ wpn:'crowbar', head:null, body:null, mask:null, feet:null, bag:null, trinket:null },
-    base:{ door:0,bed:0,filter:0,garden:0,bench:0,storage:0,radio:0,wall:0, exDay:0, exUsed:{} },
+    base:{ door:0,bed:0,filter:0,garden:0,bench:0,storage:0,radio:0,wall:0, exDay:0, exUsed:{}, chemDay:0, chemUsed:{} },   // M72：chemDay/chemUsed = 化学品转化链的当日产能
     /* M71：商人好感度（卖东西/买东西/完成委托都会涨；委托过期会掉） */
     rep:{ peddler:0, quarter:0 },
     skills:{ shoot:0,melee:0,survival:0,medic:0,fitness:0,stealth:0,scout:0,gather:0,cook:0,craft:0,mechanic:0,trade:0 },
@@ -699,6 +700,14 @@ function sanitizeSave(d){
     const v = Math.floor(num(rawEx[k], 0, 0, 999)); if(v > 0) exUsed[k] = v;
   }
   b.exUsed = exUsed;
+  /* M72：化学品转化链的当日产能同样要过白名单（M70 踩过一次：不写进去 = 读档产能清零 = 无限合成） */
+  b.chemDay = Math.floor(num((out.base||{}).chemDay, 0, 0, 1e6));
+  const chemUsed = {};
+  const rawChem = (out.base||{}).chemUsed;
+  if(rawChem && typeof rawChem === 'object') for(const k in CHEM_ROWS.reduce((a, r) => (a[r.id] = 1, a), {})){
+    const v = Math.floor(num(rawChem[k], 0, 0, 999)); if(v > 0) chemUsed[k] = v;
+  }
+  b.chemUsed = chemUsed;
   out.base = b;
   const sk = {}, xp = {}; for(const k in SKILLS){ sk[k] = Math.floor(num((out.skills||{})[k], 0, 0, 10)); xp[k] = Math.floor(num((out.xp||{})[k], 0, 0, 1e6)); }
   out.skills = sk; out.xp = xp;
@@ -3339,6 +3348,45 @@ function renderBase(){
       '<div class="grid g2" style="margin-top:8px">' + rows + '</div></div>';
   }
 
+  /* ── ④.6 M72 化学品转化链：工业区搜到的化学品 → 医疗台/弹药台 → 抗生素 / 爆炸物 ──
+     与回收台（④.5）同一套写法：纯逻辑在 v4/chem-core，这里只渲染与接线；
+     产能上限跟着"当天"走，白名单在 sanitizeSave（否则读档产能清零 = 无限合成）。 */
+  {
+    const st = chemStateToday();
+    const sections = (['medlab', 'loading'] as const).map(k => {
+      const def = CHEM_STATIONS[k], stLv = S.base[k] || 0;
+      const rows = chemRowsOf(k).map(r => {
+        const used = st.used[r.id] || 0;
+        const line = chemLine(r, { inv: S.inv, used, stLv });
+        const miss = line.short.map(s => ({ mat: s.id, need: s.need, have: s.have, short: s.short }));
+        /* 份数写死（1 / 99=做满），由 synthChem 自己夹取 —— 与回收台的按钮同一套路 */
+        const btn = (n, label, cls) => '<button class="btn sm ' + cls + '" ' + (line.can > 0 ? '' : 'disabled') +
+          ' onclick="synthChem(\'' + r.id + '\',' + n + ')">' + label + '</button>';
+        return '<div class="card"><h3>' + itemName(r.out) + ' <span class="sub">×' + r.n + ' / ' +
+          Object.keys(r.need).map(id => itemName(id) + '×' + r.need[id]).join(' + ') + '</span></h3>' +
+          '<div class="ds hint" style="min-height:30px">' + r.why + '</div>' +
+          '<div class="row" style="margin:2px 0">' + needTags(r.need) + '</div>' +
+          (line.why ? '<div class="reqmiss">⛔ ' + line.why + '</div>' : '') +
+          '<div class="hint">今天已做 <b>' + line.used + '/' + line.cap + '</b> 份' +
+          (chemCapBonus(r, stLv) > 0 ? '（含 ' + def.name + ' 加成 +' + chemCapBonus(r, stLv) + '）' : '') + '</div>' +
+          (line.why ? '' : missLine(miss, '材料够，可以开工')) +
+          '<div class="row" style="margin-top:6px">' + btn(1, def.icon + ' 合成 1', line.can >= 2 ? '' : 'ok') +
+          btn(99, def.icon + ' 合成满 (' + line.can + ')', 'ok') + '</div></div>';
+      }).join('');
+      return '<div class="sect-title">' + def.icon + ' ' + def.name + ' · 合成 <span class="badge">化学品 → ' +
+        (k === 'medlab' ? '药品' : '爆炸物/弹药') + '</span>' +
+        '<span class="badge' + (stLv > 0 ? '' : ' heavy') + '">' + (stLv > 0 ? 'Lv.' + stLv : '🔒 还没建') + '</span></div>' +
+        '<div class="card" style="margin-bottom:12px">' +
+        '<div class="hint">' + def.desc + (stLv > 0
+          ? '　每天有<b>产能上限</b>（' + def.name + '每升一级，各配方产能 +1）：化学品仍然得去工业区/地铁里搜。'
+          : '　🔒 先建<b>' + def.name + '</b>（' + buildCostText(k) + '）才能开工。') + '</div>' +
+        '<div class="grid g2" style="margin-top:8px">' + rows + '</div></div>';
+    }).join('');
+    h += '<div class="sect-title">🧪 化学品转化链 <span class="badge">工业区 → 成品</span></div>' +
+      '<div class="hint" style="margin-bottom:6px">化学品（<b>' + itemName('chem') + '</b>）在工业区、地铁与军方检查站成堆出现，' +
+      '在这里变成<b>抗生素</b>与<b>爆炸物</b>——不用再等商人。每天的产能有限，额度跨天回满。</div>' + sections;
+  }
+
   /* ── ⑤ 设施（四个分区） ── */
   for(const sec of BASE_SECTIONS){
     const keys = sec.keys.filter(k => BASE_UP[k]);
@@ -3391,6 +3439,43 @@ function exchangeItem(id, times){
   log('♻️ 回收台：用 ' + pay + ' 材料换到 ' + itemName(row.id) + '×' + (row.n * n) +
     '（今天这一类 ' + st.used[id] + '/' + (row.cap + exCapBonus(benchLv)) + '）。','loot');
   if(st.used[id] >= row.cap + exCapBonus(benchLv)) firstTip('excap', '今天的兑换额度用完了：升级工作台每级 +1 额度，明天也会回满。');
+  render(); autosave();
+}
+/* ── M72 化学品转化链（工业区化学品 → 医疗台/弹药台 → 抗生素 / 爆炸物）──
+   与 M70 回收台同构：产能额度跟着"当天"走、写在 S.base 上、由 sanitizeSave 白名单保住。
+   数值/判定全在 v4/chem-core（chemLine 给"能不能做"、chemBatch 给"扣什么给什么"），
+   这里只做三件事：读额度 → 扣料/进包 → 记额度。 */
+function chemStateToday(){
+  if(!S.base.chemUsed || typeof S.base.chemUsed !== 'object') S.base.chemUsed = {};
+  if(S.base.chemDay !== S.day){ S.base.chemDay = S.day; S.base.chemUsed = {}; }   // 跨天清零
+  return { day: S.day, used: S.base.chemUsed };
+}
+function synthChem(id, times){
+  const row = chemRow(id);
+  if(!row){ log('❌ 没有这个合成项。','dim'); return; }
+  const stName = CHEM_STATIONS[row.st].name;
+  const st = chemStateToday();
+  const stLv = S.base[row.st] || 0;
+  const line = chemLine(row, { inv: S.inv, used: st.used[id] || 0, stLv });
+  /* 先按额度夹一次，再让 chemBatch 按手上材料夹一次 —— 两次夹取都是纯函数算的，账目只有一份真值 */
+  const want = Math.max(0, Math.min(Math.floor(times) || 0, line.can));
+  const batch = chemBatch(row, want, S.inv);
+  if(batch.times <= 0){
+    const why = line.why || (line.short.length ? '材料不够：还差 ' + line.short.map(s => itemName(s.id) + ' ×' + s.short).join('、') : '做不了');
+    toast('合成不了', why, 'bad'); log('❌ ' + why + '。','dim'); return;
+  }
+  Object.keys(batch.take).forEach(k => takeItem(k, batch.take[k]));
+  Object.keys(batch.give).forEach(k => grant(k, batch.give[k]));
+  st.used[id] = (st.used[id] || 0) + batch.times;
+  S.stats.crafted += batch.times;
+  addXP('craft', 4);                       // 制作技能：与制作页同一个来源，合成也算
+  if(row.st === 'medlab') addXP('medic', 1);
+  sfx('ok');
+  log(CHEM_STATIONS[row.st].icon + ' ' + stName + '合成：' + Object.keys(batch.take).map(k => itemName(k) + '×' + batch.take[k]).join(' + ') +
+    ' → ' + itemName(row.out) + '×' + batch.give[row.out] +
+    '（今天这一类 ' + st.used[id] + '/' + chemLine(row, { inv: S.inv, used: st.used[id], stLv }).cap + '）。','loot');
+  if(st.used[id] >= chemLine(row, { inv: S.inv, used: st.used[id], stLv }).cap)
+    firstTip('chemcap', '今天的产能用完了：升级' + stName + '每级 +1 产能，明天也会回满。');
   render(); autosave();
 }
 /** M25：建设价目的一行文字（制作页里告诉玩家"这个站要多少材料才建得起来"） */
@@ -4513,6 +4598,7 @@ Object.assign(window, { VER, SAVE_KEY, V1_KEY, ITEMS, itemName, isWpn, ZOMBIES, 
   depositAll, setBagFilter, quickBarHtml,       // M38：背包批量存入/筛选切换 + 补给快捷条（内联 onclick）
   openSavePort, openBackupHistory, restoreHistory, exportHistory, deleteHistory,   // M39：口令导出/导入 + 备份历史（内联 onclick）
   exchangeItem, EXCHANGE_ROWS,                                                   // M70：回收台（据点页内联 onclick + 探针读表）
+  synthChem, CHEM_ROWS, CHEM_STATIONS,                                           // M72：化学品转化链（据点页内联 onclick + 探针读表）
   repOf, addRep, buyGateOf, TRADERS, LL_TIERS, loyaltyOf, traderLine,             // M71：商人好感度 / 忠诚档位 / 门槛判定（探针直接读）
   radLevelAt, radGain, radProtect, RAD_SOURCES, geigerText, boot });
 /* M58：白天辐射症状也挂出去（人体页/图鉴渲染 + 验收探针直接调） */
