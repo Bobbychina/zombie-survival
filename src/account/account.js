@@ -1348,5 +1348,13 @@
   }
 
   Account._internal = { gh: gh, gistEnsure: gistEnsure, K: K, hashPassword: hashPassword };
+  /* 给「要带会话调自己 Worker」的页面用（例如游戏的全局排行榜）：只吐 token，别的一概不给。
+     云账号（server 模式）才有 token；GitHub-Gist 模式的账号本来就不经过服务端，这里返回空串。 */
+  Account.sessionToken = function () {
+    var s = readJSON(K.session, null) || {};
+    if (!s.token) return '';
+    if (s.exp && s.exp < Date.now()) return '';
+    return String(s.token);
+  };
   global.DSHAccount = Account;
 })(window);

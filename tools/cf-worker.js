@@ -251,6 +251,41 @@ async function ghWriteFile(env, uid, st, name, payload, opts) {
 }
 
 /* ============================ 主入口 ============================ */
+/* ---------- 全站排行榜（游戏要的"全球榜"） ----------
+   口径：
+     · **看榜不用登录**（GET /api/score 是公开只读），**上榜要登录云账号** —— 服务端只认自己的会话，
+       所以名字无法伪造（GitHub-Gist 模式的账号不经过服务端，上不了榜，前端会明说）。
+     · 存的东西只有「账号名 + 存活时间/击杀/等级/波次 + 时间戳」，不含 uid / 邮箱 / IP。
+     · 写额度：每次提交 1 次读取 + 至多 3 次写（冷却键 / 个人最好 / 榜单快照）；榜单只留前 50，
+       其它成绩不落库。免费版 KV 每天 1000 写，够 300+ 次提交。
+     · 榜单用「读-改-写」维护，两个人同时提交极小概率丢一条 —— 这个场景下可以接受（榜单不是账本）。 */
+const LB_MAX = 50;
+const LB_GAMES = new Set(['vampire-survivors']);        // 白名单：别让它被当成任意 key 的记事板
+const lbKey = game => 'lb:' + game;
+const scoreKey = (game, uid) => 'score:' + game + ':' + uid;
+const scoreNum = (v, lo, hi) => { const n = Math.floor(Number(v)); return isFinite(n) && n >= lo && n <= hi ? n : null; };
+/** 校验成绩字段：任何一项越界就整条丢掉（宁可漏一个成绩，也不让脏数据进榜） */
+function scoreValid(b) {
+  if (!b || typeof b !== 'object') return null;
+  const game = String(b.game || '');
+  if (!LB_GAMES.has(game)) return null;
+  const time = scoreNum(b.time, 1, 86400), kills = scoreNum(b.kills, 0, 1000000);
+  const level = scoreNum(b.level, 1, 999), wave = scoreNum(b.wave, 1, 9999);
+  if (time === null || kills === null || level === null || wave === null) return null;
+  return { game, time, kills, level, wave };
+}
+async function lbRead(env, game) {
+  const r = await kvGet(env, lbKey(game));
+  return (r && Array.isArray(r.list)) ? r : { at: '', list: [] };
+}
+/** 同名只留一条（换设备/重登还是同一个人），按存活时间降序，截前 LB_MAX */
+function lbInsert(list, row) {
+  const out = (list || []).filter(x => x && x.name && x.name !== row.name);
+  out.push(row);
+  out.sort((a, b) => (b.time - a.time) || (b.kills - a.kills) || String(a.name).localeCompare(String(b.name)));
+  return out.slice(0, LB_MAX);
+}
+
 export async function handle(req, env) {
   const url = new URL(req.url);
   const path = url.pathname;
@@ -279,7 +314,7 @@ export async function handle(req, env) {
     }
   }
   if (RELAY[path] || path === '/oauth/access_token') return err(req, 405, 'method_not_allowed', '只接受 POST');
-  if (path === '/' || path === '') return json(req, { ok: true, service: 'bobbychina cloud', api: ['/api/health', '/api/hit', '/api/register', '/api/login', '/api/recover/begin', '/api/recover/commit', '/api/me', '/api/quota', '/api/saves', '/api/save'] });
+  if (path === '/' || path === '') return json(req, { ok: true, service: 'bobbychina cloud', api: ['/api/health', '/api/hit', '/api/register', '/api/login', '/api/recover/begin', '/api/recover/commit', '/api/me', '/api/quota', '/api/saves', '/api/save', '/api/score'] });
 
   /* ---- 第一方匿名计数（页面访问量）: 写 Analytics Engine，不占 KV 写额度 ----
      为什么不用 KV：KV 免费版每天只有 1000 次写，页面访问量会瞬间把它刷光，
@@ -405,12 +440,42 @@ export async function handle(req, env) {
       return json(req, { salt });
     }
 
+    /* ---- 全站排行榜：**看榜不用登录**（公开只读），上榜才要登录 ---- */
+    if (path === '/api/score' && req.method === 'GET') {
+      const game = String(url.searchParams.get('game') || '');
+      if (!LB_GAMES.has(game)) return err(req, 400, 'bad_game', '没有这个榜：' + [...LB_GAMES].join(' / '));
+      const rec = await lbRead(env, game);
+      return json(req, { ok: true, game, updatedAt: rec.at || '', list: rec.list });
+    }
+
     const me = await authed(env, req);
     if (!me) return err(req, 401, 'unauthorized', '没登录或会话过期');
 
+    /* ---- 提交一局成绩上榜（要登录）：只留个人最好的一局，再并进全站前 50 ---- */
+    if (path === '/api/score' && req.method === 'POST') {
+      if (await rateLimited(env, req)) return err(req, 429, 'rate_limited', '请求太频繁，等一分钟再试');
+      const s = scoreValid(await readJSON(req));
+      if (!s) return err(req, 400, 'bad_score', '成绩字段不合法（game/time/kills/level/wave）');
+      /* 每人 60 秒一次：KV 的 expirationTtl 下限就是 60 秒，正好当冷却闸 */
+      const cdKey = 'scorecd:' + me.uid;
+      if (await kvGet(env, cdKey)) return json(req, { ok: false, error: 'cooldown', message: '刚提交过，60 秒后再来' }, 429);
+      await kvPut(env, cdKey, 1, { expirationTtl: 60 });
+
+      const row = { name: String(me.name || '').slice(0, 24), time: s.time, kills: s.kills, level: s.level, wave: s.wave, at: nowISO() };
+      const prev = await kvGet(env, scoreKey(s.game, me.uid));
+      const better = !prev || row.time > (prev.time || 0) || (row.time === (prev.time || 0) && row.kills > (prev.kills || 0));
+      if (better) await kvPut(env, scoreKey(s.game, me.uid), row);
+      const mine = better ? row : prev;
+
+      const lb = await lbRead(env, s.game);
+      const list = lbInsert(lb.list, { name: mine.name, time: mine.time, kills: mine.kills || 0, level: mine.level || 1, wave: mine.wave || 1, at: mine.at });
+      await kvPut(env, lbKey(s.game), { at: nowISO(), list });
+      const rank = list.findIndex(x => x.name === mine.name) + 1;
+      return json(req, { ok: true, better, rank, best: { time: mine.time, kills: mine.kills || 0, level: mine.level || 1, wave: mine.wave || 1 }, list });
+    }
+
     /* ---- 今日上传额度（账号面板显示"今天还能传几次"） ---- */
-    if (path === '/api/quota' && req.method === 'GET') {
-      const q = await quotaRead(env, me.uid);
+    if (path === '/api/quota' && req.method === 'GET') {      const q = await quotaRead(env, me.uid);
       return json(req, { used: q.used, limit: q.limit, left: q.left, resetAt: q.resetAt });
     }
 
