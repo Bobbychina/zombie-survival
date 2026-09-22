@@ -20,10 +20,13 @@ export const BASE_SECTIONS: { id: string; name: string; icon: string; keys: stri
   { id: 'infra', name: '基建', icon: '🔌', keys: ['power', 'radio'] },
 ];
 
-/** 建造/升级价：基础价 × (1 + 当前等级 × 0.6)，向上取整（老规则，别改） */
+/** 建造/升级价：基础价 × (1 + 当前等级 × **0.35**)，向上取整。
+ *  M70 把系数从 0.6 降到 0.35 —— 审计发现满级全设施的建材要 ≈2170 AP（按当时产出率），
+ *  而一局 100 天总共才 1400 AP：**通关都建不出几个**（用户原话）。
+ *  第三级因此从 2.2 倍降到 1.7 倍；再配合回收台（材料→建材）与更便宜的发电机/无线电。 */
 export function scaledCost(base: Record<string, number>, lv: number): Record<string, number> {
   const out: Record<string, number> = {};
-  for (const c in base) out[c] = Math.ceil(base[c] * (1 + lv * 0.6));
+  for (const c in base) out[c] = Math.ceil(base[c] * (1 + lv * 0.35));
   return out;
 }
 

@@ -12,6 +12,7 @@ import { exportSaveText, importSaveText, parsePortText, portSummary, passphraseI
 import { backupLabel, BACKUP_SLOTS } from '../v4/backup-core';   // M39：备份历史（标签与份数）
 import { snapshotScroll, restoreScroll, keepOffsets, shouldStickToBottom, nextLogFollow, isAwayKey, isBackKey } from '../v4/scroll-keep';   // M43：刷新时保住滚动位置；M49：日志跟随按玩家意图判
 import { BASE_SECTIONS, scaledCost as coreScaledCost, defMaxOf, raidChance, raidGuaranteed, abandonCost, waterYield, nightlyYield, trapCap, verdictOf, missingFor, adviseBuilds, facilityDelta } from '../v4/base-core';   // M54：据点系统的算式与建议（纯逻辑，唯一真值）
+import { EXCHANGE_ROWS, EX_MIN_BENCH, exCapBonus, exLine, rowOf } from '../v4/exchange-core';   // M70：回收台（材料 → 建材）
 import { starvationTick, sleepHealMul, nightConsumption, sleepWarning } from '../v4/hunger-core';   // M55：饥饿/脱水的夜间结算（堵住"只睡觉速通"）
 import { fleeChanceOf, fleeFailPlan } from '../v4/flee-core';     // M56：逃跑成功率（连试递减）与失败代价
 import { DECOYS, planDecoy } from '../v4/decoy-core';             // M56：避战道具（气味引诱器三档）
@@ -209,9 +210,9 @@ const BASE_UP = {
   loading: {n:'弹药台',   icon:'🔩', max:3, cost:{metal:4, wood:2, tape:2}, desc:'复装与改装弹药：普通弹、穿甲弹、独头弹。'},
   medlab:  {n:'医疗台',   icon:'⚗️', max:3, cost:{metal:3, chip:2, chem:2}, desc:'制药：急救包、解毒剂、碘片、抗辐射药。'},
   kitchen: {n:'灶台',     icon:'🍳', max:3, cost:{metal:3, cloth:1, wood:3}, desc:'把生食做熟、批量煮水、风干肉——熟食回得更多也更抗腐坏。'},
-  power:   {n:'发电机',   icon:'🔋', max:2, cost:{metal:6, chip:4, fuel:2}, desc:'通电后：净水装置 +1 产出、菜园生长快 1 天、医疗台制作 +1 份。'},
+  power:   {n:'发电机',   icon:'🔋', max:2, cost:{metal:6, chip:3, fuel:2}, desc:'通电后：净水装置 +1 产出、菜园生长快 1 天、医疗台制作 +1 份。'},   // M70：芯片 4→3（审计：芯片是全表最贵的建材）
   storage: {n:'储物箱',   icon:'📦', max:3, cost:{metal:3, wood:3},  desc:'提供基地储物格，离家时不用背着。'},
-  radio:   {n:'无线电',   icon:'📻', max:1, cost:{chip:3, metal:3, tape:2}, desc:'解锁“方舟实验室”坐标与更多商人来访。'},
+  radio:   {n:'无线电',   icon:'📻', max:1, cost:{chip:2, metal:3, tape:2}, desc:'解锁“方舟实验室”坐标与更多商人来访。'},   // M70：芯片 3→2（主线设施，别卡在芯片上）
   wall:    {n:'围墙工事', icon:'🧱', max:2, cost:{wood:6, metal:5},  desc:'尸潮时提供掩体，减少资源损失。'},
   pond:    {n:'鱼塘',     icon:'🐟', max:3, cost:{wood:4, cloth:2, metal:1}, desc:'每天产鱼；投喂鱼饵/蔬菜能翻倍，冬天减产。'},   // M7：水产养殖
 };
@@ -523,7 +524,7 @@ function newState(){
     inv:{ can:2, water:2, bandage:1, crowbar:1 },
     store:{},
     eq:{ wpn:'crowbar', head:null, body:null, mask:null, feet:null, bag:null, trinket:null },
-    base:{ door:0,bed:0,filter:0,garden:0,bench:0,storage:0,radio:0,wall:0 },
+    base:{ door:0,bed:0,filter:0,garden:0,bench:0,storage:0,radio:0,wall:0, exDay:0, exUsed:{} },
     skills:{ shoot:0,melee:0,survival:0,medic:0,fitness:0,stealth:0,scout:0,gather:0,cook:0,craft:0,mechanic:0,trade:0 },
     xp:{ shoot:0,melee:0,survival:0,medic:0,fitness:0,stealth:0,scout:0,gather:0,cook:0,craft:0,mechanic:0,trade:0 },
     quest:{ stage:0, keycards:0, data:0 },
@@ -682,7 +683,16 @@ function sanitizeSave(d){
   const eq = {}; for(const sl in slots){ const v = (out.eq || {})[sl];
     eq[sl] = (typeof v === 'string' && ITEMS[v] && ITEMS[v].slot === slots[sl]) ? v : base.eq[sl]; }
   out.eq = eq;
-  const b = {}; for(const k in BASE_UP) b[k] = Math.floor(num((out.base||{})[k], 0, 0, BASE_UP[k].max)); out.base = b;
+  const b = {}; for(const k in BASE_UP) b[k] = Math.floor(num((out.base||{})[k], 0, 0, BASE_UP[k].max));
+  /* M70：回收台的当日额度也要过白名单 —— 不清洗就等于"读一次档额度重置"（无限兑换） */
+  b.exDay = Math.floor(num((out.base||{}).exDay, 0, 0, 1e6));
+  const exUsed = {};
+  const rawEx = (out.base||{}).exUsed;
+  if(rawEx && typeof rawEx === 'object') for(const k in EXCHANGE_ROWS.reduce((a, r) => (a[r.id] = 1, a), {})){
+    const v = Math.floor(num(rawEx[k], 0, 0, 999)); if(v > 0) exUsed[k] = v;
+  }
+  b.exUsed = exUsed;
+  out.base = b;
   const sk = {}, xp = {}; for(const k in SKILLS){ sk[k] = Math.floor(num((out.skills||{})[k], 0, 0, 10)); xp[k] = Math.floor(num((out.xp||{})[k], 0, 0, 1e6)); }
   out.skills = sk; out.xp = xp;
   out.quest = { stage: Math.floor(num((out.quest||{}).stage, 0, 0, 6)), keycards: Math.floor(num((out.quest||{}).keycards, 0, 0, 3)), data: Math.floor(num((out.quest||{}).data, 0, 0, 9)) };
@@ -3296,6 +3306,30 @@ function renderBase(){
   }).join('');
   h += '</div>';
 
+  /* ── ④.5 M70 回收台：把通用材料换成建材（用户："耗材单一且难找，通关都造不出几个"） ── */
+  {
+    const benchLv = S.base.bench || 0;
+    const ex = exStateToday();
+    const rows = EXCHANGE_ROWS.map(r => {
+      const used = ex.used[r.id] || 0;
+      const line = exLine(r, { mat: S.mat, used, benchLv });
+      const canBulk = line.can >= 2;
+      const btn = (n, label, cls) => '<button class="btn sm ' + cls + '" ' + (n > 0 ? '' : 'disabled') +
+        ' onclick="exchangeItem(\'' + r.id + '\',' + n + ')">' + label + '</button>';
+      return '<div class="card"><h3>' + itemName(r.id) + ' <span class="sub">' + r.n + ' 件 / ' + r.cost + ' 材料</span></h3>' +
+        '<div class="ds hint" style="min-height:30px">' + r.why + '</div>' +
+        '<div class="hint">今天已换 <b>' + line.used + '/' + line.cap + '</b>' + (line.why ? ' · ' + line.why : '') + '</div>' +
+        '<div class="row" style="margin-top:6px">' + btn(line.can > 0 ? 1 : 0, '♻️ 换 1', canBulk ? '' : 'ok') +
+        btn(line.can, '♻️ 换满 (' + line.can + ')', 'ok') + '</div></div>';
+    }).join('');
+    h += '<div class="sect-title">♻️ 回收台 <span class="badge">材料 → 建材</span></div><div class="card" style="margin-bottom:12px">' +
+      '<div class="hint">拆解与搜刮给的<b>材料</b>能在这里换成建材：' +
+      (benchLv >= EX_MIN_BENCH ? '工作台 Lv' + benchLv + '：额度已 +' + exCapBonus(benchLv) + '（每升一级再 +1）'
+        : '🔒 先建<b>工作台</b>（Lv' + EX_MIN_BENCH + '）才能开工') +
+      '　每天额度有限 —— 想要更多就升级工作台，或者去危险区自己搜。</div>' +
+      '<div class="grid g2" style="margin-top:8px">' + rows + '</div></div>';
+  }
+
   /* ── ⑤ 设施（四个分区） ── */
   for(const sec of BASE_SECTIONS){
     const keys = sec.keys.filter(k => BASE_UP[k]);
@@ -3323,6 +3357,33 @@ function renderBase(){
   return h;
 }
 function scaledCost(k, lv){ return coreScaledCost(BASE_UP[k].cost, lv); }
+
+/* ── M70 回收台（材料 → 建材）──
+   为什么放 legacy 这一层：额度要跟着"当天"走，而 legacy 的 S.base 是**全局据点状态**（不随大区冻结），
+   sanitizeSave 里已白名单 exDay/exUsed（不加白名单的话读档会把额度抹掉 → 变成无限兑换）。 */
+function exStateToday(){
+  if(!S.base.exUsed || typeof S.base.exUsed !== 'object') S.base.exUsed = {};
+  if(S.base.exDay !== S.day){ S.base.exDay = S.day; S.base.exUsed = {}; }     // 跨天清零
+  return { day: S.day, used: S.base.exUsed };
+}
+function exchangeItem(id, times){
+  const row = rowOf(id);
+  if(!row){ log('❌ 没有这个兑换项。','dim'); return; }
+  const st = exStateToday();
+  const benchLv = S.base.bench || 0;
+  const line = exLine(row, { mat: S.mat, used: st.used[id] || 0, benchLv });
+  const n = Math.max(0, Math.min(Math.floor(times) || 0, line.can));
+  if(n <= 0){ toast('换不了', line.why || '材料不够', 'bad'); log('❌ ' + (line.why || '材料不够') + '。','dim'); return; }
+  const pay = row.cost * n;
+  S.mat -= pay;
+  grant(row.id, row.n * n);
+  st.used[id] = (st.used[id] || 0) + n;
+  sfx('ok');
+  log('♻️ 回收台：用 ' + pay + ' 材料换到 ' + itemName(row.id) + '×' + (row.n * n) +
+    '（今天这一类 ' + st.used[id] + '/' + (row.cap + exCapBonus(benchLv)) + '）。','loot');
+  if(st.used[id] >= row.cap + exCapBonus(benchLv)) firstTip('excap', '今天的兑换额度用完了：升级工作台每级 +1 额度，明天也会回满。');
+  render(); autosave();
+}
 /** M25：建设价目的一行文字（制作页里告诉玩家"这个站要多少材料才建得起来"） */
 function buildCostText(k){
   const u = BASE_UP[k];
@@ -4395,6 +4456,7 @@ Object.assign(window, { VER, SAVE_KEY, V1_KEY, ITEMS, itemName, isWpn, ZOMBIES, 
   isLab,                                        // M33：教程沙盒（写盘守卫 + 菜单分岔都用它）
   depositAll, setBagFilter, quickBarHtml,       // M38：背包批量存入/筛选切换 + 补给快捷条（内联 onclick）
   openSavePort, openBackupHistory, restoreHistory, exportHistory, deleteHistory,   // M39：口令导出/导入 + 备份历史（内联 onclick）
+  exchangeItem, EXCHANGE_ROWS,                                                   // M70：回收台（据点页内联 onclick + 探针读表）
   radLevelAt, radGain, radProtect, RAD_SOURCES, geigerText, boot });
 /* M58：白天辐射症状也挂出去（人体页/图鉴渲染 + 验收探针直接调） */
 Object.assign(window, { radSymptoms, radSymptomText, radBrief });
