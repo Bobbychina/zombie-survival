@@ -209,7 +209,9 @@ describe('M39 · 接线（规则只在 v4 核心里，legacy 只调用）', () =
   const legacy = readFileSync('src/legacy/game.ts', 'utf8')
   const vaultSrc = readFileSync('src/v4/save-vault.ts', 'utf8')
   it('商人批量购买：buyMerchant 走 buyPlan，按钮上是实时算出来的份数', () => {
-    expect(legacy).toContain('buyPlan(m, merchantRate(), S.mat, shopLeft(m)')
+    /* M71：买价要先乘忠诚折扣，所以改成传"折后汇率"（effRate = merchantRate() × priceMulOf(rep)） */
+    expect(legacy).toContain('buyPlan({ ...m, cost: m.cost }, effRate, S.mat, shopLeft(m)')
+    expect(legacy).toContain('const effRate = merchantRate() * priceMulOf(repOf(who))')
     expect(legacy).toContain("'买满×'")
     expect(legacy).toContain("onclick=\"buyMerchant(' + i + ',' + k + ')\"")
   })
