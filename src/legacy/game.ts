@@ -5,6 +5,7 @@ import { radTier, radGain, radLevelAt, radProtect, RAD_SOURCES, geigerText, radS
 import { CALIBERS, penMul, apKillOnArmored, ammoTable, pickLoadedAmmo, ammoShortName, resolveAmmoId, legacyAmmoFold } from '../v4/ammo-core';
 import { MERCHANT_GOODS, badShopRows, shopPrice, ammoShopRows, buyPlan,
   sellPlan, sellValue, sellBatchPlan, sellBatchQuote, sellBlockReason, canSell, ITEM_BASE, SELL_RATE } from '../v4/shop-core';   // M32b/M39：货架（弹药按口径卖）+ 坏货架兜底 + 批量购买；M44：收购（把多余的东西卖回去）
+import { TRADERS, LL_TIERS, loyaltyOf, priceMulOf, gateReason, repForSell, repForBuy, repForBounty, repForExpire, clampRep, traderLine, traderOf } from '../v4/trader-core';   // M71：商人好感度 / 忠诚档位 / 委托解锁
 import { apCapOf, fitnessApBonus, phaseOf, PHASE_LABEL } from '../v4/night-core';   // M25.2：行动力上限（睡眠债 + 体能）；M25.3：白昼曲线
 import { resumeFromOver, endDayLabel, endGoalChip, winContinuePatch } from '../v4/endless-core';   // M37/M51：通关 → 无尽延续的纯逻辑
 import { filterTabs, filterInv, dropCount, depositCount, quickSlots, quickPick, BAG_FILTERS, type BagFilter } from '../v4/qol-core';   // M38：背包筛选/分批丢弃·存入 + 补给快捷键
@@ -525,6 +526,8 @@ function newState(){
     store:{},
     eq:{ wpn:'crowbar', head:null, body:null, mask:null, feet:null, bag:null, trinket:null },
     base:{ door:0,bed:0,filter:0,garden:0,bench:0,storage:0,radio:0,wall:0, exDay:0, exUsed:{} },
+    /* M71：商人好感度（卖东西/买东西/完成委托都会涨；委托过期会掉） */
+    rep:{ peddler:0, quarter:0 },
     skills:{ shoot:0,melee:0,survival:0,medic:0,fitness:0,stealth:0,scout:0,gather:0,cook:0,craft:0,mechanic:0,trade:0 },
     xp:{ shoot:0,melee:0,survival:0,medic:0,fitness:0,stealth:0,scout:0,gather:0,cook:0,craft:0,mechanic:0,trade:0 },
     quest:{ stage:0, keycards:0, data:0 },
@@ -684,6 +687,10 @@ function sanitizeSave(d){
     eq[sl] = (typeof v === 'string' && ITEMS[v] && ITEMS[v].slot === slots[sl]) ? v : base.eq[sl]; }
   out.eq = eq;
   const b = {}; for(const k in BASE_UP) b[k] = Math.floor(num((out.base||{})[k], 0, 0, BASE_UP[k].max));
+  /* M71：商人好感度（每个商人一份，0~9999） */
+  const repIn = (out.rep && typeof out.rep === 'object') ? out.rep : {};
+  const rep = {}; for(const t of TRADERS) rep[t.id] = clampRep(num(repIn[t.id], 0, 0, 9999));
+  out.rep = rep;
   /* M70：回收台的当日额度也要过白名单 —— 不清洗就等于"读一次档额度重置"（无限兑换） */
   b.exDay = Math.floor(num((out.base||{}).exDay, 0, 0, 1e6));
   const exUsed = {};
@@ -4036,6 +4043,24 @@ function checkAch(){
 }
 
 /* ───────────── 商人 ───────────── */
+/* M71：好感度（塔科夫式）。三条口径：买卖小涨、委托大涨、委托过期掉得更多；
+   档位（LL1~4）决定**能买什么**并给一点点折扣。纯逻辑在 v4/trader-core.ts。 */
+function repOf(id){ return clampRep((S.rep && S.rep[id]) || 0); }
+function addRep(id, delta){
+  if(!S.rep || typeof S.rep !== 'object') S.rep = {};
+  const before = repOf(id), after = clampRep(before + delta);
+  S.rep[id] = after;
+  if(delta > 0 && loyaltyOf(after).lv > loyaltyOf(before).lv){
+    const l = loyaltyOf(after);
+    log('🤝 ' + (traderOf(id) ? traderOf(id).name : id) + ' 对你的好感升到「' + l.name + '」（LL' + l.lv + '）：货架上多了一批只卖给熟人的东西。', 'success');
+    toast('好感度提升', (traderOf(id) ? traderOf(id).name : id) + ' · ' + l.name + '（LL' + l.lv + '）', 'ok');
+  }
+  return after;
+}
+/** 现在能不能买这行货（UI 与探针共用 trader-core 的判据） */
+function buyGateOf(row){
+  return gateReason(row, { rep: repOf(row.trader || 'peddler'), bounties: Number(S.stats.bounties) || 0, radio: (S.base.radio || 0) > 0 });
+}
 function merchantRate(){
   /* C09 浮动汇率：活得越久物价越高，堵住后期材料单调爆炸。
      M24：交易技能把它压下来（Lv3 起再 -10%） */
@@ -4079,6 +4104,7 @@ function sellItemCore(id, times, rate){
   if(!takeItem(id, p.times)) return null;        // 兜底：背包对不上账就整笔不成交，别白给材料
   S.mat += p.total;
   addXP('trade', 2 * p.times);                   // M24 承诺的"和商人买卖涨交易技能"：买的那一半在 M32b 补了，这是卖的一半
+  addRep('peddler', repForSell(p.total));        // M71：卖东西涨好感（收你货的人是同一个流浪商人）
   return p;
 }
 function sellMerchant(id, times){
@@ -4156,34 +4182,56 @@ function openMerchant(){
   const row = (m, i) => {
     const it = ITEMS[m.id] || { n: m.id, desc: '' };
     const n = m.n || 1;
-    const cost = shopPrice(m, rate);
+    const who = m.trader || 'peddler';
+    /* M71：好感度门槛（LL 档位 + 委托解锁）—— 买不了就把"差什么"写在按钮的位置上 */
+    const gate = buyGateOf(m);
+    const cost = shopPrice(m, rate * priceMulOf(repOf(who)));      // 熟人折扣
     const left = shopLeft(m);
-    const can = S.mat >= cost && left > 0;
-    /* M39：批量购买 —— 份数按"材料 + 今日库存"实时算，不写死 ×5。
-       总是有一个「买满×N」（N 就是现在能买到的最大份数）；能买超过 5 份时再给一个「×5」。 */
-    const maxPlan = buyPlan(m, rate, S.mat, left, 'max');
-    const batch = (k, label) => k >= 2
+    const can = !gate && S.mat >= cost && left > 0;
+    const maxPlan = buyPlan({ ...m, cost }, 1, S.mat, left, 'max');   // 折后价算"买满"，不然会少买一份
+    const batch = (k, label) => (k >= 2 && !gate)
       ? '<button class="btn xs" onclick="buyMerchant(' + i + ',' + k + ')">' + label + '</button>' : '';
-    return '<div class="lrow"><div><div class="nm">' + it.n + ' ×' + n + ' <span class="tag ' + (left > 0 ? '' : 'wpn') + '">剩余 ' + left + '/' + (m.stock || 99) + '</span></div><div class="ds">' + (it.desc || '') + '</div></div>' +
+    const btnLabel = gate ? '未解锁' : left <= 0 ? '今日售罄' : can ? '购买' : '材料不足';
+    return '<div class="lrow"><div><div class="nm">' + it.n + ' ×' + n +
+      ' <span class="tag ' + (left > 0 ? '' : 'wpn') + '">剩余 ' + left + '/' + (m.stock || 99) + '</span>' +
+      (gate ? ' <span class="tag short">🔒</span>' : '') + '</div>' +
+      '<div class="ds">' + (it.desc || '') + '</div>' + (gate ? '<div class="hint" style="color:#e0b45c">' + gate + '</div>' : '') + '</div>' +
       '<div class="rt"><span class="tag ' + (can ? 'key' : '') + '">🔩 ' + cost + '</span>' +
-      '<button class="btn xs ' + (can ? 'ok' : '') + '" ' + (can ? '' : 'disabled') + ' onclick="buyMerchant(' + i + ')">' + (left <= 0 ? '今日售罄' : (can ? '购买' : '材料不足')) + '</button>' +
+      '<button class="btn xs ' + (can ? 'ok' : '') + '" ' + (can ? '' : 'disabled') + ' onclick="buyMerchant(' + i + ')">' + btnLabel + '</button>' +
       batch(maxPlan.max > 5 ? 5 : 0, '×5') +
       batch(maxPlan.max, '买满×' + maxPlan.max) +
       '</div></div>';
   };
   /* M32b：弹药单独一段（用户："没有各种不同的子弹卖"）——索引仍按 MERCHANT 原位置传，buyMerchant 不受影响 */
+  /* M71：军需官没上线（没无线电）时，他的货整段折叠成"一句提示"，不让玩家对着一堆锁发呆 */
+  const radioOk = (S.base.radio || 0) > 0;
   const ammoRows = MERCHANT.map((m, i) => ({ m, i })).filter(x => x.m.sec === 'ammo');
   const gearRows = MERCHANT.map((m, i) => ({ m, i })).filter(x => x.m.sec !== 'ammo');
   const cut = (t, list) => (list.length ? '<div class="sect-title">' + t + '</div>' + list.map(x => row(x.m, x.i)).join('') : '');
   /* M44：买卖两个页签（同一个 popup 里）—— 标题行下面那一排就是切换；材料与汇率两边都看得到 */
   const tabBtn = (id, label) => '<button class="btn sm ' + (merchantTab === id ? 'warn' : 'ghost') + '" onclick="setMerchantTab(\'' + id + '\')">' + label + '</button>';
+  /* M71：好感度面板 —— 每个商人一行（档位 + 进度 + 到下一档还差多少） */
+  const repPanel = TRADERS.map(t => {
+    const r = repOf(t.id), l = loyaltyOf(r);
+    const locked = t.needRadio && !radioOk;
+    const pct = Math.round(l.progress * 100);
+    return '<div style="flex:1;min-width:240px">' +
+      '<div class="hint" style="margin-bottom:2px">' + traderLine(t.id, r) + (locked ? '　🔒 还没架无线电' : '') + '</div>' +
+      '<div class="bar thin"><i class="key" style="width:' + (locked ? 0 : pct) + '%"></i></div>' +
+      '<div class="hint">' + (locked ? t.tag : (l.next ? '再攒 ' + l.toNext + ' 点好感升「' + l.next.name + '」：解锁更多货 + ' + Math.round(l.next.discount * 100) + '% 折扣' : t.tag)) + '</div></div>';
+  }).join('');
   const head = '<div class="row" style="margin-bottom:10px;flex-wrap:wrap;gap:6px">' + tabBtn('buy', '🛒 买') + tabBtn('sell', '💰 卖（收多余的东西）') +
     '<span class="spacer"></span><span class="chip gold">🔩 材料 <b>' + S.mat + '</b></span>' +
-    '<span class="chip">汇率 ×' + rate.toFixed(2) + '</span></div>';
+    '<span class="chip">汇率 ×' + rate.toFixed(2) + '</span></div>' +
+    '<div class="row" style="gap:14px;flex-wrap:wrap;margin-bottom:10px;padding:8px 10px;border:1px solid var(--line);border-radius:var(--r)">' + repPanel + '</div>';
   const buyBody = '<p class="muted" style="margin-bottom:10px">"末日里最贵的不是子弹，是还能说话的人。看看货？"</p>' +
-    cut('🔩 弹药（按口径 · 穿透越高越贵）', ammoRows) + cut('🎒 物资与装备', gearRows) +
+    cut('🔩 弹药（按口径 · 穿透越高越贵 · 穿甲弹只卖给熟人）', ammoRows) + cut('🎒 物资与装备', gearRows) +
     '<div class="hint" style="margin-top:10px">今日汇率 <b class="mono">×' + rate.toFixed(2) + '</b>（每天 +2%：外面越乱，他越敢开价）· 每样货每天有量，卖完等明天 · 当前材料：<b class="mono">' + S.mat + '</b><br>' +
     '买到的弹药直接进背包的对应弹种：打装甲目标记得先换<b>穿甲弹</b>（背包 → 弹药 里装填）。<br>' +
+    /* M71：好感度怎么涨 —— 讲清楚，别让玩家猜 */
+    '<b>好感度</b>：卖东西 +1~3 / 买东西 +1~2 / <b>完成委托 +25</b>；委托过期 <b class="mono">−12</b>。' +
+    '档位（LL1 陌生人 → LL2 熟人 → LL3 老主顾 → LL4 自己人）决定能买到什么，每档还多 5%/10%/16% 折扣；' +
+    '有些货还要"替他办过 N 张委托"才解锁。<br>' +
     /* M39：批量购买 */
     '要补货就按 <b>×N / 买满</b>：份数按你现在的材料和今天的库存实时算，一次补完（不会再点十几下）。</div>';
   modal({ title:'🏪 神秘商人', body: head + (merchantTab === 'sell' ? sellPanelHtml(rate) : buyBody),
@@ -4194,9 +4242,14 @@ function buyMerchant(i, times){
   /* M32b 兜底：坏货架（id 不在物品表里 / 价格数量不是正数）**不许成交**——
      旧版就是"先扣材料、再 grant 一个不存在的 id"，玩家看到的是材料花了子弹没进包。 */
   if(!m || badShopRows([m], ITEMS).length){ log('❌ 这件货有点问题（不在物品表里），这次先不成交。','danger'); return; }
+  /* M71：好感度门槛 —— 服务端（这里是成交入口）也要拦，不能只靠按钮 disabled */
+  const gate = buyGateOf(m);
+  if(gate){ log('❌ ' + gate, 'dim'); toast('买不了', gate, 'bad'); return; }
   const n = Math.max(1, m.n || 1);
+  const who = m.trader || 'peddler';
+  const effRate = merchantRate() * priceMulOf(repOf(who));      // 熟人折扣
   /* M39：批量购买。份数上限 = min(材料买得起的, 今日剩余, 99)，扣款与库存都按实际成交份数走 */
-  const plan = buyPlan(m, merchantRate(), S.mat, shopLeft(m), times === undefined ? 1 : times);
+  const plan = buyPlan({ ...m, cost: m.cost }, effRate, S.mat, shopLeft(m), times === undefined ? 1 : times);
   if(!plan.times){ log('❌ ' + plan.reason, 'dim'); return; }
   S.mat -= plan.total;
   S.shop.bought[m.id] = (S.shop.bought[m.id] || 0) + plan.times;
@@ -4206,6 +4259,7 @@ function buyMerchant(i, times){
     (plan.times > 1 ? '（' + plan.times + ' 份 · -' + plan.total + ' 材料）' : '（-' + plan.total + ' 材料）'), 'loot');
   if(plan.reason) log('　 ' + plan.reason, 'dim');
   addXP('trade', 3 * plan.times);               // M24 承诺过"和商人买卖涨交易技能"，这里补上（按成交份数给）
+  addRep(who, repForBuy(plan.total));           // M71：买东西也涨一点好感
   autosave();
   refreshMerchant();                            // M44：重开弹窗但保住滚动位置（买卖各一次不再被甩回顶部）
 }
@@ -4459,6 +4513,7 @@ Object.assign(window, { VER, SAVE_KEY, V1_KEY, ITEMS, itemName, isWpn, ZOMBIES, 
   depositAll, setBagFilter, quickBarHtml,       // M38：背包批量存入/筛选切换 + 补给快捷条（内联 onclick）
   openSavePort, openBackupHistory, restoreHistory, exportHistory, deleteHistory,   // M39：口令导出/导入 + 备份历史（内联 onclick）
   exchangeItem, EXCHANGE_ROWS,                                                   // M70：回收台（据点页内联 onclick + 探针读表）
+  repOf, addRep, buyGateOf, TRADERS, LL_TIERS, loyaltyOf, traderLine,             // M71：商人好感度 / 忠诚档位 / 门槛判定（探针直接读）
   radLevelAt, radGain, radProtect, RAD_SOURCES, geigerText, boot });
 /* M58：白天辐射症状也挂出去（人体页/图鉴渲染 + 验收探针直接调） */
 Object.assign(window, { radSymptoms, radSymptomText, radBrief });

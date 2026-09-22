@@ -16,33 +16,41 @@ export interface ShopRow {
   stock?: number;
   /** 货架分组（商人弹窗按这个分段显示）；缺省 = 物资与装备 */
   sec?: 'ammo';
+  /* ── M71：塔科夫式门槛（好感度档位 + 委托解锁）── */
+  /** 归哪个商人（缺省 = 流浪商人 peddler）；军需官 quarter 要先架无线电 */
+  trader?: string;
+  /** 至少要哪个忠诚档（1~4，缺省 1） */
+  ll?: number;
+  /** 还要完成过几张委托才卖（"做任务解锁特定道具"） */
+  quests?: number;
 }
 
 export const MERCHANT_GOODS: ShopRow[] = [
-  /* ── 弹药：按口径/弹种卖（M25 的口径表 c9/c12/c556/c762/c308） ── */
-  { id: 'a9_fmj',   n: 15, cost: 28, stock: 3, sec: 'ammo' },   // 9mm FMJ：最便宜的入门弹
-  { id: 'a12_buck', n: 10, cost: 26, stock: 2, sec: 'ammo' },   // 12 号鹿弹：量大，穿透几乎为零
+  /* ── 弹药：按口径/弹种卖（M25 的口径表 c9/c12/c556/c762/c308）──
+     M71：普通弹谁都能买；**穿甲弹与独头弹只卖给熟人**（LL2/LL3），最顶的竞赛弹/穿甲弹走军需官线（要先架无线电） */
+  { id: 'a9_fmj',   n: 15, cost: 28, stock: 3, sec: 'ammo' },                                     // 9mm FMJ：最便宜的入门弹
+  { id: 'a12_buck', n: 10, cost: 26, stock: 2, sec: 'ammo' },                                     // 12 号鹿弹：量大，穿透几乎为零
   { id: 'a556_fmj', n: 12, cost: 34, stock: 2, sec: 'ammo' },
   { id: 'a762_fmj', n: 12, cost: 34, stock: 2, sec: 'ammo' },
-  { id: 'a12_slug', n: 8,  cost: 42, stock: 1, sec: 'ammo' },   // 独头弹：能打穿薄钢板
-  { id: 'a9_ap',    n: 8,  cost: 46, stock: 2, sec: 'ammo' },   // 穿甲弹起步价
-  { id: 'a308_m',   n: 6,  cost: 58, stock: 1, sec: 'ammo' },
-  { id: 'a556_ap',  n: 8,  cost: 72, stock: 1, sec: 'ammo' },
-  { id: 'a762_ap',  n: 8,  cost: 74, stock: 1, sec: 'ammo' },
-  { id: 'a308_ap',  n: 5,  cost: 92, stock: 1, sec: 'ammo' },   // 目前能打穿一切的东西，最贵
-  /* ── 物资与装备（M25 之前就在卖的那些，价格一个没动） ── */
+  { id: 'a12_slug', n: 8,  cost: 42, stock: 1, sec: 'ammo', ll: 2 },                              // 独头弹：能打穿薄钢板
+  { id: 'a9_ap',    n: 8,  cost: 46, stock: 2, sec: 'ammo', ll: 2 },                              // 穿甲弹起步价
+  { id: 'a308_m',   n: 6,  cost: 58, stock: 1, sec: 'ammo', trader: 'quarter', ll: 2, quests: 2 },
+  { id: 'a556_ap',  n: 8,  cost: 72, stock: 1, sec: 'ammo', ll: 3 },
+  { id: 'a762_ap',  n: 8,  cost: 74, stock: 1, sec: 'ammo', trader: 'quarter', ll: 2, quests: 3 },
+  { id: 'a308_ap',  n: 5,  cost: 92, stock: 1, sec: 'ammo', trader: 'quarter', ll: 3, quests: 4 },  // 能打穿一切的东西：军需官 + 老主顾 + 办过 4 张委托
+  /* ── 物资与装备（M25 之前就在卖的那些，价格一个没动）── */
   { id: 'medkit',   cost: 34,  stock: 2 },
   { id: 'can',      n: 3, cost: 22, stock: 2 },
   { id: 'water',    n: 3, cost: 22, stock: 2 },
-  { id: 'anti',     n: 2, cost: 30, stock: 1 },
+  { id: 'anti',     n: 2, cost: 30, stock: 1, ll: 2 },                                            // 抗生素：熟人优先拿
   { id: 'fungicide', n: 2, cost: 26, stock: 1 },   // M50：抗真菌药（闷湿季的续命药）
-  { id: 'gasmask',  cost: 70,  stock: 1 },
-  { id: 'hazmat',   cost: 120, stock: 1 },
-  { id: 'kevlar',   cost: 110, stock: 1 },
+  { id: 'gasmask',  cost: 70,  stock: 1, ll: 2 },
+  { id: 'hazmat',   cost: 120, stock: 1, trader: 'quarter', ll: 2, quests: 2 },                  // 防化服：替军需官办过事才给
+  { id: 'kevlar',   cost: 110, stock: 1, ll: 3 },
   { id: 'grenade',  n: 2, cost: 60, stock: 1 },
-  { id: 'machete',  cost: 60,  stock: 1 },
-  { id: 'shotgun',  cost: 130, stock: 1 },
-  { id: 'marksman', cost: 210, stock: 1 },
+  { id: 'machete',  cost: 60,  stock: 1, ll: 2 },
+  { id: 'shotgun',  cost: 130, stock: 1, ll: 2 },
+  { id: 'marksman', cost: 210, stock: 1, trader: 'quarter', ll: 3, quests: 4 },
 ];
 
 /** 弹药行（商人弹窗/探针要单独看一眼"有没有各种子弹"） */

@@ -6,6 +6,7 @@
    所以睡觉、击杀、搜刮这些老路径一行都不用改。 */
 import { L } from '../main';
 import { onDayInRegion } from './region-events';
+import { clampRep, loyaltyOf, repForBounty, repForExpire } from './trader-core';   // M71：委托完成/过期 → 商人好感度
 import {
   MAX_ACTIVE, accept as acceptCore, abandon as abandonCore, activeLine, ensureContracts, metricLabel,
   metricNow, progressOf, regionHint, rollOffers, settle,
@@ -116,6 +117,23 @@ function tickQuiet() {
     s.mat += res.matGain;
     for (const id in res.items) L.grant(id, res.items[id], true);
     s.stats.bounties = (s.stats.bounties || 0) + res.completed.length;
+    /* M71：委托是"商人好感度"的主要来源（塔科夫那套：做任务才给你开货架）——
+       完成 +25/张，过期 −12/张，掉得比涨得快。档位提升时 trader-core 那边会劝 UI 重画。 */
+    if (res.completed.length || res.expired.length) {
+      const rep = (s as any).rep && typeof (s as any).rep === 'object' ? (s as any).rep : ((s as any).rep = {});
+      const before = Math.max(0, Number(rep.peddler) || 0);
+      const delta = repForBounty(res.completed.length) + repForExpire(res.expired.length);
+      rep.peddler = clampRep(before + delta);
+      const after = rep.peddler;
+      if (res.completed.length) L.log('🤝 神秘商人记下了你办的事：好感 +' + repForBounty(res.completed.length) + '（现在 ' + after + '）', 'success');
+      if (res.expired.length) L.log('💤 有委托过期了：好感 −' + Math.abs(repForExpire(res.expired.length)) + '（现在 ' + after + '）', 'danger');
+      const bl = loyaltyOf(before), al = loyaltyOf(after);
+      if (al.lv > bl.lv) {
+        L.log('🤝 好感升到「' + al.name + '」（LL' + al.lv + '）：商人货架上解锁了一批只卖给熟人的东西。', 'success');
+        L.toast('好感度提升', '神秘商人 · ' + al.name + '（LL' + al.lv + '）', 'ok');
+        L.sfx?.('ok');
+      }
+    }
     if (s.stats.bounties >= 10) L.award('a_bounty');
     for (const m of res.messages) L.log(m, res.completed.length ? 'success' : 'dim');
     if (res.completed.length) { L.toast('📋 委托完成 ' + res.completed.length + ' 张', res.completed.map(c => c.title).join('、'), 'ok'); L.sfx('ok'); }
