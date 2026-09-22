@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { defaultSaveWorld, ensureSaveWorld } from '../src/v4/worldstate';
 import { setActiveRegions } from '../src/v4/regions-core';
 import {
-  ROOM_KEY, ambushChance, buildInterior, hashStr, interiorHost, isLooted, landForce, mulberry32,
+  ROOM_KEY, ambushChance, buildInterior, groupLoot, hashStr, interiorHost, isLooted, landForce, mulberry32,
   openDecision, roomState, roomStatus, rollRoomLoot, splitLoot, summary, type RoomDef,
 } from '../src/v4/interior-core';
 
@@ -127,6 +127,23 @@ describe('M66 房间掉落与进度', () => {
     expect(hashStr('a|b')).toBe(hashStr('a|b'));
     const r1 = mulberry32(hashStr('x')), r2 = mulberry32(hashStr('x'));
     expect([r1(), r1(), r1()]).toEqual([r2(), r2(), r2()]);
+  });
+});
+
+/* M67：用户报「在楼内需要有一个单独的行动日志，不然看不到搜到了啥」——
+   日志本体是 DOM（探针钉），但"这一间翻到了什么"要收成一行，这行怎么排是纯逻辑。 */
+describe('M67 楼内日志的收成行', () => {
+  it('同名归并求和（同一个房间可能抽出两个同款），按第一次出现的顺序排', () => {
+    expect(groupLoot([['罐头', 1], ['绷带', 2], ['罐头', 1]])).toBe('罐头 ×2 · 绷带 ×2');
+    expect(groupLoot([['罐头', 2]])).toBe('罐头 ×2');
+  });
+  it('空列表给空串（调用方自己决定显示"什么都没有"）', () => {
+    expect(groupLoot([])).toBe('');
+  });
+  it('数量兜底：0 / 负数 / 小数都不会写出"×0"这种鬼东西', () => {
+    expect(groupLoot([['罐头', 0]])).toBe('罐头 ×1');
+    expect(groupLoot([['罐头', -3]])).toBe('罐头 ×1');
+    expect(groupLoot([['罐头', 1.6]])).toBe('罐头 ×2');
   });
 });
 

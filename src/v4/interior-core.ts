@@ -251,3 +251,15 @@ export function lockLabel(lock: LockKind | undefined): string {
 export function kindLabel(kind: RoomKind): string {
   return kind === 'vault' ? '深处 · 好东西' : kind === 'stock' ? '库房' : '前厅';
 }
+
+/** M67：把这一间翻到的东西收成一行（"罐头 ×2 · 绷带 ×1"）——
+   楼内日志要让人一眼看清拿到了什么：同名归并求和、按第一次出现的顺序排。纯函数，单测钉住。 */
+export function groupLoot(items: [string, number][]): string {
+  const order: string[] = [];
+  const cnt: Record<string, number> = {};
+  for (const [name, n] of items) {
+    if (cnt[name] === undefined) order.push(name);
+    cnt[name] = (cnt[name] || 0) + Math.max(1, Math.round(n));
+  }
+  return order.map(name => name + ' ×' + cnt[name]).join(' · ');
+}

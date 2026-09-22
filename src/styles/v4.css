@@ -452,3 +452,14 @@ html[data-mapstyle="inline"] #v4world{margin-bottom:0}
 .v4copt:first-of-type{border-top:0}
 .v4copt .nm{font-size:13px}
 .v4copt .btn{margin-top:6px}
+/* M67：楼内的行动日志 —— 平面图是全屏覆盖层，legacy 那个日志框被压住了，
+   所以楼内自带一份（用户：在楼内需要有一个单独的行动日志，不然看不到搜到了啥）。
+   配色直接对齐战斗日志，玩家在楼里翻到的东西要一眼能扫到。 */
+#v4i-overlay .logbox{border:1px solid var(--line);border-radius:var(--r);background:#0b0e12;padding:6px 8px}
+#v4i-overlay .logbox .round-log{height:112px;border:0;background:transparent;padding:0}
+#v4i-overlay .round-log .narrative{color:#c9d4e0}
+#v4i-overlay .round-log .loot{color:#e8d18a}
+#v4i-overlay .round-log .success{color:#7fd6a8}
+#v4i-overlay .round-log .hurt{color:#ff6a5a}
+#v4i-overlay .round-log .danger{color:#ff8a6a}
+#v4i-overlay .round-log .dim{color:var(--dim)}

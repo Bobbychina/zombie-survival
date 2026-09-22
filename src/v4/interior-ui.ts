@@ -11,13 +11,28 @@ import { ensureSaveWorld, worldOf, zoneOfPoi } from './worldstate';
 import { foesFor, tallySearch } from './search-core';
 import { poiLeft } from './search';
 import {
-  ROOM_KEY, ambushChance, buildInterior, interiorHost, isUnlocked, kindLabel, landForce, lockLabel,
+  ROOM_KEY, ambushChance, buildInterior, groupLoot, interiorHost, isUnlocked, kindLabel, landForce, lockLabel,
   openDecision, roomState, roomStatus, rollRoomLoot, summary,
   type InteriorPlan, type InteriorState, type RoomDef,
 } from './interior-core';
 
 const OV = 'v4i-overlay';
 let cur: { plan: InteriorPlan; st: InteriorState; key: string; poiId: string; danger: number; s: any; b: any } | null = null;
+
+/* M67：**楼内日志**。用户原话：「在楼内需要有一个单独的行动日志，不然看不到搜到了啥」——
+   平面图是个全屏覆盖层，legacy 的日志框被压在下面，点完"搜刮"只看到房间变灰、根本不知道拿到了什么。
+   所以楼内自己留一份：按**楼**记（`key`），关掉弹窗、打完一架再进来，之前的记录还在。 */
+interface LogLine { t: string; c: string }
+const logs = new Map<string, LogLine[]>();
+const LOG_MAX = 80;
+function note(t: string, c = '') {
+  if (!cur) return;
+  const arr = logs.get(cur.key) || [];
+  arr.push({ t, c });
+  if (arr.length > LOG_MAX) arr.shift();
+  logs.set(cur.key, arr);
+}
+function curLog(): LogLine[] { return cur ? (logs.get(cur.key) || []) : []; }
 
 function esc(s: unknown) { return String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] ?? c)); }
 
@@ -75,6 +90,7 @@ function render() {
   const { plan, st } = cur;
   const sum = summary(plan, st);
   const left = poiLeft(cur.b, cur.s);
+  const lines = curLog();
   root.innerHTML = '<div class="modal">' +
     '<div class="strip"></div>' +
     '<div class="modal-hd"><h2>' + plan.icon + ' ' + esc(plan.name) + ' · 里面</h2>' +
@@ -83,16 +99,29 @@ function render() {
       '<div class="hint">已搜 <b>' + sum.done + '/' + sum.total + '</b> 间' +
         (sum.lockedLeft + sum.sealedLeft ? ' · 还锁着 <b>' + (sum.lockedLeft + sum.sealedLeft) + '</b> 间' : '') +
         ' · 这地方还能搜 ' + left + ' 次（每间 1 行动力，剩 ' + L.S.ap + '）</div>' +
+      /* M67：楼内日志放在最上面 —— 房间列表可能很长，日志在最底下会被滚出视野 */
+      '<div class="logbox" style="margin:8px 0">' +
+        '<div class="row" style="justify-content:space-between;margin-bottom:4px">' +
+          '<b>📋 楼内日志</b><span class="hint mono">' + lines.length + ' 条 · 最近的' +
+          (lines.length ? '（' + esc(lines[lines.length - 1].t).slice(0, 22) + '…）' : '（空）') + '</span>' +
+        '</div>' +
+        '<div class="round-log" id="v4i-log" style="height:112px">' +
+          (lines.length ? lines.map(l => '<div class="' + l.c + '">' + esc(l.t) + '</div>').join('')
+            : '<div class="dim">还没动手：点下面任意一间的按钮，这里会记下你搜到了什么。</div>') +
+        '</div>' +
+      '</div>' +
       '<div class="hint" style="margin:4px 0 10px">锁着的房间里才是好东西：常见货在明面上，稀有的都锁起来了。' +
         '没钥匙就翻别的房间（有几率翻出楼门钥匙），或者用撬棍 / 硬踹。</div>' +
       '<div class="grid" style="gap:8px">' + plan.rooms.map(roomCard).join('') + '</div>' +
     '</div>' +
     '<div class="modal-ft"><div class="row">' +
       '<button class="btn ok" onclick="V4Interior.leave()">🏃 出去（进度留着）</button>' +
-      '<span class="hint">走出去再回来，剩下的房间还在这儿。</span>' +
+      '<span class="hint">走出去再回来，剩下的房间还在这儿（楼内日志也留着）。</span>' +
     '</div></div>' +
   '</div>';
   root.querySelectorAll('.btn').forEach(b => { (b as HTMLElement).style.minWidth = '44px'; });
+  const box = document.getElementById('v4i-log');      // 新记录在最下面：渲染完跟到底
+  if (box) box.scrollTop = box.scrollHeight;
 }
 
 function close() {
@@ -113,6 +142,10 @@ export const V4Interior = {
       const first = c.plan.rooms.filter(r => r.lock).length;
       L.log('🚪 你推开' + c.poi.icon + c.poi.name + '的侧门：里面 ' + c.plan.rooms.length + ' 间房' +
         (first ? '，其中 ' + first + ' 间锁着。' : '，门都开着。'), 'narrative');
+      note('🚪 你推开' + c.poi.name + '的侧门：' + c.plan.rooms.length + ' 间房' + (first ? '，' + first + ' 间锁着。' : '，门都开着。'), 'narrative');
+    } else {
+      const sum0 = summary(c.plan, c.st);
+      note('🔁 你又回到' + c.poi.name + '（还剩 ' + (sum0.total - sum0.done) + ' 间没搜完）', 'dim');
     }
     const root = document.createElement('div');
     root.className = 'overlay';
@@ -157,13 +190,16 @@ export const V4Interior = {
       L.S.hp -= dmg;
       L.S.noise = (L.S.noise || 0) + 2;
       L.log('🦶 你一脚踹在' + esc(room.name) + '（' + lockLabel(room.lock) + '）的门上：锁舌崩了，' + '你也撞得生疼（-' + dmg + ' 生命）。', 'hurt');
+      note('🦶 硬踹' + room.name + '（' + lockLabel(room.lock) + '）：锁舌崩了，你撞得生疼（-' + dmg + ' 生命）', 'hurt');
       L.sfx('hurt');
       if (L.S.hp <= 0) { close(); L.gameOver('撬门把自己撬死了。'); return false; }
     } else if (dec.how === 'key') {
       L.log('🔑 楼门钥匙插进' + esc(room.name) + '：一转到底，门开了。', 'success');
+      note('🔑 用楼门钥匙开了' + room.name, 'success');
       L.sfx('ok');
     } else if (dec.how === 'crowbar') {
       L.log('🪓 ' + esc(dec.why) + '：' + esc(room.name) + '开了。' + (dec.cost?.mat ? '（-2 材料）' : ''), 'success');
+      note('🪓 撬开' + room.name + (dec.cost?.mat ? '（-2 材料）' : '') + '：' + dec.why, 'success');
       L.sfx('ok');
     }
     roomState(c.st, room.id).opened = 1;
@@ -191,6 +227,7 @@ export const V4Interior = {
       const d = Math.max(1, Math.round(L.ri(1, 2) + c.danger * 0.6));
       L.S.mat += d;
       L.log('🧹 ' + room.icon + esc(room.name) + '也早被翻空了，你只刮出 ' + d + ' 份材料。', 'loot');
+      note('🧹 ' + room.name + '也被翻空了 —— 只刮出 ' + d + ' 份材料', 'dim');
       tickQuests(); L.autosave(); L.render(); render();
       return true;
     }
@@ -199,20 +236,27 @@ export const V4Interior = {
       { needKey, valid: (id) => id === ROOM_KEY || id === 'ammo' || !!L.ITEMS[id] });
     L.hr();
     L.log('🔍 你搜' + room.icon + esc(room.name) + '（' + c.plan.icon + esc(c.plan.name) + '）……', 'narrative');
+    note('🔍 搜' + room.icon + room.name + '…', 'narrative');
     if (!got.length) {
       L.log('…什么都没有。只有灰尘和更深的安静。', 'dim');
+      note('　…什么都没有（这间是空的）', 'dim');
     }
+    const gotNames: [string, number][] = [];
     for (const id of got) {
       if (id === ROOM_KEY) {
         L.grant(ROOM_KEY, 1); L.sfx('ok');
         L.log('🔑 你在抽屉最里面翻到一把楼门钥匙——加固门能开了。', 'success');
+        note('🔑 翻到一把楼门钥匙（加固门能开了）', 'success');
         continue;
       }
       const n = id === 'ammo' ? L.ri(4, 10) : (Math.random() < 0.25 ? 2 : 1);
       L.grant(id, n);
       L.sfx('loot');
       L.log('📦 ' + L.itemName(id) + ' ×' + n, 'loot');
+      gotNames.push([L.itemName(id), n]);
     }
+    // M67：楼内日志要能一眼看清"这间翻到了什么"（逐件写会淹在一堆行里，看不清总共拿到多少）
+    if (gotNames.length) note('　📦 拿到 ' + groupLoot(gotNames), 'loot');
     if (Math.random() < ambushChance(room, c.danger, false)) return ambush(room);
     tickQuests();
     L.autosave(); L.render(); render();
@@ -230,6 +274,7 @@ export const V4Interior = {
       rooms: c.plan.rooms.map(r => ({ id: r.id, name: r.name, kind: r.kind, lock: r.lock || null, status: roomStatus(r, c.st) })),
       summary: summary(c.plan, c.st),
       left: poiLeft(c.b, c.s),
+      log: curLog().map(l => l.t),                 // M67：探针核对"楼内日志有没有记下搜到了什么"
     };
   },
 };
@@ -239,6 +284,7 @@ function ambush(room: RoomDef): boolean {
   if (!cur) return false;
   const { poiId, danger, plan } = cur;
   const foes = foesFor(Math.random, poiId, danger, !!room.lock);
+  note('☠️ ' + room.icon + room.name + '里有东西在等着你！', 'danger');   // 记在楼内日志里（关掉弹窗也不丢）
   close();
   L.log('☠️ ' + room.icon + esc(room.name) + '里有东西在等着你！', 'danger');
   L.sfx('bad');
