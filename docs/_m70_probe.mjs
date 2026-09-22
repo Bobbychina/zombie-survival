@@ -48,9 +48,9 @@ const checks = []
 const ok = (n, c, extra = '') => { checks.push([n, !!c]); console.log((c ? 'PASS ' : 'FAIL ') + n + (extra ? '  ' + extra : '')) }
 /** 打开据点页并渲染 */
 const openBase = async () => { await ev(`(() => { closeAllModals(); setTab('base'); render(); return 1 })()`); await sleep(350) }
-const pageText = () => ev(`(() => String((document.getElementById('view') || {}).textContent || '').replace(/\\s+/g, ' ')`)`
-const btn = (rowId, times) => `[...document.querySelectorAll('#view button')].find(b => (b.getAttribute('onclick')||'').indexOf("exchangeItem('${rowId}',${times})") >= 0)`
-const click = (rowId, times) => ev(`(() => { const b = ${btn(rowId, times)}; if (!b) return 'NOBTN'; if (b.disabled) return 'DISABLED'; b.click(); return 'ok' })()`)
+const pageText = () => ev("(() => String((document.getElementById('view') || {}).textContent || '').replace(/\\s+/g, ' '))()")
+const btnSel = (rowId, times) => "[...document.querySelectorAll('#view button')].find(b => (b.getAttribute('onclick')||'').indexOf(\"exchangeItem('" + rowId + "'," + times + ")\") >= 0)"
+const click = (rowId, times) => ev("(() => { const b = " + btnSel(rowId, times) + "; if (!b) return 'NOBTN'; if (b.disabled) return 'DISABLED'; b.click(); return 'ok' })()")
 const info = () => j(`(() => JSON.stringify({
   mat: S.mat, metal: itemCount('metal'), chip: itemCount('chip'), bench: S.base.bench || 0,
   usedMetal: (S.base.exUsed || {}).metal || 0, usedChip: (S.base.exUsed || {}).chip || 0, exDay: S.base.exDay, day: S.day,
