@@ -49,7 +49,8 @@ const ok = (n, c, extra = '') => { checks.push([n, !!c]); console.log((c ? 'PASS
 /** 打开据点页并渲染 */
 const openBase = async () => { await ev(`(() => { closeAllModals(); setTab('base'); render(); return 1 })()`); await sleep(350) }
 const pageText = () => ev("(() => String((document.getElementById('view') || {}).textContent || '').replace(/\\s+/g, ' '))()")
-const btnSel = (rowId, times) => "[...document.querySelectorAll('#view button')].find(b => (b.getAttribute('onclick')||'').indexOf(\"exchangeItem('" + rowId + "'," + times + ")\") >= 0)"
+/** 找某一行兑换按钮：按 onclick 前缀匹配（份数可能是 1、99 或旧版的 0，别写死） */
+const btnSel = (rowId, _times) => "[...document.querySelectorAll('#view button')].find(b => (b.getAttribute('onclick')||'').indexOf(\"exchangeItem('" + rowId + "',\") >= 0 && /\\u6362\\u6ee1/.test(b.textContent) === " + (_times > 1 ? 'true' : 'false') + ")"
 const click = (rowId, times) => ev("(() => { const b = " + btnSel(rowId, times) + "; if (!b) return 'NOBTN'; if (b.disabled) return 'DISABLED'; b.click(); return 'ok' })()")
 const info = () => j(`(() => JSON.stringify({
   mat: S.mat, metal: itemCount('metal'), chip: itemCount('chip'), bench: S.base.bench || 0,
@@ -73,9 +74,8 @@ await ev(`(() => { try { localStorage.setItem('dsh.tutorial.done','1'); } catch(
 await openBase()
 const t0 = String(await pageText())
 ok('① 据点页有「♻️ 回收台」区块', t0.indexOf('回收台') >= 0 && t0.indexOf('材料 → 建材') >= 0)
-const rowCount = Number(await ev(`(() => document.querySelectorAll('#view button[onclick^="exchangeItem"]').length)`))
-ok('① 7 种建材各有一行（木料/铁片/布/胶带/化学品/汽油/芯片）', rowCount === 14 || rowCount === 7,
-  '按钮数=' + rowCount + '（每行 1~2 颗：换 1 / 换满）')
+const rowCount = Number(await ev("(() => document.querySelectorAll('#view button[onclick^=\"exchangeItem\"]').length)()"))
+ok('① 7 种建材各有一行（每行 2 颗按钮：换 1 / 换满）', rowCount === 14, '按钮数=' + rowCount)
 if (outDir) await shot('m70-base')
 
 /* ② 没工作台：换不了 */
@@ -128,9 +128,10 @@ await ev(`(() => { S.base.door = 0; render(); return 1 })()`)
 const d0 = await costText()
 await ev(`(() => { S.base.door = 1; render(); return 1 })()`)
 const d1 = await costText()
-const has = (s, a, b) => s.indexOf(a) >= 0 && s.indexOf(b) >= 0
+const has = (s, re) => re.test(s)
 ok('⑥ 曲线放缓：门窗 Lv0 要 木料 4/铁片 3，Lv1 要 木料 6/铁片 5（×0.35 曲线；老曲线会是 7/5）',
-  has(d0, '木料 4', '铁片 3') && has(d1, '木料 6', '铁片 5'), (d1.match(/木料 \\d+ · 铁片 \\d+/) || [d1.slice(0, 80)])[0])
+  has(d0, /木料 \d+\/4/) && has(d0, /铁片 \d+\/3/) && has(d1, /木料 \d+\/6/) && has(d1, /铁片 \d+\/5/),
+  (d1.match(/木料[^⛔✅]{0,20}/) || [d1.slice(0, 90)])[0])
 
 ok('⑦ 全程 0 未捕获异常', errs.length === 0, errs.slice(0, 3).join(' | '))
 console.log('')

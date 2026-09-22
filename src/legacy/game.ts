@@ -3314,13 +3314,15 @@ function renderBase(){
       const used = ex.used[r.id] || 0;
       const line = exLine(r, { mat: S.mat, used, benchLv });
       const canBulk = line.can >= 2;
-      const btn = (n, label, cls) => '<button class="btn sm ' + cls + '" ' + (n > 0 ? '' : 'disabled') +
+      /* onclick 里的份数**写死**（1 / 99=换满，由 exchangeItem 自己夹取）：
+         以前按"当前能换几份"渲染，缺料/缺额度时按钮的 onclick 会变成 `,0` —— 探针与玩家的预期都对不上。 */
+      const btn = (n, label, cls) => '<button class="btn sm ' + cls + '" ' + (line.can > 0 ? '' : 'disabled') +
         ' onclick="exchangeItem(\'' + r.id + '\',' + n + ')">' + label + '</button>';
       return '<div class="card"><h3>' + itemName(r.id) + ' <span class="sub">' + r.n + ' 件 / ' + r.cost + ' 材料</span></h3>' +
         '<div class="ds hint" style="min-height:30px">' + r.why + '</div>' +
         '<div class="hint">今天已换 <b>' + line.used + '/' + line.cap + '</b>' + (line.why ? ' · ' + line.why : '') + '</div>' +
-        '<div class="row" style="margin-top:6px">' + btn(line.can > 0 ? 1 : 0, '♻️ 换 1', canBulk ? '' : 'ok') +
-        btn(line.can, '♻️ 换满 (' + line.can + ')', 'ok') + '</div></div>';
+        '<div class="row" style="margin-top:6px">' + btn(1, '♻️ 换 1', canBulk ? '' : 'ok') +
+        btn(99, '♻️ 换满 (' + line.can + ')', 'ok') + '</div></div>';
     }).join('');
     h += '<div class="sect-title">♻️ 回收台 <span class="badge">材料 → 建材</span></div><div class="card" style="margin-bottom:12px">' +
       '<div class="hint">拆解与搜刮给的<b>材料</b>能在这里换成建材：' +
