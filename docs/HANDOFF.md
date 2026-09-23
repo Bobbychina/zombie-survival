@@ -142,7 +142,20 @@ tests/*.test.ts          vitest 单测（385 条）
      是"未使用的指令"（TS2578）。已用 HEAD 的干净 worktree 复现确认与本批改动无关，删掉那行注释即可。
      下次要是构建挂在 tsc 上，先看这句还在不在。
 
-0. **M72 前半「化学品转化链」已完成（2026-09-22；后半「传闻口径」见上面第 0 条）**：
+0. **M73 技能硬门槛 + 死亡扣进度已完成（2026-09-23）**：纯逻辑在 **`src/v4/gate-core.ts`**
+   （判定唯一真值）：装备门槛按"有多硬"分档 —— 近战 ≥34 伤害要近战 Lv.3、枪 ≥40 要射击 Lv.3 / ≥55 要 Lv.5、
+   重甲（护甲 ≥5 或减伤 ≥30%）要体能 Lv.3；区域门槛 `military` 生存 Lv.3 / `lab` 生存 Lv.5（不够 ×0.5，
+   `gateYield()` **下限 1 份**）；死亡 `wipeLevelXp()` 清进度条、`S.skills` 一动不动。
+   接线：`legacy/game.ts`（`gateBlocked()` / 背包 🔒 禁用态按钮 / 技能页 `gateFor()` / `searchZone`+`lootItem` 吃 mul /
+   `gameOver` 弹窗与日志）、`src/v4/search.ts`（`searchPoi` 同样吃 mul）；`window.equipGateOf/zoneGateOf` 给探针读。
+   证据：单测 **870/870**（`tests/m73-gate.test.ts` 14 例）、`docs/_m73_probe.mjs` **10/10**（本地 + 线上；
+   端到端真搜刮 4 vs 8 份材料、死亡清 44 点而等级保留）、回归 `_m57` 13/13 · `_m68` 8/8 · `_m72` 13/13 · `_m72b` 21/21。
+   构建产物 **750427 字节**（线上注入 auth-config 后 750473）。
+   ⚠️ 探针坑：端到端量"腰斩"要 ① 先把 `Math.random` 钉在 **0.60**（0.70 会落进 `surv` 分支，量不到材料档）、
+   ② 先 `S.seen.military = 1`（不然第一次搜刮走"首次抵达"早退分支，材料 +0）、
+   ③ 日志窗口里两条都在，取**最后一条**才算这一趟的账（第一版取第一条 → 拿旧行判新账，假红）。
+   还有：`zoneOpen()` 只认主线 `req`，区域门槛**不在这里**拦（设计上就不锁死）。
+
    纯逻辑在 **`src/v4/chem-core.ts`**（4 行配方：⚗️ 抗生素 `chem2+chip1→anti×1`、消毒剂 `chem2+water1→antiseptic×2`；
    🔩 手雷 `chem2+powder3+metal1→grenade×1`、5.56 穿甲弹 `chem2+powder4+metal3→a556_ap×8`）。
    产能 = `cap + (站点等级 − 行等级)`（与 M70 回收台 `exDay/exUsed` 同构）→ `S.base.chemDay/chemUsed`，
