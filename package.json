@@ -9,6 +9,7 @@
     "build": "node tools/build.mjs",
     "preview": "vite preview",
     "test": "vitest run",
+    "test:verbose": "vitest run --config vitest.verbose.config.ts",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "sync:site": "node tools/sync-site.mjs"
