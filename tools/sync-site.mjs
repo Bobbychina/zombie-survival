@@ -50,12 +50,18 @@ await mkdir(dirname(gameDst), { recursive: true });
    注意别拿 "/games/auth-config.js" 当"是否已注入"的判据——那段路径字符串本来就出现在
    account.js 的报错文案里（bundle 里已经有了），会导致永远判定为"已注入"而跳过。 */
 const TAG = '<script src="/games/auth-config.js"></script>';
+/* 站点侧的 macOS 拦截（/mac-block.js）也要注进游戏页：单文件产物是 build 出来的，
+   每次同步都会覆盖游戏页，所以这条注入必须写在这儿，否则下一次同步就把拦截弄丢了。
+   顺序有讲究：本脚本在解析期同步执行，而游戏自己的脚本是 defer / type=module（解析后才跑），
+   所以放在 </head> 前就够了 —— 它一定先于游戏逻辑执行。 */
+const MAC_TAG = '<script src="/mac-block.js"></script>';
 const html = await readFile(gameSrc, 'utf8');
-const injected = html.includes(TAG) ? html : html.replace('</head>', TAG + '\n</head>');
+let injected = html.includes(TAG) ? html : html.replace('</head>', TAG + '\n</head>');
 if (injected === html && !html.includes(TAG)) {
   console.error('[sync-site] 没找到 </head>，配置没能注入——手工检查一下 ' + gameSrc);
   process.exit(1);
 }
+if (!injected.includes(MAC_TAG)) injected = injected.replace('</head>', MAC_TAG + '\n</head>');
 await writeFile(gameDst, injected, 'utf8');
 await copyFile(acctSrc, acctDst);
 const g = (await stat(gameDst)).size, a = (await stat(acctDst)).size;
