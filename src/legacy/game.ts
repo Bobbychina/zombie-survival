@@ -34,6 +34,7 @@ function readBestRun(){
 function writeBestRun(b){
   try { localStorage.setItem(BEST_KEY, JSON.stringify(b)); } catch(e){ /* 隐私模式忽略 */ }
 }
+import { equipGate, zoneGate, zoneGateNote, gateYield, wipeLevelXp, deathXpLine, GATE_SKILL_NAME, ZONE_GATES, EQUIP_GATE } from '../v4/gate-core';   // M73：技能硬门槛（装备/搜刮区）+ 死亡扣进度
 import { seasonOf } from '../v4/env-core';   // M54：据点产出要按季节/天气算（鱼塘冬天减产）
 import { POND_FEED_ITEMS } from '../v4/water-core';
 
@@ -2585,6 +2586,10 @@ function gameOver(msg, opts){
     return;
   }
   S.over = true; S.ap = 0; S.hp = 0;   // 死透：hp 必须归零，否则"over=true 但还有血"这种半死状态会漏进存档与统计
+  /* M73：死亡清空"当前等级进度条"，**等级保留** —— 硬核的代价落在"进度"上，不是把玩家的积累清零 */
+  const wiped = wipeLevelXp(S.xp);
+  S.xp = wiped.xp;
+  const xpLine = deathXpLine(wiped.lost, wiped.n);
   sfx('lose');
   musicSting('lose');
   const sc = runScore();
@@ -2603,6 +2608,7 @@ function gameOver(msg, opts){
   hr();
   log('💀 ' + msg, 'danger');
   log('你生存了 ' + S.day + ' 天，击杀 ' + S.stats.kills + ' 只丧尸。', 'system');
+  log('📉 ' + xpLine, 'danger');
   log('尸体很快会被别的东西吃掉。这就是末日的规则。', 'dim');
   modal({ title:'💀 你死了', sticky:true,
     body:'<p class="muted">' + esc(msg) + '</p>' +
@@ -2614,6 +2620,8 @@ function gameOver(msg, opts){
       /* 下次怎么做（带数字） */
       '<div class="card" style="margin-top:12px;padding:10px"><div class="hint" style="margin-bottom:4px">🧭 下次可以这样：</div>' +
       adviceOf(cause, recapState).map(a => '<div class="hint">· ' + esc(a) + '</div>').join('') + '</div>' +
+      /* M73：死亡代价写清楚 —— 丢的是进度条，等级留着 */
+      '<div class="card" style="margin-top:12px;padding:10px"><div class="hint">📉 <b>技能进度</b>：' + esc(xpLine) + '</div></div>' +
       /* 本机历史最好 */
       '<p class="muted" style="margin-top:10px">生涯记录：' + esc(bestLine({ score: sc.raw, days: S.day, kills: S.stats.kills }, record, merged.improved)) + '</p>' +
       (S.flags.rescueUsed
@@ -2751,6 +2759,9 @@ function searchZone(id, deep){
   const cost = deep ? 2 : 1;
   if(!spendAP(cost)) return;
   const z = ZONES[id], d = +z.d;
+  /* M73：军事管制区/实验室要「生存」等级 —— 不够就效率腰斩（产出下限 1，绝不锁死） */
+  const zg = zoneGate(id, S.skills);
+  const zNote = zoneGateNote(zg);
   S.stats.scav++;
   S.stats.zoneCnt[id] = (S.stats.zoneCnt[id] || 0) + 1;   // v2.2：悬赏/支线的"按区域搜刮"计数
   if(deep) S.stats.deep++;                                // v2.2：深度搜索计数
@@ -2758,7 +2769,7 @@ function searchZone(id, deep){
   addXP('survival', deep ? 5 : 3);
   if(S.hp <= 0){ gameOver('你的身体先一步投降了。'); return; }
   hr();
-  log((deep ? '🔦 你在' + z.n + '深处翻找，每一秒都在赌命……' : '🔍 你搜索' + z.n + '……'), 'narrative');
+  log((deep ? '🔦 你在' + z.n + '深处翻找，每一秒都在赌命……' : '🔍 你搜索' + z.n + '……') + zNote, 'narrative');
   if(deep){ S.noise += 1; noiseCheck(); }
   if(!S.seen[id]){ S.seen[id] = 1; applyFirst(id); bountyTick(); sideTick(); autosave(); drawZone(id); render(); return; }
   const stealth = skillBonus('stealth', .04, .32);
@@ -2773,12 +2784,13 @@ function searchZone(id, deep){
   };
   const kind = wpick(w);
   if(kind === 'fight') encounterRoll(id, deep);
-  else if(kind === 'item'){ lootItem(id, deep); }
+  else if(kind === 'item'){ lootItem(id, deep, zg.mul); }
   else if(kind === 'mats'){
     // C24：深搜的权重被 fight/lore 稀释，实测每 AP 材料低于普通搜索；按隔离实验（_exp_search.js）反推到 16.5 期望值才持平
-    const m = deep ? (ri(4, 9) + d * 3 + 4) : (ri(2, 5) + d);
+    // M73：军事区/实验室不够「生存」级时乘 0.5（gateYield 保证至少 1 份）
+    const m = gateYield(deep ? (ri(4, 9) + d * 3 + 4) : (ri(2, 5) + d), zg.mul);
     S.mat += m; sfx('loot');
-    log('🔩 你撬开一堆残骸，回收了 ' + m + ' 份材料。', 'loot');
+    log('🔩 你撬开一堆残骸，回收了 ' + m + ' 份材料。' + (zg.gated ? zNote : ''), 'loot');
   }
   else if(kind === 'surv') survivorEvent();
   else if(kind === 'trap'){
@@ -2818,12 +2830,13 @@ function applyFirst(id){
   toast('新区域', '解锁 ' + z.n + ' 的搜刮信息。', 'ok');
   checkQuest();
 }
-function lootItem(id, deep){
+function lootItem(id, deep, gateMul){
   const z = ZONES[id];
   const table = {};
   for(const k in z.loot) table[k] = z.loot[k] * (deep ? 1.5 : 1);
   const got = wpick(table);
-  const n = ri(1, deep ? 3 : 2);
+  /* M73：军事区/实验室不够「生存」级 → 份数减半（下限 1 份，永远有东西拿） */
+  const n = gateYield(ri(1, deep ? 3 : 2), gateMul === undefined ? 1 : gateMul);
   grant(got, n);
   sfx('loot');
   addXP('survival', 2);
@@ -2949,8 +2962,19 @@ function useConsumable(id, inCombat){
   if(!inCombat){ render(); }
   return true;
 }
+/* M73：装备门槛的"能不能装"只问 gate-core（背包页按钮与这里共用同一判定，禁止各写一套） */
+function gateBlocked(id){
+  const it = ITEMS[id];
+  const g = equipGate(it, S.skills);
+  if(g.ok) return null;
+  log('🔒 你还用不动 ' + it.n + '：' + g.why, 'danger');
+  toast('🔒 技能不够', g.why, 'bad');
+  sfx('bad');
+  return g;
+}
 function equipItem(id){
   const it = ITEMS[id]; if(!it || !it.slot) return;
+  if(S.eq[it.slot] !== id && gateBlocked(id)) return;   // 卸下不受门槛限制（不然被卡住就穿不掉了）
   const slot = it.slot;
   const old = S.eq[slot];
   if(old === id){ S.eq[slot] = null; log('🧥 卸下了 ' + it.n + '。', 'info'); }
@@ -2963,6 +2987,7 @@ function equipItem(id){
 }
 function equipWeapon(id){
   if(!isWpn(id) || !has(id)) return;
+  if(S.eq.wpn !== id && gateBlocked(id)) return;        // M73：换下来不受限，装上去才判门槛
   S.eq.wpn = id;
   syncAmmo();                                   // M32b：换了枪就换了口径，HUD 的弹药数要跟着换
   log('🗡️ 换上 ' + ITEMS[id].n + '（伤害 ' + ITEMS[id].dmg + (ITEMS[id].ammo ? ' · 弹药 ' + ITEMS[id].ammo + '/次' : ' · 体力 ' + (ITEMS[id].sta || 0) + '/次') + '）', 'info');
@@ -3058,12 +3083,16 @@ function renderInv(){
     ids.forEach(id => {
       const it = ITEMS[id], n = S.inv[id];
       const usable = it.t === 'food' || it.t === 'drink' || it.t === 'med';
-      h += '<div class="lrow"><div><div class="nm">' + it.n + ' <span class="mono" style="color:var(--dim)">×' + n + '</span></div>' +
-        '<div class="ds">' + (it.desc || '') + '</div></div><div class="rt">' +
+      /* M73：技能不够的装备/武器在背包里就写明"锁着 + 差几级"，别让玩家点一下才发现装不上 */
+      const gate = equipGate(it, S.skills);
+      const locked = !gate.ok && (it.slot ? S.eq[it.slot] !== id : true) && S.eq.wpn !== id;
+      const gateHint = locked ? '<div class="hint" style="color:#e0a272">🔒 需要「' + (GATE_SKILL_NAME[gate.skill] || gate.skill) + '」Lv.' + gate.need + '（现在 Lv.' + gate.lv + '）</div>' : '';
+      h += '<div class="lrow"><div><div class="nm">' + it.n + ' <span class="mono" style="color:var(--dim)">×' + n + '</span>' + (locked ? ' <span class="tag">🔒 技能门槛</span>' : '') + '</div>' +
+        '<div class="ds">' + (it.desc || '') + '</div>' + gateHint + '</div><div class="rt">' +
         '<span class="tag ' + TYPE_TAG[it.t] + '">' + TYPE_LABEL[it.t] + '</span>' +
         (usable ? '<button class="btn xs ok" onclick="useConsumable(\'' + id + '\')">使用</button>' : '') +
-        (it.slot ? '<button class="btn xs ' + (S.eq[it.slot] === id ? 'warn' : '') + '" onclick="equipItem(\'' + id + '\')">' + (S.eq[it.slot] === id ? '已装备' : '装备') + '</button>' : '') +
-        (it.t === 'wpn' ? '<button class="btn xs ' + (S.eq.wpn === id ? 'warn' : '') + '" onclick="equipWeapon(\'' + id + '\')">' + (S.eq.wpn === id ? '使用中' : '装备') + '</button>' : '') +
+        (it.slot ? '<button class="btn xs ' + (S.eq[it.slot] === id ? 'warn' : '') + (locked ? ' ghost" title="' + esc(gate.why) + '">🔒 装备' : '" onclick="equipItem(\'' + id + '\')">' + (S.eq[it.slot] === id ? '已装备' : '装备')) + '</button>' : '') +
+        (it.t === 'wpn' ? '<button class="btn xs ' + (S.eq.wpn === id ? 'warn' : '') + (locked ? ' ghost" title="' + esc(gate.why) + '">🔒 装备' : '" onclick="equipWeapon(\'' + id + '\')">' + (S.eq.wpn === id ? '使用中' : '装备')) + '</button>' : '') +
         (it.t === 'thr' ? '<span class="tag">战斗中投掷</span>' : '') +
         '<button class="btn xs ghost" onclick="deposit(\'' + id + '\')">存入</button>' +
         /* M38：丢东西不再"一点全没" —— 单件丢，整叠丢要明说 */
@@ -3511,6 +3540,29 @@ function build(k){
 }
 
 /* ───────────── 技能 ───────────── */
+/* M73：某条技能卡着哪些门槛 —— 直接从 gate-core 的判定扫物品表推出来，
+   不在这儿再抄一份"哪把枪要几级"（抄一份就有两处会漂）。 */
+function gateFor(k, lv){
+  const byNeed = {};
+  for(const id in ITEMS){
+    const g = equipGate(ITEMS[id], {});
+    if(g.ok || g.skill !== k) continue;
+    (byNeed[g.need] = byNeed[g.need] || []).push(ITEMS[id].n);
+  }
+  const rows = [];
+  for(const need in byNeed){
+    const ok = lv >= +need;
+    rows.push((ok ? '✅ ' : '🔒 ') + 'Lv.' + need + ' · 装得上：' + byNeed[need].slice(0, 3).join(' / '));
+  }
+  if(k === 'survival'){
+    for(const zid in ZONE_GATES){
+      const g = ZONE_GATES[zid];
+      rows.push((lv >= g.need ? '✅ ' : '🔒 ') + 'Lv.' + g.need + ' · ' + g.label + '搜刮不打折');
+    }
+  }
+  if(!rows.length) return '';
+  return '<div class="hint" style="margin-top:2px;color:#e0a272">门槛：' + rows.join('　·　') + '</div>';
+}
 function renderSkills(){
   let h = '<div class="sect-title">生存技能 <span class="badge">行为升级，不用点数</span>' +
     '<span class="badge">' + Object.keys(SKILLS).filter(k => S.skills[k] >= 10).length + ' / ' + Object.keys(SKILLS).length + ' 满级</span></div>' +
@@ -3527,6 +3579,8 @@ function renderSkills(){
     h += '<div class="card"><h3>' + s.icon + ' ' + s.n + ' <span class="sub">Lv.' + lv + ' / 10</span></h3>' +
       '<div class="hint" style="min-height:16px">' + s.desc + '</div>' +
       '<div class="hint" style="margin-top:2px;color:#cfd2d6">现在：<b>' + skillNow(k) + '</b></div>' +
+      /* M73：这条技能卡着哪些门槛（不够级 = 高级武器装不上 / 军事区实验室效率腰斩） */
+      gateFor(k, lv) +
       '<div class="bar" style="margin-top:8px"><i class="sta" style="width:' + pct + '%"></i></div>' +
       '<div class="hint" style="margin-top:4px">' + (lv >= 10 ? '已满级' : '经验 ' + S.xp[k] + ' / ' + need + '　·　' + s.src) + '</div>' +
       perks + '</div>';
@@ -4613,6 +4667,13 @@ Object.assign(window, { VER, SAVE_KEY, V1_KEY, ITEMS, itemName, isWpn, ZOMBIES, 
   radLevelAt, radGain, radProtect, RAD_SOURCES, geigerText, boot });
 /* M58：白天辐射症状也挂出去（人体页/图鉴渲染 + 验收探针直接调） */
 Object.assign(window, { radSymptoms, radSymptomText, radBrief });
+/* M73：技能门槛判定挂到 window —— 背包页、技能页与验收探针读的是同一份 gate-core，
+   免得出现"UI 写着能装、实际装不上"的两套口径。 */
+Object.assign(window, {
+  equipGateOf: function(id){ return equipGate(ITEMS[id], S.skills); },
+  zoneGateOf: function(z){ return zoneGate(z, S.skills); },
+  wipeLevelXp: wipeLevelXp,
+});
 Object.defineProperty(window, "logFollow", { get: function(){ return logFollow; }, set: function(v){ logFollow = v; }, configurable: true });
 Object.defineProperty(window, "logFollowWhy", { get: function(){ return logFollowWhy; }, configurable: true });
 Object.defineProperty(window, "bagFilter", { get: function(){ return bagFilter; }, set: function(v){ bagFilter = v; }, configurable: true });
