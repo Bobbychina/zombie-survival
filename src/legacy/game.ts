@@ -15,6 +15,7 @@ import { snapshotScroll, restoreScroll, keepOffsets, shouldStickToBottom, nextLo
 import { BASE_SECTIONS, scaledCost as coreScaledCost, defMaxOf, raidChance, raidGuaranteed, abandonCost, waterYield, nightlyYield, trapCap, verdictOf, missingFor, adviseBuilds, facilityDelta } from '../v4/base-core';   // M54：据点系统的算式与建议（纯逻辑，唯一真值）
 import { EXCHANGE_ROWS, EX_MIN_BENCH, exCapBonus, exLine, rowOf } from '../v4/exchange-core';   // M70：回收台（材料 → 建材）
 import { CHEM_ROWS, CHEM_STATIONS, chemCapBonus, chemLine, chemRow, chemRowsOf, chemBatch } from '../v4/chem-core';   // M72：化学品转化链（化学品 → 抗生素/爆炸物）
+import { cleanRumorSave } from '../v4/rumor-core';   // M72b：传闻口径的两张表进 sanitizeSave 白名单（不清洗 = 读档后"首次进区"判定重算）
 import { starvationTick, sleepHealMul, nightConsumption, sleepWarning } from '../v4/hunger-core';   // M55：饥饿/脱水的夜间结算（堵住"只睡觉速通"）
 import { fleeChanceOf, fleeFailPlan } from '../v4/flee-core';     // M56：逃跑成功率（连试递减）与失败代价
 import { DECOYS, planDecoy } from '../v4/decoy-core';             // M56：避战道具（气味引诱器三档）
@@ -709,6 +710,15 @@ function sanitizeSave(d){
   }
   b.chemUsed = chemUsed;
   out.base = b;
+  /* M72b 传闻口径：S.world 里的两张新表（第一次踏进来的天数 / 上次到访的时间与结果）。
+     它们跟着 world 一起落盘，但**清洗必须走 rumor-core.cleanRumorSave**（唯一真值）：
+     手改档塞进来的负数天数/天文数字不清掉，"首次进区"判定与实测记录都会骗玩家。
+     注意别就地改传进来的存档对象（loadGame 之后还拿着它比对），浅拷一份再洗。 */
+  if(out.world && typeof out.world === 'object'){
+    const w = Object.assign({}, out.world);
+    cleanRumorSave(w);
+    out.world = w;
+  }
   const sk = {}, xp = {}; for(const k in SKILLS){ sk[k] = Math.floor(num((out.skills||{})[k], 0, 0, 10)); xp[k] = Math.floor(num((out.xp||{})[k], 0, 0, 1e6)); }
   out.skills = sk; out.xp = xp;
   out.quest = { stage: Math.floor(num((out.quest||{}).stage, 0, 0, 6)), keycards: Math.floor(num((out.quest||{}).keycards, 0, 0, 3)), data: Math.floor(num((out.quest||{}).data, 0, 0, 9)) };

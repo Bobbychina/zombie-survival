@@ -7,7 +7,10 @@
  *    · 字段越界（time ≤ 0 / 负数击杀 / 离谱数值）整条拒绝，脏数据不许进榜
  */
 import { describe, it, expect, beforeEach } from 'vitest'
-// @ts-expect-error cf-worker.js 是给 Worker 用的纯 JS，没有类型声明（它只依赖 env.DSH_KV 的 get/put/delete/list）
+/* cf-worker.js 是给 Worker 用的纯 JS（没有类型声明）。tsconfig 是 allowJs:false + noImplicitAny:false，
+   这种导入本来就是隐式 any、**不会**报错，所以原来那句 `@ts-expect-error` 在 tsc 下变成
+   TS2578「未使用的指令」——`npm run build` 的头一步就是 tsc，会因此拒绝构建。
+   （已用 HEAD 的干净 worktree 复现：这条错误与 M72b 的改动无关，是上一批留下的。） */
 import { handle } from '../tools/cf-worker.js'
 
 /* ---------- 内存 KV（照 Cloudflare KV 的最小接口：get / put / delete / list） ---------- */

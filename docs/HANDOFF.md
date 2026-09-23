@@ -116,7 +116,33 @@ tests/*.test.ts          vitest 单测（385 条）
 
 ### 下一批
 
-0. **M72 前半「化学品转化链」已完成（2026-09-22；后半「传闻口径」还没做，别以为整条 M72 完了）**：
+0. **M72 后半「传闻口径」已完成（2026-09-22，本条；前半见下一条）**：用户口径「危险度与辐射从"直接写结论"改成
+   "幸存者传闻"，第一次进区事件概率更高」。纯逻辑收在新的 **`src/v4/rumor-core.ts`**（legacy/world-ui 只接线与渲染）：
+   - **没去过 = 传闻**：误差区间 + 出处原话 + "能不能去"的定性判断（`dangerVerdict` 按区间**悲观端**给
+     "多半能应付 / 一个人最好别去 / 他们说去的人没回来过"）。区间永远包住真值（`bandFor`），
+     但**中点** `mid` 可以偏 1 档 —— 所以"你以为的难度"可能不准。
+   - **去过 = 实测**：精确档位 + 上次到访的时间/结果（`regionLast`）+ "第几天第一次踏进来"（`regionFirst`）。
+   - **同一存档内稳定**：`rumorSeedOf(seed, 区域, 天数)` = hash32(种子|区域|届次|salt|RUMOR_VER)，
+     `RUMOR_EPOCH_DAYS = 4` 天一换届；同一天刷新/读档逐字一致，换局或跨届才换口供。
+   - **首次进区事件概率 ×2.2**：`region-events-core` 的 `FIRST_ENTER_MUL / FIRST_ENTER_CAP(0.95)` +
+     `eventChanceAt(tier, first)`；`rollRegionEvent(type, tier, rng, first)` 透传。首次进区写两句日志
+     （"你第一次踏进「…」" + "（首次进区 ×2.2）"）。⚠️ `eventChance` **保持单参不动** ——
+     别处有 `[1..5].map(eventChance)`，给它加可选参数会被 `map` 的下标污染成"首次进区"。
+   - **UI 口径**（`world-ui.ts`）：详情面板"🗣️ 传闻危险 3~5 · 定性判断" + 出处原话，去过换成"📋 实测危险 4 · 上次到访…"；
+     危险度图层里**没去过的格子画问号**、颜色按传闻中点（不再把精确档位摊在 UI 上）；图例/提示同步改口径。
+   - **存档**：`S.world.regionFirst` / `S.world.regionLast`，清洗只有一份实现 `cleanRumorSave`
+     （`ensureSaveWorld` 与 legacy `sanitizeSave` 都调它）—— **不清洗 = 读档后"首次进区"判定重算，事件概率又翻倍**。
+   - 证据：单测 **856/856**（`tests/m72b-rumor.test.ts` 14 例）、`docs/_m72b_probe.mjs` **21/21**
+     （本地 8854，构建产物 **747045 字节**）。
+   - ⚠️ 两个探针坑：① `render()` 有节流，点完 `V4World.pickRegion` 必须**等一次渲染**再读 `.rdetail`
+     （同一轮里读会读到旧面板，表现为"详情面板整块没渲染"）；② 详情面板之外的地图提示本来就含"传闻"二字，
+     断言必须**只取 `.rdetail`**，否则永远假失败。
+   - ⚠️ 顺手修的存量问题：`npm run build` 头一步是 `tsc --noEmit`，而 **HEAD 上它本来就是红的** ——
+     `tests/mvs-leaderboard.test.ts` 那句 `@ts-expect-error` 在 `allowJs:false + noImplicitAny:false` 下
+     是"未使用的指令"（TS2578）。已用 HEAD 的干净 worktree 复现确认与本批改动无关，删掉那行注释即可。
+     下次要是构建挂在 tsc 上，先看这句还在不在。
+
+0. **M72 前半「化学品转化链」已完成（2026-09-22；后半「传闻口径」见上面第 0 条）**：
    纯逻辑在 **`src/v4/chem-core.ts`**（4 行配方：⚗️ 抗生素 `chem2+chip1→anti×1`、消毒剂 `chem2+water1→antiseptic×2`；
    🔩 手雷 `chem2+powder3+metal1→grenade×1`、5.56 穿甲弹 `chem2+powder4+metal3→a556_ap×8`）。
    产能 = `cap + (站点等级 − 行等级)`（与 M70 回收台 `exDay/exUsed` 同构）→ `S.base.chemDay/chemUsed`，

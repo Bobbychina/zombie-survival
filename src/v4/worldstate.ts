@@ -6,6 +6,7 @@ import { fragSpots } from './quest4';
 import { HOME_REGION, regionById, regionSeed, setActiveRegions } from './regions-core';
 import type { InteriorState } from './interior-core';
 import { headVisionLoss } from './medical-core';
+import { cleanRumorSave, noteVisit } from './rumor-core';   // M72b：传闻口径的两张表（首次进区天数 / 上次到访结果）
 import type { Block, WorldState } from '../types';
 export interface VehState { fuel: number; hp: number }
 
@@ -41,6 +42,12 @@ export interface SaveWorld extends RegionProgress {
   seenRegions: Record<string, 1>;
   /** M13：每个区域到访过几次（含主城）——跨区委托/剧情的判定依据（region:<id> 指标） */
   regionVisits: Record<string, number>;
+  /** M72b 传闻口径①：每个区域**第一次**踏进来的第几天（`seenRegions` 只说"去过"，
+      这张表回答"什么时候第一次去的"——首次进区的叙事提示与实测记录都读它）。 */
+  regionFirst: Record<string, number>;
+  /** M72b 传闻口径②：最近一次到访的**时间与结果**（撞上什么事件、掉了多少血）——
+      "去过之后传闻变实测"落到的就是这张表（实测记录 = 精确数值 + 上次到访时间/结果）。 */
+  regionLast: Record<string, { day: number; hp: number; ev: string }>;
   /** M14：每个区域里各搜刮过几次 `{ 区域: { poiId: 次数 } }`——跨区委托用它判定
       "在那个区真的翻了几个地方"（`rzone:<区域>:*`），而不是"踏进过那个区"。
       按区域各记一份，不随 switchRegion 冻结/摊平（它天然是分区的）。 */
@@ -143,6 +150,7 @@ export function defaultSaveWorld(seed: string): SaveWorld {
   const w = worldOf(seed, HOME_REGION);
   const sw: SaveWorld = {
     v: 1, wv: WORLD_VER, seed, region: HOME_REGION, regions: {}, seenRegions: { [HOME_REGION]: 1 }, regionVisits: { [HOME_REGION]: 1 }, regionZones: {},
+    regionFirst: { [HOME_REGION]: 1 }, regionLast: {},
     cur: { x: w.home.x, y: w.home.y },
     visited: {}, firstPoi: {}, left: {}, stock: {}, frag: {}, forage: {}, salvage: {}, fish: {}, chop: {}, interiors: {}, intel: false,
     debt: 0, lastNight: null, lastRaidDay: 0, evac: null,
@@ -190,6 +198,8 @@ export function switchRegion(S: any, sw: SaveWorld, toRegion: string): SwitchRes
   const first = !sw.seenRegions[def.id];
   sw.seenRegions[def.id] = 1;
   sw.regionVisits[def.id] = (sw.regionVisits[def.id] || 0) + 1;    // M13：跨区委托"跑一趟"要能数出来
+  /* M72b：记下"这次到访"（第一次的话连同首次天数一起写）——实测记录与首次进区判定都靠它 */
+  try { noteVisit(sw, def.id, Math.max(1, Math.floor(num(S && (S as any).day) || 1)), null); } catch { /* 坏档不影响换区 */ }
   loadRegion(sw, def.id);
   const w = worldOf(sw.seed, def.id);
   sw.cur = { x: w.home.x, y: w.home.y };      // 跨区落地 = 该区入口（生成器给的 home 点）
@@ -221,6 +231,8 @@ export function ensureSaveWorld(S: any): SaveWorld {
     sw.regions = {};
     sw.seenRegions = { [sw.region]: 1 as const };
     sw.regionVisits = { [sw.region]: 1 };
+    sw.regionFirst = { [sw.region]: 1 };
+    sw.regionLast = {};
     sw.regionZones = {};
     sw.evac = null; sw.lastNight = null; sw.lastRaidDay = 0;
     sw.intel = false;                       // 情报点的是"旧地图上的碎片点"，作废
@@ -254,6 +266,13 @@ export function ensureSaveWorld(S: any): SaveWorld {
     for (const poi in bag) { const n = Math.floor(Number(bag[poi])); if (isFinite(n) && n > 0) out[poi] = Math.min(9999, n); }
     sw.regionZones[rid] = out;
   }
+  /* M72b：传闻口径的两张表也走白名单（老档没有 → 补空表；键名/数值越界的一律丢掉）。
+     为什么必须在这里清：`seenRegions` 只记"去过"，"第一次是第几天"与"上次到访撞上什么"要另存；
+     不清洗的话读档时这两张表会带着手改档的脏数据（甚至负数天数）进 UI。 */
+  cleanRumorSave(sw);
+  /* 老档：seenRegions 里已经"去过"却没记第一次是哪天的 → 补 1（"不早于第 1 天"），
+     总比让实测记录写成"没有记录"强。同理 regionVisits 那行的口径。 */
+  for (const id in sw.seenRegions) if (!sw.regionFirst[id]) sw.regionFirst[id] = 1;
   sw.cur = validPos(sw.cur) ? { x: sw.cur.x, y: sw.cur.y } : { x: w.home.x, y: w.home.y };
   /* 兜底不变量：**玩家站在哪，哪一格就必须是"去过"**。
      起因（用户报的 bug）：M17.1 的地图重画迁移把 visited 清空了却没补上落脚点，

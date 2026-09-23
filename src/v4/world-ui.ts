@@ -15,7 +15,10 @@ import { poiLeft, searchPoi } from './search';
 import { interiorHost, summary as interiorSummary, buildInterior } from './interior-core';   // M66：建筑内部（平面图）入口
 import { cellTargets, fitCellSize, CELL_HARD_FLOOR } from './ui-scale-core';   // M40/M41：地图格子的目标尺寸与"一屏装下"的取舍（纯函数）
 import { lastRegionEvent, onEnterRegion } from './region-events';
-import { regionHazardTitles } from './region-events-core';
+import { FIRST_ENTER_MUL, eventChance, eventChanceAt, makeRng, regionHazardTitles, sampleEventRate } from './region-events-core';   // M72b：首次进区概率 ×倍率
+import {
+  dangerRumor, regionRead, type RegionRead,
+} from './rumor-core';   // M72b 传闻口径：没去过=传闻（区间+出处+能否去），去过=实测（精确值+上次到访）
 import { ghostAt, placeGhosts, raidGhost } from './ghosts';
 import { ghostFoes } from './ghosts-core';
 import { pendingFragKeys, takeFragment } from './fragments';
@@ -282,17 +285,58 @@ function layerTabs(): string {
   return '<div class="wmtabs rlayers">' + tab('type', '🎨 地貌上色') + tab('danger', '🔥 危险度上色') + '</div>';
 }
 
+/* ── M72b 传闻口径：这一带的危险度/辐射，玩家到底凭什么知道？ ──
+   口径：**没去过 = 幸存者传闻**（区间 + 出处 + "能不能去"的定性判断），
+        **去过 = 实测记录**（精确数值 + 上次到访的时间与结果）。
+   数值怎么派生、文案池怎么写，全在 rumor-core（纯逻辑，可单测）；这里只负责把读数摆到 DOM 上。 */
+
+/** 当前天数（传闻按"届"派生：同一天内逐字稳定，跨届换一批口供） */
+const dayNow = (): number => Math.max(1, Math.floor(Number(L.S.day) || 1));
+
+/** 这一带"最脏的一格"的辐射等级（0~3）：从该区域 24×24 里的核电站/废料场反推。
+    只有**被选中的那一个区域**会调它（worldOf 有 LRU 缓存）——不是给 144 格各生成一张图。 */
+function radMaxOf(seed: string, id: string): number {
+  const src = radSourcesOf(worldOf(seed, id));
+  let m = 0;
+  for (const s of src) m = Math.max(m, Math.min(3, Number(RAD_SOURCES[s.kind]?.radius) || 0));
+  return m;
+}
+
+/** 一个区域的"危险度 + 辐射"读数（传闻 / 实测由 seenRegions 决定） */
+function regionReadFor(s: SaveWorld, def: RegionDef): RegionRead {
+  return regionRead({
+    seed: s.seed, id: def.id, tier: def.tier, radMax: radMaxOf(s.seed, def.id), day: dayNow(),
+    seen: def.id === s.region || !!s.seenRegions[def.id],
+    visits: s.regionVisits[def.id] ?? 0,
+    firstDay: (s.regionFirst || {})[def.id] ?? 0,
+    last: (s.regionLast || {})[def.id] ?? null,
+  });
+}
+/** 只算危险度传闻（格子悬停用；不碰 worldOf，144 格也扛得住） */
+const dangerRumorOf = (s: SaveWorld, def: RegionDef) => dangerRumor({ seed: s.seed, id: def.id, tier: def.tier, day: dayNow() });
+
 /** 选中区域的详情：干什么用、能弄到什么、开过去要多少油、去不了是什么原因 */
 function renderRegionDetail(s: SaveWorld, here: RegionDef, sel: RegionDef, trip: ReturnType<typeof regionTripFor>): string {
   const seen = sel.id === here.id || !!s.seenRegions[sel.id];
   const visits = s.regionVisits[sel.id] ?? 0;
+  const read = regionReadFor(s, sel);
   let h = '<div class="rdetail">';
   h += '<div class="rdhd">' + sel.icon + ' <b>' + esc(sel.name) + '</b>' +
     '<span class="tag">' + typeLabel(sel.type) + '</span>' +
-    '<span class="tag">危险 ' + sel.tier + ' · ' + dangerLabel(sel.tier) + '</span>' +
+    /* M72b：没去过的地方不给精确档位，只给传闻区间 + 定性判断（危险度层同理，见下面的格子） */
+    '<span class="tag' + (read.seen ? '' : ' rq') + '">' + esc(read.danger.brief) + '</span>' +
+    '<span class="tag' + (read.seen ? '' : ' rq') + '">' + esc(read.rad.brief) + '</span>' +
     '<span class="tag">离余烬 ' + sel.dist + ' 格</span>' +
     (seen ? '<span class="tag ok">已到过' + (visits > 1 ? ' ' + visits + ' 次' : '') + '</span>' : '<span class="tag">还没去过</span>') +
     '<button class="btn xs rclose" onclick="V4World.clearPick()" title="取消选中">✕</button>' +
+    '</div>';
+  /* M72b：传闻/实测的**出处**。传闻必带"谁说的"（可能是错的），实测必带"上次到访的时间/结果"。 */
+  h += '<div class="rrumor' + (read.seen ? ' real' : '') + '">' +
+    '<div class="hint">' + esc(read.danger.line) + '</div>' +
+    '<div class="hint">' + esc(read.rad.line) + '</div>' +
+    '<div class="hint">' + (read.seen
+      ? '这一带你自己走过：数字是量的，不是听来的。'
+      : '这是<b>传闻</b>——区间与出处都来自别人，可能偏高也可能偏低；想要准数，得自己去一趟。') + '</div>' +
     '</div>';
   h += '<div class="hint">' + esc(sel.desc) + '</div>';
   h += '<div class="rtags">这儿能弄到：' + sel.resources.map(r => '<span class="tag">' + esc(r) + '</span>').join('') + '</div>';
@@ -324,8 +368,10 @@ export function renderRegionPanel(s: SaveWorld): string {
     ' · ' + dangerLabel(here.tier) + '　<span class="badge">已到过 ' + seenN + '/' + REGIONS.length + '</span></div>';
   h += layerTabs();
   h += '<div class="hint">' + (regionLayer === 'danger'
-    ? '现在是<b>危险度上色</b>：绿=安全、红=九死一生（越红越别去）。想认"哪片是工业区/农田"就切回地貌上色。'
-    : '格子的<b>颜色是地貌</b>（工业区、农田、林地…）、<b>数字是危险度</b>：离余烬越远越危险。' +
+    ? '现在是<b>危险度上色</b>：绿=安全、红=九死一生（越红越别去）。<b>没去过的格子是按传闻上色的</b>' +
+      '（问号 = 只有区间、没有准数，颜色可能骗你）；去过的才是实测色。想认"哪片是工业区/农田"就切回地貌上色。'
+    : '格子的<b>颜色是地貌</b>（工业区、农田、林地…）、<b>危险度只有去过才知道</b>：' +
+      '没去过的格子点开是<b>幸存者传闻</b>（区间 + 出处 + 能不能去），去过之后才换成实测数值。' +
       '想只看"该往哪跑"就切到危险度上色。') +
     '点一格看详情，再点「出发」才动身——地图上会亮出整条路线。</div>';
 
@@ -341,21 +387,26 @@ export function renderRegionPanel(s: SaveWorld): string {
       if (!def) { h += '<div class="rcell2 none"></div>'; continue; }
       const isHere = def.id === here.id;
       const seen = isHere || !!s.seenRegions[def.id];
-      const cls = 'rcell2 d' + def.tier + (isHere ? ' here' : '') + (def.homeBase ? ' home' : '') +
+      /* M72b：没去过的格子**不摊数值**。危险度图层上画问号，颜色取传闻区间中点
+         （= "你以为的难度"，可能偏高也可能偏低）；去过之后才是实测档位与实测色。 */
+      const rum = seen ? null : dangerRumorOf(s, def);
+      const belief = seen ? def.tier : (rum ? rum.mid : def.tier);
+      const cls = 'rcell2 d' + belief + (isHere ? ' here' : '') + (def.homeBase ? ' home' : '') +
         (sel && sel.id === def.id ? ' sel' : '') + (onPath[def.id] ? ' onpath' : '') + (seen ? '' : ' unseen');
       /* M30：悬停/详情里带上**资源丰度**档位（"跑这一趟值不值"的另一个维度） */
       const ab = abundanceTier(def.abundance ?? 1);
-      const tip = def.name + ' · ' + typeLabel(def.type) + ' · 危险 ' + def.tier + '：' + def.desc +
+      const tip = def.name + ' · ' + typeLabel(def.type) + ' · ' +
+        (seen ? '危险 ' + def.tier + '（实测）' : rum!.brief + '：' + rum!.line) + '：' + def.desc +
         ' · 资源' + ab.icon + ab.label + '（×' + (def.abundance ?? 1).toFixed(2) + '）' +
         (seen ? '' : '（你还没去过这一带，物资是按地貌推的）');
-      const bg = dangerMode ? dangerColor(def.tier) : typeColor(def.type);
+      const bg = dangerMode ? dangerColor(belief) : typeColor(def.type);
       /* M24：两个图层各管各的（用户原话："为什么地貌上色还有危险度……危险度不是有单独的上色吗"）。
          地貌层 = 只有颜色（地名/危险数字都不画，看名字点开详情、或切到危险度层）；
-         危险度层 = 只有数字。图例、悬停 title、点开的详情都还在，信息没丢。
+         危险度层 = 只有数字（M72b：没去过画问号，不是数字）。图例、悬停 title、点开的详情都还在，信息没丢。
          M30：右下角一个小方块标资源丰度（0~3 格，不写字，免得盖住地图）。 */
-      h += '<div class="' + cls + '" style="background:' + bg + ';--dc:' + dangerColor(def.tier) + '"' +
+      h += '<div class="' + cls + '" style="background:' + bg + ';--dc:' + dangerColor(belief) + '"' +
         ' title="' + esc(tip) + '" role="button" tabindex="0" onclick="V4World.pickRegion(\'' + def.id + '\')">' +
-        (dangerMode ? '<i class="rnum d' + def.tier + '">' + def.tier + '</i>' : '') +
+        (dangerMode ? '<i class="rnum d' + belief + '">' + (seen ? String(def.tier) : '?') + '</i>' : '') +
         '<i class="rab ab' + ab.tier + '" title="资源' + ab.label + '"></i>' +
         (isHere ? '<i class="rpin">📍</i>' : '') +
         '</div>';
@@ -367,12 +418,15 @@ export function renderRegionPanel(s: SaveWorld): string {
   // 玩家真正要看的"选中详情 + 出发"反而被挤到屏幕外——用户报障"这边也溢出了"。
   h += '<details class="wlegend-box"><summary>图例与说明</summary>' +
     (dangerMode ? '' : typeLegend()) + dangerLegend() +
+    '<div class="hint">' + (dangerMode
+      ? '危险度图层：<b>问号</b>=没去过（按传闻上色，可能不准）；<b>数字</b>=实测档位。'
+      : '危险度：没去过的区域只知道传闻，去过之后才换成实测数值。') + '</div>' +
     '<div class="hint">点一格看详情，再点「出发」才动身——地图上会亮出整条路线。</div></details>';
   h += '</div>';
 
   if (sel && trip) h += renderRegionDetail(s, here, sel, trip);
-  else h += '<div class="rdetail empty">👆 点任意一格：显示那一带的地名、地貌、危险度、能弄到的物资，' +
-    '以及开过去要花多少油和行动力。</div>';
+  else h += '<div class="rdetail empty">👆 点任意一格：显示那一带的地名、地貌、<b>传闻里的危险度与辐射</b>、能弄到的物资，' +
+    '以及开过去要花多少油和行动力。<b>没去过的地方只有传闻</b>——自己去一趟才会变成实测数值。</div>';
   h += '</div>';
 
   /* 去不了的原因在详情里已经逐条给了，这里只说"整体状态"，不重复念。
@@ -1380,6 +1434,37 @@ export const V4World = {
   /** M18 只读：最近一次区域事件（探针/UI 显示"刚才撞上了什么"） */
   regionEvent() { return lastRegionEvent(); },
 
+  /** M72b 只读：某个区域的"危险度/辐射"读数 —— 没去过是传闻（区间/出处/定性判断），
+      去过是实测（精确值 + 上次到访的时间与结果）。探针逐字比对文案就调它。 */
+  regionRead(id: string) {
+    const s = sw();
+    const def = regionById(id);
+    if (!def) return null;
+    const r = regionReadFor(s, def);
+    return {
+      id: def.id, name: def.name, tier: def.tier, day: dayNow(),
+      seen: r.seen, visits: s.regionVisits[def.id] ?? 0,
+      firstDay: (s.regionFirst || {})[def.id] ?? 0,
+      last: (s.regionLast || {})[def.id] ?? null,
+      danger: r.danger, rad: r.rad,
+    };
+  },
+
+  /** M72b 只读：区域事件的出事概率（首次进区 ×FIRST_ENTER_MUL）——
+      把"第一次进区概率更高"变成两组可以直接相除的数字。 */
+  eventOdds(tier: number, first = false) {
+    return { tier, first: !!first, chance: eventChanceAt(tier, !!first), base: eventChance(tier), mul: FIRST_ENTER_MUL };
+  },
+
+  /** M72b 只读：抽样统计出事率（同一个种子的随机源 → 同一个数字，可复现）。
+      `type` 留空就按当前区域类型；危险度默认 3 档（首次进区的倍率在这一档最容易看出来）。 */
+  eventRate(first = false, n = 400, seed = 20260922, type?: string, tier = 3) {
+    const s = sw();
+    const t = (type || regionById(s.region)?.type || 'ruins');
+    const rng = makeRng(seed);
+    return { type: t, tier, first: !!first, n: Math.max(1, Math.floor(n)), rate: sampleEventRate(t as any, tier, !!first, n, rng) };
+  },
+
   /** M12 跨区域：先判定（没车/没油/行动力不够都给理由），通过才扣成本再换图 */
   travelRegion(id: string) {
     const S = L.S, s = sw();
@@ -1402,10 +1487,15 @@ export const V4World = {
     s.trail.push('🚗 跨区 → ' + regionName(id) + '（⚡-' + apCost + ' ⛽-' + fuelCost + '）');
     s.trail = s.trail.slice(-24);
     L.log('🚗 你上了高速，往「' + regionName(id) + '」去了（行动力 -' + apCost + '，油 -' + fuelCost + '）。', 'success');
-    if (r.firstEnter) L.log('📖 ' + r.firstEnter, 'dim');
+    /* M72b 首次进区：① 明显的叙事提示（"你第一次踏进这里"）；② 说清这一趟更容易出事
+       （概率 ×FIRST_ENTER_MUL 由 region-events-core 给，这里只负责把这件事讲给玩家听）。 */
+    if (r.firstEnter) {
+      L.log('📖 你第一次踏进「' + regionName(id) + '」——' + r.firstEnter, 'dim');
+      L.log('👣 生地方，眼睛还没适应：这一趟撞上事的概率比熟路高得多（首次进区 ×' + FIRST_ENTER_MUL + '）。', 'danger');
+    }
     /* M18：落地就掷一次区域事件（工业区可能漏毒气、军管区可能捡到军械箱…）。
-       主城不掷——安全屋是唯一"绝对安全"的地方。 */
-    onEnterRegion(regionById(id));
+       主城不掷——安全屋是唯一"绝对安全"的地方。M72b：首次进区传 true（概率更高）。 */
+    onEnterRegion(regionById(id), !!r.firstEnter);
     if (s.veh && s.veh.hp <= 0) L.log('🔧 车在半路就开始冒烟了——得找地方修车，不然回不去。', 'danger');
     preview = null;
     selectedRegion = null; selectedNote = '';        // 落地了就别继续高亮"上一个目标"

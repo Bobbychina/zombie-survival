@@ -400,6 +400,15 @@ html[data-mapstyle="inline"] #v4world{margin-bottom:0}
 .v4world .rgrid.rl-danger .rcell2 .rnm{display:none}
 .v4world .rgrid.rl-danger .rcell2 .rnum{font-size:11px;background:rgba(6,8,11,.55)}
 .v4world .rgrid.rl-danger .rcell2.unseen{opacity:.8}
+/* M72b 传闻口径：没去过的区域标"传闻"（斜体 + 虚线下划线，一眼分得清"听来的"与"量到的"），
+   去过之后整块换成实测的常规样式 —— 玩家不用读文字也知道这块信息换过口径了。 */
+.v4world .rdetail .rdhd .tag.rq{font-style:italic;border-style:dashed;color:#e0b45c;max-width:46%}
+.v4world .rrumor{margin:6px 0;padding:6px 8px;border-left:2px dashed #7a6a3f;background:rgba(224,180,92,.06);border-radius:4px}
+.v4world .rrumor .hint{margin:2px 0;font-style:italic}
+.v4world .rrumor .hint:first-child{color:#e6c98a}
+.v4world .rrumor.real{border-left-style:solid;border-left-color:var(--line);background:rgba(120,201,138,.06)}
+.v4world .rrumor.real .hint{font-style:normal}
+.v4world .rrumor.real .hint:first-child{color:var(--green)}
 .v4world .rdetail{margin:8px 0 4px;padding:8px 10px;border:1px solid var(--line);border-left:3px solid var(--accent);
   border-radius:5px;background:#0b0e12}
 .v4world .rdetail.empty{border-left-color:var(--line);color:var(--dim);font-size:11.5px;line-height:1.7}

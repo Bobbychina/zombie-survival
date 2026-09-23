@@ -84,8 +84,22 @@ export const REGION_EVENTS: Record<RegionType, RegionEvent[]> = {
   ],
 };
 
-/** 出事概率：安全区（1）最低，最外圈（5）最高 */
+/* M72b：**第一次进区**时事件概率显著提高（用户口径原话「第一次进区事件概率更高」）。
+   为什么单独给一档：陌生地带没有经验可借 —— 玩家第一次踏进去，撞上事的概率该比熟门熟路高得多，
+   这一趟也正好承担"教玩家这片区域会出什么事"的职责（首次进区的叙事提示见 world-ui 的 travelRegion）。 */
+export const FIRST_ENTER_MUL = 2.2;      // 首次进区的概率倍率
+export const FIRST_ENTER_CAP = 0.95;     // 封顶（"必然出事"会让叙事提示与首次探索变得太僵）
+
+/** 出事概率：安全区（1）最低，最外圈（5）最高（老签名保持不变 —— 别处有 `[1..5].map(eventChance)` 这种用法） */
 export const eventChance = (tier: number): number => Math.min(0.75, 0.18 + Math.max(1, Math.min(5, tier)) * 0.09);
+
+/** 带"首次进区"口径的出事概率：`first=true` 时 ×FIRST_ENTER_MUL（封顶 FIRST_ENTER_CAP）。
+ *  刻意拆成第二个函数而不是给 eventChance 加可选参数：`[1,2,3,4,5].map(eventChance)`
+ *  会把数组下标当第二个实参传进来，加可选参数会让这类调用悄悄变成"首次进区"。 */
+export function eventChanceAt(tier: number, first: boolean): number {
+  const base = eventChance(tier);
+  return first ? Math.min(FIRST_ENTER_CAP, base * FIRST_ENTER_MUL) : base;
+}
 
 /** 事件池里"坏事"的占比：危险度越高，越容易抽到 hazard */
 const hazardBias = (tier: number) => Math.min(0.75, 0.12 + Math.max(1, Math.min(5, tier)) * 0.11);
@@ -95,10 +109,11 @@ const hazardBias = (tier: number) => Math.min(0.75, 0.12 + Math.max(1, Math.min(
  * @param type 区域类型
  * @param tier 危险度 1~5
  * @param rng  0~1 的随机源（测试里传定值序列）
+ * @param first 这一趟是不是**第一次**进这片区域（M72b：概率 ×FIRST_ENTER_MUL）
  * @returns 事件；没触发返回 null
  */
-export function rollRegionEvent(type: RegionType, tier: number, rng: () => number): RegionEvent | null {
-  if (rng() > eventChance(tier)) return null;
+export function rollRegionEvent(type: RegionType, tier: number, rng: () => number, first = false): RegionEvent | null {
+  if (rng() > eventChanceAt(tier, first)) return null;
   const pool = REGION_EVENTS[type] ?? [];
   if (!pool.length) return null;
   const hazards = pool.filter(e => e.kind === 'hazard');
@@ -112,6 +127,24 @@ export function rollRegionEvent(type: RegionType, tier: number, rng: () => numbe
 /** 详情面板用：这一带"常见状况"的标题（让玩家出发前就知道会撞上什么） */
 export const regionHazardTitles = (type: RegionType, limit = 3): string[] =>
   (REGION_EVENTS[type] ?? []).slice(0, limit).map(e => e.title);
+
+/** 统计口径（单测/探针共用）：跑 n 次掷骰，返回"出事率"——随机源可复现（同一个种子 → 同一个数字）。
+ *  探针用它把"首次进区概率更高"变成两组可比数字，而不是一句"感觉更容易出事"。 */
+export function sampleEventRate(type: RegionType, tier: number, first: boolean, n: number, rng: () => number = makeRng(20260922)): number {
+  const total = Math.max(1, Math.floor(Number(n) || 1));
+  let hit = 0;
+  for (let i = 0; i < total; i++) if (rollRegionEvent(type, tier, rng, first)) hit++;
+  return hit / total;
+}
+
+/** 可复现的 0~1 随机源（xorshift32；种子里塞个非零常数，免得 seed=0 时退化成全 0 序列） */
+export function makeRng(seed: number): () => number {
+  let s = (Math.floor(Number(seed) || 0) >>> 0) || 0x9e3779b9;
+  return () => {
+    s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0;
+    return s / 4294967296;
+  };
+}
 
 /** 事件池自检（单测与 UI 都可能用）：返回结构性问题列表，空数组 = 干净 */
 export function auditRegionEvents(knownItems: string[]): string[] {
