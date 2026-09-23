@@ -255,14 +255,20 @@ async function ghWriteFile(env, uid, st, name, payload, opts) {
    口径：
      · **看榜不用登录**（GET /api/score 是公开只读），**上榜要登录云账号** —— 服务端只认自己的会话，
        所以名字无法伪造（GitHub-Gist 模式的账号不经过服务端，上不了榜，前端会明说）。
-     · 存的东西只有「账号名 + 存活时间/击杀/等级/波次 + 时间戳」，不含 uid / 邮箱 / IP。
+     · 存的东西只有「账号名 + 成绩数字 + 时间戳」，不含 uid / 邮箱 / IP。
      · 写额度：每次提交 1 次读取 + 至多 3 次写（冷却键 / 个人最好 / 榜单快照）；榜单只留前 50，
        其它成绩不落库。免费版 KV 每天 1000 写，够 300+ 次提交。
-     · 榜单用「读-改-写」维护，两个人同时提交极小概率丢一条 —— 这个场景下可以接受（榜单不是账本）。 */
+     · 榜单用「读-改-写」维护，两个人同时提交极小概率丢一条 —— 这个场景下可以接受（榜单不是账本）。
+   ----------------------------------------------------------------------------
+   两个榜，两套口径（2026-09-23 加赛车榜）：
+     · vampire-survivors：生存榜，比 **存活时间**（**越大越好** ⇒ 降序），键 lb:vampire-survivors
+     · racing3d        ：赛车榜，比 **最快单圈**（**越小越好** ⇒ 升序），**按赛道分榜** ⇒ 键 lb:racing3d:<track>
+       赛车榜没法像生存榜那样只用一个键：不同赛道圈速不可比，所以 track 进 key。
+       track 由游戏侧提供，用正则严格限形（别让它变成任意 key 的记事板）。 */
 const LB_MAX = 50;
-const LB_GAMES = new Set(['vampire-survivors']);        // 白名单：别让它被当成任意 key 的记事板
-const lbKey = game => 'lb:' + game;
-const scoreKey = (game, uid) => 'score:' + game + ':' + uid;
+const LB_GAMES = new Set(['vampire-survivors', 'racing3d']);   // 白名单：别让它被当成任意 key 的记事板
+const lbKey = (game, track) => 'lb:' + game + (track ? ':' + track : '');
+const scoreKey = (game, uid, track) => 'score:' + game + (track ? ':' + track : '') + ':' + uid;
 const scoreNum = (v, lo, hi) => { const n = Math.floor(Number(v)); return isFinite(n) && n >= lo && n <= hi ? n : null; };
 /** 校验成绩字段：任何一项越界就整条丢掉（宁可漏一个成绩，也不让脏数据进榜） */
 function scoreValid(b) {
@@ -274,16 +280,50 @@ function scoreValid(b) {
   if (time === null || kills === null || level === null || wave === null) return null;
   return { game, time, kills, level, wave };
 }
-async function lbRead(env, game) {
-  const r = await kvGet(env, lbKey(game));
+
+/* ---- 赛车榜（racing3d）：按赛道分榜，单圈毫秒数越小越好 ---- */
+const RACE_TRACK_RE = /^[a-z0-9_-]{2,18}$/;
+const RACE_LAP_MIN = 3000, RACE_LAP_MAX = 3600000;      // 单圈 3 秒 ~ 1 小时（挡住手滑与离谱数据）
+const RACE_TOTAL_MAX = 86400000, RACE_SPEED_MAX = 1200; // 总用时 ≤ 24h，最高速度 ≤ 1200 km/h
+function raceValid(b) {
+  if (!b || typeof b !== 'object') return null;
+  if (String(b.game || '') !== 'racing3d') return null;
+  const track = String(b.track || '').toLowerCase();
+  if (!RACE_TRACK_RE.test(track)) return null;
+  const lap = scoreNum(b.lap, RACE_LAP_MIN, RACE_LAP_MAX);
+  const total = scoreNum(b.total, RACE_LAP_MIN, RACE_TOTAL_MAX);
+  const speed = scoreNum(b.speed, 0, RACE_SPEED_MAX);
+  if (lap === null || total === null || speed === null) return null;
+  return { game: 'racing3d', track, lap, total, speed };
+}
+// 校验一个成绩是否合法（按 game 分派），返回 null = 脏数据
+function scoreAny(b) {
+  const game = String((b && b.game) || '');
+  if (game === 'racing3d') return raceValid(b);
+  return scoreValid(b);
+}
+async function lbRead(env, game, track) {
+  const r = await kvGet(env, lbKey(game, track));
   return (r && Array.isArray(r.list)) ? r : { at: '', list: [] };
 }
-/** 同名只留一条（换设备/重登还是同一个人），按存活时间降序，截前 LB_MAX */
-function lbInsert(list, row) {
+/** 同名只留一条（换设备/重登还是同一个人）
+    · 生存榜按存活时间降序
+    · 赛车榜按单圈**升序**（时间越短越靠前） */
+function lbInsert(list, row, game) {
   const out = (list || []).filter(x => x && x.name && x.name !== row.name);
   out.push(row);
-  out.sort((a, b) => (b.time - a.time) || (b.kills - a.kills) || String(a.name).localeCompare(String(b.name)));
+  if (game === 'racing3d') {
+    out.sort((a, b) => (a.lap - b.lap) || (b.speed - a.speed) || String(a.name).localeCompare(String(b.name)));
+  } else {
+    out.sort((a, b) => (b.time - a.time) || (b.kills - a.kills) || String(a.name).localeCompare(String(b.name)));
+  }
   return out.slice(0, LB_MAX);
+}
+/** 个人最好是否被刷新（两个榜的方向相反） */
+function lbBetter(game, row, prev) {
+  if (!prev) return true;
+  if (game === 'racing3d') return row.lap < (prev.lap || Infinity);
+  return row.time > (prev.time || 0) || (row.time === (prev.time || 0) && row.kills > (prev.kills || 0));
 }
 
 export async function handle(req, env) {
@@ -444,6 +484,13 @@ export async function handle(req, env) {
     if (path === '/api/score' && req.method === 'GET') {
       const game = String(url.searchParams.get('game') || '');
       if (!LB_GAMES.has(game)) return err(req, 400, 'bad_game', '没有这个榜：' + [...LB_GAMES].join(' / '));
+      if (game === 'racing3d') {
+        /* 赛车榜按赛道分开：不同赛道圈速不可比 */
+        const track = String(url.searchParams.get('track') || '').toLowerCase();
+        if (!RACE_TRACK_RE.test(track)) return err(req, 400, 'bad_track', '要带 track 参数（赛道 id，如 oval / dirt）');
+        const rec = await lbRead(env, game, track);
+        return json(req, { ok: true, game, track, updatedAt: rec.at || '', list: rec.list });
+      }
       const rec = await lbRead(env, game);
       return json(req, { ok: true, game, updatedAt: rec.at || '', list: rec.list });
     }
@@ -454,24 +501,31 @@ export async function handle(req, env) {
     /* ---- 提交一局成绩上榜（要登录）：只留个人最好的一局，再并进全站前 50 ---- */
     if (path === '/api/score' && req.method === 'POST') {
       if (await rateLimited(env, req)) return err(req, 429, 'rate_limited', '请求太频繁，等一分钟再试');
-      const s = scoreValid(await readJSON(req));
-      if (!s) return err(req, 400, 'bad_score', '成绩字段不合法（game/time/kills/level/wave）');
-      /* 每人 60 秒一次：KV 的 expirationTtl 下限就是 60 秒，正好当冷却闸 */
-      const cdKey = 'scorecd:' + me.uid;
+      const raw = await readJSON(req);
+      const s = scoreAny(raw);
+      if (!s) return err(req, 400, 'bad_score', '成绩字段不合法（生存榜: game/time/kills/level/wave；赛车榜: game=racing3d & track/lap/total/speed）');
+      /* 每人每个榜 60 秒一次：KV 的 expirationTtl 下限就是 60 秒，正好当冷却闸 */
+      const cdKey = 'scorecd:' + s.game + (s.track ? ':' + s.track : '') + ':' + me.uid;
       if (await kvGet(env, cdKey)) return json(req, { ok: false, error: 'cooldown', message: '刚提交过，60 秒后再来' }, 429);
       await kvPut(env, cdKey, 1, { expirationTtl: 60 });
 
-      const row = { name: String(me.name || '').slice(0, 24), time: s.time, kills: s.kills, level: s.level, wave: s.wave, at: nowISO() };
-      const prev = await kvGet(env, scoreKey(s.game, me.uid));
-      const better = !prev || row.time > (prev.time || 0) || (row.time === (prev.time || 0) && row.kills > (prev.kills || 0));
-      if (better) await kvPut(env, scoreKey(s.game, me.uid), row);
+      const name = String(me.name || '').slice(0, 24);
+      const row = (s.game === 'racing3d')
+        ? { name, lap: s.lap, total: s.total, speed: s.speed, at: nowISO() }
+        : { name, time: s.time, kills: s.kills, level: s.level, wave: s.wave, at: nowISO() };
+      const prev = await kvGet(env, scoreKey(s.game, me.uid, s.track));
+      const better = lbBetter(s.game, row, prev);
+      if (better) await kvPut(env, scoreKey(s.game, me.uid, s.track), row);
       const mine = better ? row : prev;
 
-      const lb = await lbRead(env, s.game);
-      const list = lbInsert(lb.list, { name: mine.name, time: mine.time, kills: mine.kills || 0, level: mine.level || 1, wave: mine.wave || 1, at: mine.at });
-      await kvPut(env, lbKey(s.game), { at: nowISO(), list });
+      const lb = await lbRead(env, s.game, s.track);
+      const list = lbInsert(lb.list, mine, s.game);
+      await kvPut(env, lbKey(s.game, s.track), { at: nowISO(), list });
       const rank = list.findIndex(x => x.name === mine.name) + 1;
-      return json(req, { ok: true, better, rank, best: { time: mine.time, kills: mine.kills || 0, level: mine.level || 1, wave: mine.wave || 1 }, list });
+      const best = (s.game === 'racing3d')
+        ? { lap: mine.lap, total: mine.total || 0, speed: mine.speed || 0 }
+        : { time: mine.time, kills: mine.kills || 0, level: mine.level || 1, wave: mine.wave || 1 };
+      return json(req, { ok: true, better, rank, best, list });
     }
 
     /* ---- 今日上传额度（账号面板显示"今天还能传几次"） ---- */

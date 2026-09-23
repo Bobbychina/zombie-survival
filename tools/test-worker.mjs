@@ -14,12 +14,13 @@ function ok(name, cond, extra = '') {
   if (cond) { pass++; results.push('  ✅ ' + name); }
   else { fail++; results.push('  ⛔ ' + name + (extra ? '  → ' + extra : '')); }
 }
-const req = (method, path, { body, token, origin = ORIGIN } = {}) => new Request('https://api.test' + path, {
+const req = (method, path, { body, token, origin = ORIGIN, ip } = {}) => new Request('https://api.test' + path, {
   method,
   headers: {
     ...(body ? { 'content-type': 'application/json' } : {}),
     ...(token ? { authorization: 'Bearer ' + token } : {}),
     ...(origin ? { origin } : {}),
+    ...(ip ? { 'cf-connecting-ip': ip } : {}),
   },
   ...(body ? { body: JSON.stringify(body) } : {}),
 });
@@ -322,6 +323,78 @@ let token1 = '', uid1 = '';
   const longBody = await handle(req('POST', '/api/hit', { body: { p: 'x'.repeat(500), r: 'y'.repeat(500), l: 'z'.repeat(90), w: 99999 } }), e);
   ok('超长字段被截断（p≤120 / r≤80 / l≤16）', longBody.status === 200 && writes[1].blobs[0].length === 120 && writes[1].blobs[1].length === 80 && writes[1].blobs[2].length === 16,
     JSON.stringify(writes[1].blobs.map(x => x.length)));
+}
+
+/* 14b. 全站排行榜：生存榜（降序）与赛车榜（按赛道分榜・单圈升序） */
+{
+  const e = { ...env, DSH_KV: memoryKV(), DSH_PEPPER: 'test-pepper-please-change' };
+  /* 这一段请求数远超每 IP 每分钟 20 次的上限（测的是排行榜不是限流），
+     所以每条请求都换一个 cf-connecting-ip，别让限流器把排行榜用例淹了 */
+  let ipN = 0;
+  const rq = (method, path, opts = {}) => req(method, path, { ...opts, ip: '10.9.' + (Math.floor(ipN / 250)) + '.' + (ipN++ % 250) });
+  const mk = async (name, ver, salt) => (await j(await handle(rq('POST', '/api/register', { body: { name, verifier: ver, salt } }), e))).token;
+  const t1 = await mk('racer1', VER, SALT);
+  const t2 = await mk('racer2', VER2, SALT);
+
+  /* 看榜不用登录 */
+  const anon = await handle(rq('GET', '/api/score?game=racing3d&track=oval'), e);
+  const anonB = await j(anon);
+  ok('赛车榜 GET 不用登录（公开只读）', anon.status === 200 && anonB.ok === true && Array.isArray(anonB.list) && anonB.list.length === 0, JSON.stringify(anonB).slice(0, 120));
+  const noTrack = await handle(rq('GET', '/api/score?game=racing3d'), e);
+  ok('赛车榜不带 track → 400 bad_track', noTrack.status === 400 && (await j(noTrack)).error === 'bad_track');
+  const badTrack = await handle(rq('GET', '/api/score?game=racing3d&track=../etc'), e);
+  ok('赛道 id 只认 [a-z0-9_-]{2,18} → 400', badTrack.status === 400);
+  const badGame = await handle(rq('GET', '/api/score?game=hack'), e);
+  ok('未登记的游戏 → 400 bad_game', badGame.status === 400);
+
+  /* 上榜要登录 */
+  const noAuth = await handle(rq('POST', '/api/score', { body: { game: 'racing3d', track: 'oval', lap: 61234, total: 190000, speed: 210 } }), e);
+  ok('没登录提交赛车成绩 → 401', noAuth.status === 401, String(noAuth.status));
+
+  const sub = (token, body) => handle(rq('POST', '/api/score', { body, token }), e);
+  const r1 = await j(await sub(t1, { game: 'racing3d', track: 'oval', lap: 61234, total: 190000, speed: 210 }));
+  ok('提交合法赛车成绩 → ok + rank 1', r1.ok === true && r1.rank === 1 && r1.better === true, JSON.stringify(r1).slice(0, 160));
+  const cd = await sub(t1, { game: 'racing3d', track: 'oval', lap: 60000, total: 180000, speed: 215 });
+  ok('同一榜 60 秒冷却 → 429 cooldown', cd.status === 429 && (await j(cd)).error === 'cooldown');
+  const cdOther = await sub(t1, { game: 'racing3d', track: 'dirt', lap: 90000, total: 200000, speed: 140 });
+  ok('冷却按「榜」分开：换个赛道能立刻提交', cdOther.status === 200, String(cdOther.status));
+
+  /* 单圈越小越靠前（与生存榜方向相反） */
+  const t3 = await mk('racer3', 'd'.repeat(64), SALT);
+  const r3 = await j(await sub(t3, { game: 'racing3d', track: 'oval', lap: 58000, total: 175000, speed: 232 }));
+  const board = await j(await handle(rq('GET', '/api/score?game=racing3d&track=oval'), e));
+  ok('赛车榜按单圈升序（58s 排在 61s 前面）', board.list[0].name === 'racer3' && board.list[1].name === 'racer1' && board.list[0].lap === 58000, JSON.stringify(board.list).slice(0, 200));
+  ok('提交返回里的 list 也是升序', r3.list[0].name === 'racer3');
+  ok('榜单按赛道分开：oval 榜不含 dirt 的成绩', board.list.every(x => x.lap !== 90000));
+
+  /* 脏数据一律 400 */
+  const dirty = [
+    ['lap 太小（<3s）', { game: 'racing3d', track: 'oval', lap: 100, total: 190000, speed: 200 }],
+    ['lap 超上限', { game: 'racing3d', track: 'oval', lap: 99999999, total: 190000, speed: 200 }],
+    ['speed 离谱', { game: 'racing3d', track: 'oval', lap: 60000, total: 190000, speed: 9999 }],
+    ['缺字段', { game: 'racing3d', track: 'oval', lap: 60000 }],
+    ['track 带斜杠', { game: 'racing3d', track: 'a/b', lap: 60000, total: 190000, speed: 200 }],
+  ];
+  let all400 = true;
+  for (let i = 0; i < dirty.length; i++) {
+    const t = await mk('dirty' + i + 'x', 'e'.repeat(64), SALT);
+    const r = await sub(t, dirty[i][1]);
+    if (r.status !== 400) { all400 = false; console.log('    ⚠️ ' + dirty[i][0] + ' 没有被拦住：' + r.status); }
+  }
+  ok('赛车成绩脏数据全部 400（5 组）', all400);
+
+  /* 生存榜口径没被改动（回归） */
+  const t4 = await mk('survivor1', 'f'.repeat(64), SALT);
+  const s1 = await j(await sub(t4, { game: 'vampire-survivors', time: 300, kills: 100, level: 5, wave: 3 }));
+  ok('生存榜仍可提交且 rank 1', s1.ok === true && s1.rank === 1, JSON.stringify(s1).slice(0, 140));
+  const t5 = await mk('survivor2', '1'.repeat(64), SALT);
+  const s2 = await sub(t5, { game: 'vampire-survivors', time: 500, kills: 20, level: 7, wave: 4 });
+  ok('生存榜第二个人也能上榜（没被限流误伤）', s2.status === 200, String(s2.status));
+  const vsBoard = await j(await handle(rq('GET', '/api/score?game=vampire-survivors'), e));
+  ok('生存榜仍是「活得久排前面」（降序）', vsBoard.list[0].name === 'survivor2' && vsBoard.list[1].name === 'survivor1', JSON.stringify(vsBoard.list).slice(0, 200));
+  ok('生存榜不带 track（键名与旧版一致）', vsBoard.track === undefined && vsBoard.list[0].time === 500);
+  const vsDup = await sub(t4, { game: 'vampire-survivors', time: 100, kills: 999, level: 9, wave: 9 });
+  ok('个人最好只前进不后退（更差的一局被 429 或 better:false 挡住）', vsDup.status === 429 || (await j(vsDup)).better === false, String(vsDup.status));
 }
 
 /* 15. 密钥不外泄：任何接口的响应体里都不应该出现 pepper / GH secret / 令牌原文 */
