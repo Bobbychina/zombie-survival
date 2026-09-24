@@ -397,6 +397,124 @@ let token1 = '', uid1 = '';
   ok('个人最好只前进不后退（更差的一局被 429 或 better:false 挡住）', vsDup.status === 429 || (await j(vsDup)).better === false, String(vsDup.status));
 }
 
+/* 14c. 幽灵车：上传要登录、下载公开；名字只认会话（防冒充）、只留更好的圈速、30 秒冷却 */
+{
+  const e = { ...env, DSH_KV: memoryKV(), DSH_PEPPER: 'test-pepper-please-change' };
+  /* 这一段请求也多，同样每条换一个 cf-connecting-ip，别让限流器把幽灵车用例淹了 */
+  let ipN = 0;
+  const rq = (method, path, opts = {}) => req(method, path, { ...opts, ip: '10.11.' + (Math.floor(ipN / 250)) + '.' + (ipN++ % 250) });
+  const mk = async (name, ver) => (await j(await handle(rq('POST', '/api/register', { body: { name, verifier: ver, salt: SALT } }), e))).token;
+  const up = (token, body) => handle(rq('POST', '/api/ghost', { token, body }), e);
+  const get = (q, opts = {}) => handle(rq('GET', '/api/ghost?' + q, opts), e);
+  const CD = '0,0,0,0;16,1,2,0.1;33,3,4,0.2';                    // 客户端采样串（t,x,z,yaw 的简化版）
+  /* 冷却键的 TTL 是 60 秒，测试里等不起 30 秒，直接把它删掉当作"冷却已过" */
+  const cdClear = (track, name) => {
+    const k = Object.keys(e.DSH_KV._dump()).find(x => x === 'ghostcd:racing3d:' + track + ':' + name);
+    return k ? e.DSH_KV.delete(k) : null;
+  };
+
+  const t1 = await mk('ghostrider', VER);
+  const t2 = await mk('ghostmate', VER2);
+
+  /* 上传要登录、下载不要 */
+  const anon = await up('', { game: 'racing3d', track: 'oval', lap: 18345, data: CD });
+  ok('未登录上传幽灵车 → 401（与 /api/score 同口径）', anon.status === 401, String(anon.status));
+  const none = await j(await get('game=racing3d&track=oval&name=nobody'));
+  ok('GET 不存在的名字 → 200 + ghost:null（不是 404）', none.ok === true && none.ghost === null, JSON.stringify(none));
+
+  /* 正常上传 → 不带 Authorization 也能读回 */
+  const r1 = await j(await up(t1, { game: 'racing3d', track: 'oval', lap: 18345, data: CD }));
+  ok('上传幽灵车 → ok:true kept:true best=圈速', r1.ok === true && r1.kept === true && r1.best === 18345, JSON.stringify(r1));
+  const g1 = await get('game=racing3d&track=oval&name=ghostrider');
+  const b1 = await j(g1);
+  ok('GET 幽灵车不用登录，读回 name/lap/data/at',
+    g1.status === 200 && b1.ok === true && b1.ghost && b1.ghost.name === 'ghostrider' && b1.ghost.lap === 18345
+      && b1.ghost.data === CD && typeof b1.ghost.at === 'number' && b1.ghost.at > 0, JSON.stringify(b1).slice(0, 160));
+  const gkey = Object.keys(e.DSH_KV._dump()).find(k => k.startsWith('ghost:'));
+  ok('KV 键是 ghost:<game>:<track>:<账号名>', gkey === 'ghost:racing3d:oval:ghostrider', String(gkey));
+
+  /* 名字只能来自会话：body 里塞 name 不许往别人名下写 */
+  await cdClear('oval', 'ghostrider');
+  const spoof = await j(await up(t1, { game: 'racing3d', track: 'oval', lap: 17000, data: '9,9,9,9', name: 'victim' }));
+  const victim = await j(await get('game=racing3d&track=oval&name=victim'));
+  const self = await j(await get('game=racing3d&track=oval&name=ghostrider'));
+  ok('body 里的 name 冒充无效：存进会话账号名，victim 名下查不到',
+    spoof.kept === true && victim.ghost === null && self.ghost && self.ghost.lap === 17000 && self.ghost.data === '9,9,9,9',
+    JSON.stringify({ spoof, victim }).slice(0, 160));
+
+  /* 冷却：同一人同一赛道 30 秒；按人、按赛道分开 */
+  const cd = await up(t1, { game: 'racing3d', track: 'oval', lap: 16000, data: CD });
+  const cdb = await j(cd);
+  ok('30 秒内重复上传 → 429 + err:cooldown + retryAfter',
+    cd.status === 429 && cdb.ok === false && cdb.err === 'cooldown' && cdb.retryAfter > 0 && cdb.retryAfter <= 30, JSON.stringify(cdb));
+  const cdTrack = await up(t1, { game: 'racing3d', track: 'dirt', lap: 22000, data: CD });
+  ok('冷却按赛道分开：换个赛道能立刻传', cdTrack.status === 200, String(cdTrack.status));
+  const cdUser = await up(t2, { game: 'racing3d', track: 'oval', lap: 21000, data: CD });
+  ok('冷却按人分开：别人不受影响', cdUser.status === 200, String(cdUser.status));
+
+  /* 更差的圈速不许覆盖自己的最佳（先越过 30 秒冷却） */
+  await cdClear('oval', 'ghostrider');
+  const worse = await j(await up(t1, { game: 'racing3d', track: 'oval', lap: 25000, data: '1,1,1,1' }));
+  const still = await j(await get('game=racing3d&track=oval&name=ghostrider'));
+  ok('更差的圈速不覆盖旧的（kept:false，KV 里还是 17000 那条）',
+    worse.ok === true && worse.kept === false && worse.best === 17000 && still.ghost.lap === 17000 && still.ghost.data === '9,9,9,9',
+    JSON.stringify({ worse, still }).slice(0, 160));
+
+  /* 冷却到期：等不起真 30 秒，直接把冷却键的时间戳往前挪 31 秒（冷却长度存在值里，不靠 TTL） */
+  await e.DSH_KV.put('ghostcd:racing3d:oval:ghostrider', JSON.stringify({ at: Date.now() - 31000 }), { expirationTtl: 60 });
+  const afterCd = await j(await up(t1, { game: 'racing3d', track: 'oval', lap: 16000, data: CD }));
+  ok('冷却过了 30 秒后可以再传（时间戳算，不靠 KV TTL）', afterCd.ok === true && afterCd.kept === true && afterCd.best === 16000, JSON.stringify(afterCd));
+
+  /* 脏数据一律 400：校验在冷却闸之前，所以冷却期内照样测得动 */
+  const t3 = await mk('ghostdata', 'd'.repeat(64));
+  const dirty = [
+    ['lap 太小', { game: 'racing3d', track: 'ring', lap: 999, data: CD }, 'bad_lap'],
+    ['lap 超上限', { game: 'racing3d', track: 'ring', lap: 600001, data: CD }, 'bad_lap'],
+    ['lap 不是整数', { game: 'racing3d', track: 'ring', lap: 18345.5, data: CD }, 'bad_lap'],
+    ['缺 lap', { game: 'racing3d', track: 'ring', data: CD }, 'bad_lap'],
+    ['data 24001 字符', { game: 'racing3d', track: 'ring', lap: 18345, data: '1,2,3;'.repeat(4000) + '1' }, 'bad_data'],
+    ['data 空串', { game: 'racing3d', track: 'ring', lap: 18345, data: '' }, 'bad_data'],
+    ['data 含非法字符', { game: 'racing3d', track: 'ring', lap: 18345, data: '<script>x=1</script>' }, 'bad_data'],
+    ['data 不是字符串', { game: 'racing3d', track: 'ring', lap: 18345, data: 12345 }, 'bad_data'],
+    ['缺 track', { game: 'racing3d', lap: 18345, data: CD }, 'bad_track'],
+    ['track 带斜杠', { game: 'racing3d', track: '../etc', lap: 18345, data: CD }, 'bad_track'],
+    ['游戏不在白名单', { game: 'hack', track: 'ring', lap: 18345, data: CD }, 'bad_game'],
+    ['缺 game', { track: 'ring', lap: 18345, data: CD }, 'bad_game'],
+  ];
+  let all400 = true;
+  for (const [label, body, code] of dirty) {
+    const r = await up(t3, body);
+    const rb = await j(r);
+    if (r.status !== 400 || rb.err !== code) { all400 = false; console.log('    ⚠️ ' + label + ' → ' + r.status + ' ' + JSON.stringify(rb)); }
+  }
+  ok('幽灵车脏数据全部 400 且 err 指名字段（12 组）', all400);
+
+  const edge = await up(t3, { game: 'racing3d', track: 'ring', lap: 18345, data: '1,2,3;'.repeat(4000) });
+  ok('data 正好 24000 字符 → 收下（边界含）', edge.status === 200 && (await j(edge)).kept === true, String(edge.status));
+
+  /* GET 的参数校验与大小写口径 */
+  const gNoName = await get('game=racing3d&track=ring');
+  ok('GET 缺 name → 400 bad_name', gNoName.status === 400 && (await j(gNoName)).err === 'bad_name', String(gNoName.status));
+  const gNoTrack = await get('game=racing3d&name=ghostrider');
+  ok('GET 缺 track → 400 bad_track', gNoTrack.status === 400 && (await j(gNoTrack)).err === 'bad_track');
+  const gBadGame = await get('game=hack&track=ring&name=ghostrider');
+  ok('GET 白名单外的游戏 → 400 bad_game', gBadGame.status === 400 && (await j(gBadGame)).err === 'bad_game');
+  const gOther = await j(await get('game=racing3d&track=ring&name=ghostrider'));
+  ok('GET 别的名字 → ghost:null（不是串了别人的幽灵车）', gOther.ok === true && gOther.ghost === null, JSON.stringify(gOther));
+  const gSelf = await j(await get('game=racing3d&track=ring&name=GhostData'));
+  ok('GET 账号名大小写不敏感，命中且 name 回原标题', gSelf.ghost && gSelf.ghost.lap === 18345 && gSelf.ghost.name === 'ghostdata', JSON.stringify(gSelf).slice(0, 140));
+
+  /* 排行榜那套 60 秒冷却改走同一个冷却闸后，口径不能变（回归） */
+  const scBody = { game: 'racing3d', track: 'ring', lap: 30000, total: 95000, speed: 200 };
+  const s1 = await handle(rq('POST', '/api/score', { token: t3, body: scBody }), e);
+  const s2 = await handle(rq('POST', '/api/score', { token: t3, body: scBody }), e);
+  const scKey = Object.keys(e.DSH_KV._dump()).find(k => k.startsWith('scorecd:'));
+  await e.DSH_KV.put(scKey, JSON.stringify({ at: Date.now() - 61000 }), { expirationTtl: 60 });
+  const s3 = await handle(rq('POST', '/api/score', { token: t3, body: scBody }), e);
+  ok('排行榜冷却口径不变：60 秒内 429、过期放行',
+    s1.status === 200 && s2.status === 429 && s3.status === 200, s1.status + '/' + s2.status + '/' + s3.status);
+}
+
 /* 15. 密钥不外泄：任何接口的响应体里都不应该出现 pepper / GH secret / 令牌原文 */
 {
   const e = { ...env, DSH_KV: memoryKV(), DSH_PEPPER: 'PEPPER-CANARY-abc123', GH_CLIENT_SECRET: 'GHSECRET-CANARY-xyz789' };

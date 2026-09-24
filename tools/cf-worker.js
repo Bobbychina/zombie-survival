@@ -1,9 +1,10 @@
 /* ============================================================================
    bobbychina 云账号 + 云存档（Cloudflare Worker，单文件）
    ----------------------------------------------------------------------------
-   一个 Worker 干两件事：
+   一个 Worker 干三件事：
      1) /api/*    真正的服务端账号：注册 / 登录 / 会话 / 云存档（存 Cloudflare KV）
      2) /relay/*  原来的 GitHub OAuth 跨域中继（浏览器拿不到 GitHub 的 token 端点响应）
+     3) /api/score & /api/ghost  游戏全站榜与幽灵车（契约文档见下方「全站排行榜 / 幽灵车」注释段）
 
    安全模型（重要，别自我感动）：
      · 口令**不在服务端做 KDF**（Workers 免费版每次调用只有 10ms CPU，PBKDF2 210k 轮跑不动）。
@@ -76,6 +77,19 @@ async function kvGet(env, key, json = true) {
 async function kvPut(env, key, val, opts) {
   const k = kv(env); if (!k) throw new Error('KV 未绑定：见文件顶部第 2 步');
   await k.put(key, typeof val === 'string' ? val : JSON.stringify(val), opts);
+}
+
+/* ---------- KV 冷却闸（排行榜 60 秒 / 幽灵车 30 秒共用） ----------
+   踩过的坑：KV 的 expirationTtl **下限就是 60 秒**（传 30 会直接报错），
+   所以短冷却不能靠 TTL 实现 —— 值里记下开始时间，TTL 取 max(60, sec)，读取时自己算还剩几秒。 */
+async function cdLeft(env, key, sec) {
+  const rec = await kvGet(env, key);
+  if (!rec) return 0;
+  const at = Number(rec && rec.at) || Date.now();   // 老格式（值=1，没有时间戳）当"刚开始冷却"算：宁可多拦一次
+  return Math.max(0, Math.ceil((at + sec * 1000 - Date.now()) / 1000));
+}
+async function cdMark(env, key, sec) {
+  await kvPut(env, key, { at: Date.now() }, { expirationTtl: Math.max(60, sec) });
 }
 
 /* ---------- 存档索引 ---------- */
@@ -250,6 +264,36 @@ async function ghWriteFile(env, uid, st, name, payload, opts) {
   return { ok: true, version: (r.data.history && r.data.history[0] && r.data.history[0].version) || '' };
 }
 
+/* ---------- 幽灵车（ghost）：把你的最佳单圈轨迹存下来，别人能下载当"影子车"同场跑 ----------
+   接口契约（客户端已按这份实现，别随手改字段名）：
+     POST /api/ghost   Authorization: Bearer <会话>   —— 上传（**要登录**）
+       Body: { game:'racing3d', track:'oval', lap:18345, data:'0,0,0,0;16,1,2,0.1;...' }
+         · lap  这条幽灵对应的**单圈毫秒整数**，1000 ~ 600000
+         · data 客户端采样串（纯 ASCII，逗号/分号分隔的数字），1 ~ 24000 字符，字符集 [0-9eE+-.,;:|\s]
+         · 名字只认会话里的账号名，**body 里塞 name 一律忽略**（否则谁都能往别人名下写幽灵）
+       响应：
+         { ok:true,  kept:true,  best:<lap> }            写入成功（比原来的更好）
+         { ok:true,  kept:false, best:<旧的 lap> }       老的那条更好，不覆盖
+         { ok:false, err:'cooldown', retryAfter:<秒> }   429：同一个人 + 同一条赛道 30 秒一次
+         { ok:false, err:'rate_limited', retryAfter:60 } 429：同 IP 每分钟 20 次（与注册/登录同一套限流）
+         { ok:false, err:'bad_game'|'bad_track'|'bad_lap'|'bad_data' }  400：非法字段
+         { error:'unauthorized', message:'没登录或会话过期' }            401：没带会话（与 /api/score 同口径）
+     GET /api/ghost?game=racing3d&track=oval&name=<账号名>   —— 下载（**不用登录**，公开只读）
+       响应：
+         { ok:true, ghost:{ name, lap, data, at } }   命中
+         { ok:true, ghost:null }                      **没有这条也回 200 + null**（客户端按 null 处理，不要 404）
+         { ok:false, err:'bad_game'|'bad_track'|'bad_name' }  400
+     KV：ghost:<game>:<track>:<账号名小写> = { name, lap, data, at }（24KB 上限 → 免费版 1000 写/天扛得住）
+       冷却键 ghostcd:<game>:<track>:<账号名小写>；账号名键段统一小写（注册本来就大小写不敏感）
+   ---------------------------------------------------------------------------- */
+const GHOST_LAP_MIN = 1000, GHOST_LAP_MAX = 600000;        // 单圈 1 秒 ~ 10 分钟
+const GHOST_DATA_RE = /^[0-9eE+\-.,;:|\s]{1,24000}$/;      // 长度与字符集一起卡（顺手挡住 24001 字符的超长串）
+const GHOST_CD_SEC = 30;                                   // 同一个人 + 同一条赛道 30 秒一次
+const ghostKey = (game, track, name) => 'ghost:' + game + ':' + track + ':' + String(name).toLowerCase();
+const ghostCdKey = (game, track, name) => 'ghostcd:' + game + ':' + track + ':' + String(name).toLowerCase();
+/** 幽灵车接口的错误体按契约走 {ok:false, err:'bad_x'}，与 err() 的 {error,message} 不是一套口径 */
+const ghostErr = (req, code) => json(req, { ok: false, err: code }, 400);
+
 /* ============================ 主入口 ============================ */
 /* ---------- 全站排行榜（游戏要的"全球榜"） ----------
    口径：
@@ -266,6 +310,7 @@ async function ghWriteFile(env, uid, st, name, payload, opts) {
        赛车榜没法像生存榜那样只用一个键：不同赛道圈速不可比，所以 track 进 key。
        track 由游戏侧提供，用正则严格限形（别让它变成任意 key 的记事板）。 */
 const LB_MAX = 50;
+const SCORE_CD_SEC = 60;                                       // 每人每个榜 60 秒一次（冷却闸见 cdLeft / cdMark）
 const LB_GAMES = new Set(['vampire-survivors', 'racing3d']);   // 白名单：别让它被当成任意 key 的记事板
 const lbKey = (game, track) => 'lb:' + game + (track ? ':' + track : '');
 const scoreKey = (game, uid, track) => 'score:' + game + (track ? ':' + track : '') + ':' + uid;
@@ -354,7 +399,7 @@ export async function handle(req, env) {
     }
   }
   if (RELAY[path] || path === '/oauth/access_token') return err(req, 405, 'method_not_allowed', '只接受 POST');
-  if (path === '/' || path === '') return json(req, { ok: true, service: 'bobbychina cloud', api: ['/api/health', '/api/hit', '/api/register', '/api/login', '/api/recover/begin', '/api/recover/commit', '/api/me', '/api/quota', '/api/saves', '/api/save', '/api/score'] });
+  if (path === '/' || path === '') return json(req, { ok: true, service: 'bobbychina cloud', api: ['/api/health', '/api/hit', '/api/register', '/api/login', '/api/recover/begin', '/api/recover/commit', '/api/me', '/api/quota', '/api/saves', '/api/save', '/api/score', '/api/ghost'] });
 
   /* ---- 第一方匿名计数（页面访问量）: 写 Analytics Engine，不占 KV 写额度 ----
      为什么不用 KV：KV 免费版每天只有 1000 次写，页面访问量会瞬间把它刷光，
@@ -495,6 +540,20 @@ export async function handle(req, env) {
       return json(req, { ok: true, game, updatedAt: rec.at || '', list: rec.list });
     }
 
+    /* ---- 幽灵车：**下载不用登录**（和看榜一个口径，公开只读） ---- */
+    if (path === '/api/ghost' && req.method === 'GET') {
+      const game = String(url.searchParams.get('game') || '');
+      if (!LB_GAMES.has(game)) return ghostErr(req, 'bad_game');
+      const track = String(url.searchParams.get('track') || '').toLowerCase();
+      if (!RACE_TRACK_RE.test(track)) return ghostErr(req, 'bad_track');
+      const name = String(url.searchParams.get('name') || '');
+      if (!validName(name)) return ghostErr(req, 'bad_name');
+      const rec = await kvGet(env, ghostKey(game, track, name));
+      if (!rec) return json(req, { ok: true, ghost: null });     // 没有这条也回 200 + null（客户端按 null 处理）
+      /* 只挑契约里的四个字段回，KV 里多塞了东西也不外泄 */
+      return json(req, { ok: true, ghost: { name: rec.name, lap: rec.lap, data: rec.data, at: rec.at } });
+    }
+
     const me = await authed(env, req);
     if (!me) return err(req, 401, 'unauthorized', '没登录或会话过期');
 
@@ -504,10 +563,11 @@ export async function handle(req, env) {
       const raw = await readJSON(req);
       const s = scoreAny(raw);
       if (!s) return err(req, 400, 'bad_score', '成绩字段不合法（生存榜: game/time/kills/level/wave；赛车榜: game=racing3d & track/lap/total/speed）');
-      /* 每人每个榜 60 秒一次：KV 的 expirationTtl 下限就是 60 秒，正好当冷却闸 */
+      /* 每人每个榜 SCORE_CD_SEC 秒一次（KV 的 expirationTtl 下限 60 秒，所以冷却长度写在值里） */
       const cdKey = 'scorecd:' + s.game + (s.track ? ':' + s.track : '') + ':' + me.uid;
-      if (await kvGet(env, cdKey)) return json(req, { ok: false, error: 'cooldown', message: '刚提交过，60 秒后再来' }, 429);
-      await kvPut(env, cdKey, 1, { expirationTtl: 60 });
+      const wait = await cdLeft(env, cdKey, SCORE_CD_SEC);
+      if (wait > 0) return json(req, { ok: false, error: 'cooldown', message: '刚提交过，' + wait + ' 秒后再来' }, 429);
+      await cdMark(env, cdKey, SCORE_CD_SEC);
 
       const name = String(me.name || '').slice(0, 24);
       const row = (s.game === 'racing3d')
@@ -526,6 +586,35 @@ export async function handle(req, env) {
         ? { lap: mine.lap, total: mine.total || 0, speed: mine.speed || 0 }
         : { time: mine.time, kills: mine.kills || 0, level: mine.level || 1, wave: mine.wave || 1 };
       return json(req, { ok: true, better, rank, best, list });
+    }
+
+    /* ---- 上传幽灵车（要登录）：只留自己更好的那条，名字取会话账号名 ---- */
+    if (path === '/api/ghost' && req.method === 'POST') {
+      if (await rateLimited(env, req)) return json(req, { ok: false, err: 'rate_limited', retryAfter: 60 }, 429);
+      const b = (await readJSON(req)) || {};
+      const game = String(b.game || '');
+      if (!LB_GAMES.has(game)) return ghostErr(req, 'bad_game');
+      const track = String(b.track || '').toLowerCase();
+      if (!RACE_TRACK_RE.test(track)) return ghostErr(req, 'bad_track');
+      /* lap 必须是整数：scoreNum 会向下取整，所以再比一次原值，挡住 18345.5 这种 */
+      const lap = scoreNum(b.lap, GHOST_LAP_MIN, GHOST_LAP_MAX);
+      if (lap === null || lap !== Number(b.lap)) return ghostErr(req, 'bad_lap');
+      if (typeof b.data !== 'string' || !GHOST_DATA_RE.test(b.data)) return ghostErr(req, 'bad_data');
+
+      const name = String(me.name || '').slice(0, 24);           // 名字只认会话，body 里的 name 一律不看（防冒充）
+      /* 冷却闸在写之前：同一人同赛道 30 秒内重复提交直接回 cooldown（与 /api/score 的闸门顺序一致） */
+      const cdKey = ghostCdKey(game, track, name);
+      const wait = await cdLeft(env, cdKey, GHOST_CD_SEC);
+      if (wait > 0) return json(req, { ok: false, err: 'cooldown', retryAfter: wait }, 429);
+      await cdMark(env, cdKey, GHOST_CD_SEC);
+
+      const key = ghostKey(game, track, name);
+      const prev = await kvGet(env, key);
+      if (prev && Number(prev.lap) <= lap) {                     // 老的那条更好 → 不覆盖，如实回旧的 best
+        return json(req, { ok: true, kept: false, best: Number(prev.lap) });
+      }
+      await kvPut(env, key, { name, lap, data: b.data, at: Date.now() });
+      return json(req, { ok: true, kept: true, best: lap });
     }
 
     /* ---- 今日上传额度（账号面板显示"今天还能传几次"） ---- */
