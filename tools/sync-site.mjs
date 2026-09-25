@@ -55,6 +55,20 @@ const TAG = '<script src="/games/auth-config.js"></script>';
    顺序有讲究：本脚本在解析期同步执行，而游戏自己的脚本是 defer / type=module（解析后才跑），
    所以放在 </head> 前就够了 —— 它一定先于游戏逻辑执行。 */
 const MAC_TAG = '<script src="/mac-block.js"></script>';
+/* 分享卡与摘要（OG）：单文件产物是构建出来的，这几行只能在同步时注入 —— 否则下次同步就丢。
+   和 MAC_TAG 同理，先判重再插，保持幂等。 */
+const OG_TAGS = [
+  '<meta name="description" content="丧尸末日生存 v4.0 · 余烬：24×24 大世界、宝可梦式回合制战斗、营地/农业/季节/天气，活到第 100 天等救援。">',
+  '<meta property="og:type" content="website">',
+  '<meta property="og:title" content="丧尸末日生存 v4.0 · 余烬">',
+  '<meta property="og:description" content="24×24 大世界 + 回合制战斗，单文件网页游戏，打开就玩。">',
+  '<meta property="og:url" content="https://bobbychina.github.io/games/zombie-survival/">',
+  '<meta property="og:image" content="https://bobbychina.github.io/og/home.png">',
+  '<meta property="og:image:width" content="1200">',
+  '<meta property="og:image:height" content="630">',
+  '<meta name="twitter:card" content="summary_large_image">',
+  '<meta name="twitter:image" content="https://bobbychina.github.io/og/home.png">',
+].join('\n');
 const html = await readFile(gameSrc, 'utf8');
 let injected = html.includes(TAG) ? html : html.replace('</head>', TAG + '\n</head>');
 if (injected === html && !html.includes(TAG)) {
@@ -62,6 +76,7 @@ if (injected === html && !html.includes(TAG)) {
   process.exit(1);
 }
 if (!injected.includes(MAC_TAG)) injected = injected.replace('</head>', MAC_TAG + '\n</head>');
+if (!injected.includes('og/home.png')) injected = injected.replace('</head>', OG_TAGS + '\n</head>');
 await writeFile(gameDst, injected, 'utf8');
 await copyFile(acctSrc, acctDst);
 const g = (await stat(gameDst)).size, a = (await stat(acctDst)).size;

@@ -55,6 +55,10 @@ const get = (qs: string) => new Request('https://x/api/score' + qs, { headers: {
 const hit = async (req: Request) => { const r = await handle(req, env); return { status: r.status, body: await r.json() as any } }
 
 const RUN = { game: 'vampire-survivors', time: 512, kills: 320, level: 12, wave: 4 }
+/* 冷却键是按榜分的：scorecd:<game>:<uid>（racing3d 还带 :<track>）。
+   要模拟"60 秒过去"就得删对应的那条 —— 写死 'scorecd:u1' 是旧的单榜口径，删不掉任何东西，
+   第二次提交会被 429 cooldown 挡掉，断言里就变成 undefined。 */
+const cdExpire = (uid: string) => kv.delete('scorecd:vampire-survivors:' + uid)
 
 beforeEach(() => { kv = new MemKV(); env = { DSH_KV: kv } })
 
@@ -102,7 +106,7 @@ describe('M-VS 全站榜 /api/score', () => {
   it('冷却过后提交更差的成绩：better=false，个人最好与榜单都不降级', async () => {
     const t = await session('u1', 'alice')
     await hit(post(RUN, t))
-    await kv.delete('scorecd:u1')                       // 模拟 60 秒过去
+    await cdExpire('u1')                       // 模拟 60 秒过去
     const r = await hit(post({ ...RUN, time: 100, kills: 5 }, t))
     expect(r.body.better).toBe(false)
     expect(r.body.best.time).toBe(512)
@@ -113,9 +117,9 @@ describe('M-VS 全站榜 /api/score', () => {
   it('冷却过后提交更好的成绩：排名前移，榜单按存活时间降序', async () => {
     const ta = await session('u1', 'alice'); const tb = await session('u2', 'bob')
     await hit(post({ ...RUN, time: 300 }, ta))
-    await kv.delete('scorecd:u1')
+    await cdExpire('u1')
     await hit(post({ ...RUN, time: 800, kills: 999 }, tb))
-    await kv.delete('scorecd:u2')
+    await cdExpire('u2')
     const r = await hit(post({ ...RUN, time: 600 }, ta))   // alice 刷新自己的成绩：从 300 提到 600
     expect(r.body.better).toBe(true)
     expect(r.body.rank).toBe(2)                            // 仍在 bob（800）之后
@@ -126,7 +130,7 @@ describe('M-VS 全站榜 /api/score', () => {
   it('同名只占一条（换设备重登不会重复上榜）', async () => {
     const t1 = await session('u1', 'alice'); const t2 = await session('u9', 'alice')
     await hit(post({ ...RUN, time: 300 }, t1))
-    await kv.delete('scorecd:u1')
+    await cdExpire('u1')
     await hit(post({ ...RUN, time: 700 }, t2))
     const view = await hit(get('?game=vampire-survivors'))
     expect(view.body.list.length).toBe(1)
@@ -148,7 +152,7 @@ describe('M-VS 全站榜 /api/score', () => {
     for (let i = 0; i < 55; i++) {
       const t = await session('u' + i, 'p' + String(i).padStart(2, '0'))
       await hit(post({ ...RUN, time: 100 + i }, t))
-      await kv.delete('scorecd:u' + i)
+      await cdExpire('u' + i)
     }
     const view = await hit(get('?game=vampire-survivors'))
     expect(view.body.list.length).toBe(50)

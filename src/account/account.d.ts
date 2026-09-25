@@ -24,8 +24,8 @@ export interface DshAccount {
   serverAvailable(): Promise<boolean>;
   /** 端到端加密状态：locked = 本标签页还没派生密钥（此时只存本地、不上传） */
   cryptoInfo(): { locked: boolean; name: string; alg: string };
-  /** 重新输入口令以派生加密密钥（口令不上传） */
-  unlock(password: string): Promise<AccountResult>;
+  /** 重新输入口令以派生加密密钥（口令不上传）。game 传本作 id：会顺手试解该游戏的一份云存档，避免"假解锁" */
+  unlock(password: string, game?: string): Promise<AccountResult>;
   /** GitHub 绑定状态（云模式下来自服务端，不含令牌） */
   ghStatus(): Promise<{ bound: boolean; login?: string; avatar?: string; gistId?: string; serverSide?: boolean }>;
   /** 当前同步去向：云后端 / github / microsoft / null */

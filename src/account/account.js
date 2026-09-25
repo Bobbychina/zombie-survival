@@ -48,6 +48,9 @@
     var c = global.DSH_AUTH_CONFIG || {};
     return {
       api: String(c.api || '').replace(/\/+$/, ''),          // 云账号后端（Cloudflare Worker）；留空 = 纯本机账号
+      /* 中继（Cloudflare Pages）：`*.workers.dev` 在部分网络被整段 DNS 黑洞，直连必然超时，
+         中继那一跳在 Cloudflare 内网。默认沿用 leaderboard 用的 github.relay，也认顶层 relay。 */
+      relay: String(c.relay || (c.github && c.github.relay) || '').replace(/\/+$/, ''),
       github: Object.assign({ clientId: '', scope: 'gist read:user' }, c.github || {}),
       microsoft: Object.assign({ clientId: '', tenant: 'common', scope: 'openid profile offline_access User.Read Files.ReadWrite.AppFolder' }, c.microsoft || {}),
       redirect: c.redirect || (location.origin + '/games/oauth-callback.html'),
@@ -55,32 +58,57 @@
   }
   var apiOk = null;                                        // /api/health 的缓存结果
   var relayOk = null;                                      // 中继可达性缓存（设备码要用）
-  function apiBase() { return cfg().api; }
+  /** 配置里写的直连地址（展示用：告诉用户"云后端配了没有"） */
+  function configuredBase() { return cfg().api; }
+  /** 后端候选：中继优先（被黑洞的网络只有它能通），直连兜底。成功的那个记下来，后续不再重走失败的路。 */
+  var goodBase = '';
+  function bases() {
+    if (goodBase) return [goodBase];
+    var out = [], r = cfg().relay, a = cfg().api;
+    if (r) out.push(r);
+    if (a && out.indexOf(a) < 0) out.push(a);
+    return out;
+  }
+  /** 当前实际用来发请求的地址；没有可用后端时返回 '' */
+  function apiBase() { return goodBase || bases()[0] || ''; }
+  /** 探测候选链，返回第一个 /api/health 通的地址（结果缓存；探测失败也缓存，不再骚扰） */
+  async function resolveBase(force) {
+    if (!force && goodBase) return goodBase;
+    if (!force && apiOk === false) return '';
+    var list = bases();
+    for (var i = 0; i < list.length; i++) {
+      try {
+        var r = await fetchTimeout(list[i] + '/api/health', { cache: 'no-store' }, 5000);
+        var b = await r.json();
+        /* kv 没绑定 = 后端还没配好：对访客当作"没有云后端"处理，自动退回本机模式，
+           而不是让每个注册的人都撞一次 503（运维提示留在控制台给站长看）。 */
+        if (r.ok && b && b.ok && b.kv !== false) {
+          goodBase = list[i];
+          apiOk = true;
+          if (b.pepper === 'default') console.warn('[account] 云后端还没设 DSH_PEPPER（口令二次哈希/令牌加密都在用默认值），建议尽快补上');
+          return goodBase;
+        }
+        if (r.ok && b && b.ok && b.kv === false) {
+          console.warn('[account] 云后端已部署但没绑 KV（Settings → Bindings → DSH_KV），暂时按本机模式运行');
+        }
+      } catch (e) { /* 这个候选不通，试下一个 */ }
+    }
+    apiOk = false;
+    return '';
+  }
   /** 云后端可用吗（只探一次，失败也不再骚扰）。带 5s 超时：不可达时不能把"注册"按钮卡住 */
   async function apiAvailable() {
-    if (!apiBase()) return false;
-    if (apiOk !== null) return apiOk;
-    try {
-      var r = await fetchTimeout(apiBase() + '/api/health', { cache: 'no-store' }, 5000);
-      var b = await r.json();
-      /* kv 没绑定 = 后端还没配好：对访客当作"没有云后端"处理，自动退回本机模式，
-         而不是让每个注册的人都撞一次 503（运维提示留在控制台给站长看）。 */
-      apiOk = !!(r.ok && b && b.ok && b.kv !== false);
-      if (r.ok && b && b.ok && b.kv === false) {
-        console.warn('[account] 云后端已部署但没绑 KV（Settings → Bindings → DSH_KV），暂时按本机模式运行');
-      }
-      if (apiOk && b.pepper === 'default') {
-        console.warn('[account] 云后端还没设 DSH_PEPPER（口令二次哈希/令牌加密都在用默认值），建议尽快补上');
-      }
-      return apiOk;
-    } catch (e) { apiOk = false; return false; }
+    if (!bases().length) return false;
+    return !!(await resolveBase());
   }
   /** 调云后端：统一错误话术，网络失败单独标出来（便于 UI 说"离线"） */
   async function api(path, opt) {
     opt = opt || {};
     var tok = serverToken();
+    var base = await resolveBase();
+    if (!base) return { ok: false, err: '连不上云后端（离线？）', offline: true };
     try {
-      var r = await fetchTimeout(apiBase() + path, {
+      var r = await fetchTimeout(base + path, {
         method: opt.method || 'GET',
         headers: Object.assign({ Accept: 'application/json' },
           opt.body ? { 'Content-Type': 'application/json' } : {},
@@ -298,7 +326,7 @@
     /** 云后端信息（UI 用它显示"服务器账号 / 本机账号"） */
     serverInfo: function () {
       var s = readJSON(K.session, null) || {};
-      return { base: apiBase(), enabled: !!apiBase(), loggedIn: serverMode(),
+      return { base: apiBase(), configured: configuredBase(), relay: cfg().relay, enabled: !!(configuredBase() || cfg().relay), loggedIn: serverMode(),
         hasRecovery: typeof s.hasRecovery === 'boolean' ? s.hasRecovery : undefined };
     },
     serverAvailable: apiAvailable,
@@ -307,11 +335,13 @@
       var rec = readJSON(ENC_KEY, null);
       return { locked: !rec, name: rec ? rec.name : '', alg: 'AES-GCM-256 / PBKDF2-SHA256-' + PBKDF2_ITER };
     },
-    /** 重新输入口令解锁（重新登录一次拿回 wrap，再解开 DEK；不新建本地壳） */
-    unlock: async function (password) {
+    /** 重新输入口令解锁（重新登录一次拿回 wrap，再解开 DEK；不新建本地壳）
+     *  game 参数：顺手拿这个游戏的一份云端存档试着解一下，避免"假解锁"后把新存档写成解不开的密文。
+     *  不传 game 就只做口令校验（以前这里硬编码 'zombie-survival'，别的游戏解锁时探的是别人的存档）。 */
+    unlock: async function (password, game) {
       var u = Account.current();
       if (!u) return { ok: false, err: '先登录' };
-      if (!apiBase()) { await cacheKey(password, u.name, 'local'); return { ok: true }; }
+      if (!configuredBase()) { await cacheKey(password, u.name, 'local'); return { ok: true }; }
       var sr = await api('/api/salt?name=' + encodeURIComponent(u.name));
       var saltHex = sr.ok && sr.data && sr.data.salt ? sr.data.salt : null;
       if (!saltHex) return { ok: false, err: '拿不到盐，无法解锁' };
@@ -320,13 +350,16 @@
       if (!li.ok) return { ok: false, err: li.offline ? li.err : '口令不对（服务端没通过）' };
       await keyFromWrap(String(password || ''), u.name, saltHex, li.data.wrap);
       if (li.data.token) Account._setSession(u.uid, { token: li.data.token, exp: li.data.exp });
-      /* 拿一份云存档试着解一下：避免"假解锁"后把新存档写成解不开的密文 */
-      var probe = await api('/api/saves?game=zombie-survival');
-      if (probe.ok && probe.data && probe.data.slots && probe.data.slots.length) {
-        var one = await api('/api/save?game=zombie-survival&slot=main');
-        if (one.ok && one.data && isEnvelope(one.data.data)) {
-          var dec = await decryptSave(one.data.data);
-          if (!dec) { removeKey(ENC_KEY); return { ok: false, err: '口令不对（解不开云端存档）' }; }
+      /* 拿一份云存档试着解一下：解不开说明这把钥匙不对，别让它污染之后写入的存档 */
+      var probeGame = String(game || '');
+      if (probeGame) {
+        var probe = await api('/api/saves?game=' + encodeURIComponent(probeGame));
+        if (probe.ok && probe.data && probe.data.slots && probe.data.slots.length) {
+          var one = await api('/api/save?game=' + encodeURIComponent(probeGame) + '&slot=' + encodeURIComponent(probe.data.slots[0].slot));
+          if (one.ok && one.data && isEnvelope(one.data.data)) {
+            var dec = await decryptSave(one.data.data);
+            if (!dec) { removeKey(ENC_KEY); return { ok: false, err: '口令不对（解不开云端存档）' }; }
+          }
         }
       }
       emit();
@@ -385,7 +418,9 @@
         return { ok: true, uid: lu.uid, user: publicUser(lu), server: true, recoveryCode: rcCode };
       }
 
-      /* ② 没有云后端：老的本机账号 */
+      /* ② 云后端连不上：只能建本机账号 —— 但必须**如实告诉调用方**，
+            以前这里静默降级（界面照旧说"注册成功"），用户以为有云账号，实际没有恢复码、
+            上不了全站榜、换设备也搬不走存档。 */
       var saltB64 = b64url(bytes(16));
       var hash = await hashPassword(pass, saltB64, PBKDF2_ITER);
       var u = { uid: uid(), name: name, email: String((opts && opts.email) || ''), salt: saltB64, hash: hash,
@@ -395,7 +430,9 @@
       if (!w2.ok) return { ok: false, err: w2.err };
       Account._setSession(u.uid);
       emit();
-      return { ok: true, uid: u.uid, user: publicUser(u), server: false };
+      var wantedCloud = !!(configuredBase() || cfg().relay);
+      return { ok: true, uid: u.uid, user: publicUser(u), server: false,
+        degraded: wantedCloud, reason: wantedCloud ? 'cloud_unreachable' : 'no_cloud_configured' };
     },
     login: async function (opts) {
       var name = String((opts && opts.name) || '').trim();
@@ -406,7 +443,7 @@
       var isServerAccount = !!(u && u.server);
 
       /* ① 云账号：先问服务端要盐 → 本机派生 verifier → 登录 */
-      if (apiBase() && (isServerAccount || !u) && await apiAvailable()) {
+      if (configuredBase() && (isServerAccount || !u) && await apiAvailable()) {
         var sr = await api('/api/salt?name=' + encodeURIComponent(name));
         var saltHex = sr.ok && sr.data && sr.data.salt ? sr.data.salt : null;
         if (!saltHex && u && u.salt) saltHex = toHex(fromB64url(u.salt));
@@ -433,14 +470,18 @@
         }
       }
 
-      /* ② 本机账号（或断网时用本地口令兜底） */
+      /* ② 本机账号（或断网时用本地口令兜底）。
+         注意：云账号走到这里说明**服务端这次没通**（离线/被墙/后端挂了），只能本机放行 —— 
+         界面必须把"这次是离线登录、不会同步"说出来，不能让用户以为一切照常。 */
       if (!u) return { ok: false, err: '没有这个账号（先注册）' };
       if (!u.hash) return { ok: false, err: '这个账号是用第三方登录建的，请用「' + Object.keys(u.providers || {}).join('/') + '」登录' };
       var h = await hashPassword(pass, u.salt, u.iter || PBKDF2_ITER);
       if (!safeEqual(h, u.hash)) return { ok: false, err: '密码不对' };
       Account._setSession(u.uid);
       emit();
-      return { ok: true, uid: u.uid, user: publicUser(u), server: false };
+      var offlineFallback = !!(u.server && configuredBase());
+      return { ok: true, uid: u.uid, user: publicUser(u), server: false,
+        degraded: offlineFallback, reason: offlineFallback ? 'cloud_unreachable' : 'local_account' };
     },
     logout: async function () {
       /* 必须等这一次请求发完再清会话：否则服务端那份 token 还活着（探针里就是这么抓到的） */
@@ -480,9 +521,14 @@
         var h = await hashPassword(String(oldPass || ''), u.salt, u.iter || PBKDF2_ITER);
         if (!safeEqual(h, u.hash)) return { ok: false, err: '原密码不对' };
       }
+      /* 根因修复：云账号在**没有服务端会话**时原来只改本地壳 —— 云端还是旧口令，
+         下次登录必然"口令不对"，号就废了（只能靠恢复码）。现在直接拦住并说清楚怎么做。 */
+      if (u.server && !(serverMode() && configuredBase())) {
+        return { ok: false, err: '云账号改密码要连着云后端（现在连不上）：先退出再重新登录一次，或等网络恢复后再改' };
+      }
       /* 云账号：只把 DEK 用新口令重包一次就完事，云端那些密文一个字节都不用动 */
       var shellSaltHex = null;
-      if (u.server && serverMode() && apiBase()) {
+      if (u.server && serverMode() && configuredBase()) {
         var raw = currentRawKey();
         if (!raw) return { ok: false, err: '先解锁（重新输入一次当前口令）再改密码' };
         var salt = toHex(bytes(16));
@@ -502,7 +548,7 @@
     },
     /** 今日云上传额度（账号面板显示"今天还能传几次"） */
     quota: async function () {
-      if (!serverMode() || !apiBase()) return { ok: false, err: '没登录云账号', local: true };
+      if (!serverMode() || !configuredBase()) return { ok: false, err: '没登录云账号', local: true };
       var r = await api('/api/quota');
       return r.ok ? { ok: true, used: r.data.used, limit: r.data.limit, left: r.data.left, resetAt: r.data.resetAt } : { ok: false, err: r.err };
     },
@@ -510,7 +556,7 @@
     setRecovery: async function () {
       var u = Account.current();
       if (!u) return { ok: false, err: '先登录' };
-      if (!serverMode() || !apiBase()) return { ok: false, err: '只有云账号能设恢复码' };
+      if (!serverMode() || !configuredBase()) return { ok: false, err: '只有云账号能设恢复码' };
       var raw = currentRawKey();
       if (!raw) return { ok: false, err: '先解锁（重新输入一次口令）再设恢复码' };
       var code = newRecoveryCode();
@@ -533,7 +579,7 @@
       if (name.length < 2) return { ok: false, err: '用户名至少 2 个字符' };
       if (normCode(code).length < 32) return { ok: false, err: '恢复码看起来不完整（应该是 8 组 4 位）' };
       if (pass.length < 6) return { ok: false, err: '新密码至少 6 位' };
-      if (!apiBase() || !(await apiAvailable())) return { ok: false, err: '连不上云后端，恢复码只在云账号上有效' };
+      if (!configuredBase() || !(await apiAvailable())) return { ok: false, err: '连不上云后端，恢复码只在云账号上有效' };
       var rcVerifier = await rcVerifierHex(code, name);
       var begin = await api('/api/recover/begin', { method: 'POST', body: { name: name, rcVerifier: rcVerifier } });
       if (!begin.ok) return { ok: false, err: begin.err };
@@ -578,6 +624,8 @@
       saveDB(db);
       removeKey(K.session);
       removeKey(K.ghtokKeep);            // M23：注销也要把"记住的 GitHub 令牌"一起清掉
+      /* 以前漏了这把：DEK 缓存在 localStorage，号删了它还留着（同名再注册会撞上一把旧钥匙） */
+      removeKey(ENC_KEY);
       emit();
       return { ok: true, note: serverNote };
     },

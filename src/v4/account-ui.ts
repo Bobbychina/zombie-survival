@@ -439,7 +439,8 @@ export function unlock(): void {
 export async function doUnlock(): Promise<void> {
   const a = A(); if (!a) return;
   msg('正在本机派生密钥…');
-  const r = await a.unlock(val('#acc-unlock'));
+  /* 传入本作 game id：新版账号库会顺手拿这个游戏的云存档试解一把，避免"假解锁"后写入解不开的密文 */
+  const r = await a.unlock(val('#acc-unlock'), 'zombie-survival');
   if (!r.ok) { msg(r.err ?? '解锁失败', true); return; }
   L.closeAllModals(); openPanel();
   toastMsg('已解锁', '本次会话内可以直接同步了。', 'ok');
