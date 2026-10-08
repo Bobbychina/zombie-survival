@@ -2,7 +2,25 @@
 
 一个单机丧尸末日生存游戏：**24×24 个 1km² 区块的大世界**、宝可梦式回合制战斗、幸存者营地、方舟实验室主线与第 100 天撤离结局。
 
-**在线试玩**：<https://bobbychina.github.io/zombie-survival/> · **许可**：PolyForm Noncommercial 1.0.0（源码可见，禁止商用，见 `LICENSE`）
+**许可**：PolyForm Noncommercial 1.0.0（源码可见，禁止商用，见 `LICENSE`）
+
+<!-- QUICKSTART:START -->
+
+## ▶ 立刻玩（不需要装任何东西）
+
+| 你想干什么 | 点这里 |
+|---|---|
+| **下载到电脑上玩** | **[⬇ 下载 v4.0.0（解压即玩）](https://github.com/Bobbychina/zombie-survival/releases/latest)** |
+| **直接在浏览器里玩** | <https://bobbychina.github.io/zombie-survival/> |
+
+下载版就三步：**解压 → 双击 `丧尸末日生存.html` → 开始玩**。
+不用 Node、不用 npm、不用联网、不用服务器。存档自动存在浏览器本地。
+
+> 遇到 bug 或想提建议：<https://github.com/Bobbychina/zombie-survival/issues>
+
+<!-- QUICKSTART:END -->
+
+---
 
 构建产物 `dist/index.html` 是**一个自包含的单文件**——双击就能玩，不需要服务器、不需要联网。
 
